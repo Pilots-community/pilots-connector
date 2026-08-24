@@ -1,0 +1,153 @@
+{
+  "@context": "https://pilots.example/process/v1",
+  "id": "container-transport-quotation",
+  "version": "1.0.0",
+  "kind": "quotation",
+  "title": "Container transport — negotiated quotation",
+  "description": "A negotiated quotation. The shipper requests, the transporter offers, either side may counter. Runs in parallel with the service instance it authorises, which waits in PENDING_CONTRACT until this reaches AGREED.",
+
+  "roles": [
+    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
+    { "id": "transporter", "title": "Transporter", "cardinality": 1, "protocolRole": "provider" }
+  ],
+  "hostedBy": "transporter",
+
+  "initialState": "REQUESTED",
+  "states": [
+    { "id": "REQUESTED", "title": "Requested" },
+    { "id": "OFFERED", "title": "Offered" },
+    { "id": "COUNTERED", "title": "Countered" },
+    { "id": "AGREED", "title": "Agreed" },
+    { "id": "REJECTED", "title": "Rejected" },
+    { "id": "WITHDRAWN", "title": "Withdrawn" },
+    { "id": "EXPIRED", "title": "Expired" }
+  ],
+  "terminalStates": ["AGREED", "REJECTED", "WITHDRAWN", "EXPIRED"],
+
+  "defaultVisibility": "all",
+
+  "data": {
+    "type": "object",
+    "required": ["pickup", "dropoff", "containerType"],
+    "properties": {
+      "pickup": {
+        "type": "object",
+        "required": ["location"],
+        "properties": {
+          "location": { "type": "string" },
+          "earliest": { "type": "string", "format": "date-time" },
+          "latest": { "type": "string", "format": "date-time" }
+        }
+      },
+      "dropoff": {
+        "type": "object",
+        "required": ["location"],
+        "properties": {
+          "location": { "type": "string" },
+          "earliest": { "type": "string", "format": "date-time" },
+          "latest": { "type": "string", "format": "date-time" }
+        }
+      },
+      "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] },
+      "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" },
+      "price": {
+        "type": "object",
+        "required": ["value", "currency"],
+        "properties": {
+          "value": { "type": "number", "minimum": 0 },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+        }
+      },
+      "terms": { "type": "string" },
+      "notes": { "type": "string" },
+      "outcomeReason": { "type": "string" }
+    }
+  },
+
+  "transitions": [
+    {
+      "id": "offer",
+      "title": "Make an offer",
+      "from": ["REQUESTED", "COUNTERED"],
+      "to": "OFFERED",
+      "by": ["transporter"],
+      "deadline": "PT24H",
+      "onDeadline": "expire",
+      "guards": [{ "required": ["price"] }],
+      "patch": {
+        "type": "object",
+        "required": ["price"],
+        "properties": {
+          "price": {
+            "type": "object",
+            "required": ["value", "currency"],
+            "properties": {
+              "value": { "type": "number", "minimum": 0 },
+              "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+            }
+          },
+          "pickup": { "type": "object" },
+          "dropoff": { "type": "object" },
+          "terms": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    {
+      "id": "counter",
+      "title": "Counter the offer",
+      "from": ["OFFERED"],
+      "to": "COUNTERED",
+      "by": ["shipper"],
+      "patch": {
+        "type": "object",
+        "properties": {
+          "pickup": { "type": "object" },
+          "dropoff": { "type": "object" },
+          "price": { "type": "object" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    {
+      "id": "accept",
+      "title": "Accept the offer",
+      "from": ["OFFERED"],
+      "to": "AGREED",
+      "by": ["shipper"],
+      "guards": [{ "required": ["price", "pickup", "dropoff"] }]
+    },
+    {
+      "id": "reject",
+      "title": "Reject",
+      "from": ["OFFERED", "COUNTERED"],
+      "to": "REJECTED",
+      "by": ["shipper", "transporter"],
+      "patch": {
+        "type": "object",
+        "properties": { "outcomeReason": { "type": "string" } }
+      }
+    },
+    {
+      "id": "withdraw",
+      "title": "Withdraw the request",
+      "from": ["*"],
+      "to": "WITHDRAWN",
+      "by": ["shipper"],
+      "patch": {
+        "type": "object",
+        "properties": { "outcomeReason": { "type": "string" } }
+      }
+    },
+    {
+      "id": "expire",
+      "title": "Offer expired",
+      "from": ["OFFERED"],
+      "to": "EXPIRED",
+      "by": []
+    }
+  ],
+
+  "visibility": [],
+  "links": []
+}

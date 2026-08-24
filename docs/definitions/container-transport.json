@@ -1,0 +1,136 @@
+{
+  "@context": "https://pilots.example/process/v1",
+  "id": "container-transport",
+  "version": "1.0.0",
+  "kind": "service",
+  "title": "Container road transport",
+  "description": "Execution of an agreed container transport. Created alongside its quotation and held in PENDING_CONTRACT until a link fires on the quotation reaching AGREED.",
+
+  "roles": [
+    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
+    { "id": "transporter", "title": "Transporter", "cardinality": 1, "protocolRole": "provider" }
+  ],
+  "hostedBy": "transporter",
+
+  "initialState": "PENDING_CONTRACT",
+  "states": [
+    { "id": "PENDING_CONTRACT", "title": "Awaiting an agreed quotation" },
+    { "id": "CONTRACTED", "title": "Contracted" },
+    { "id": "ASSIGNED", "title": "Assigned" },
+    { "id": "PICKED_UP", "title": "Picked up" },
+    { "id": "DELIVERED", "title": "Delivered" },
+    { "id": "CANCELLED", "title": "Cancelled" }
+  ],
+  "terminalStates": ["DELIVERED", "CANCELLED"],
+
+  "defaultVisibility": "all",
+
+  "data": {
+    "type": "object",
+    "required": ["containerType"],
+    "properties": {
+      "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" },
+      "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] },
+      "pickup": { "type": "object" },
+      "dropoff": { "type": "object" },
+      "price": { "type": "object" },
+      "vehiclePlate": { "type": "string" },
+      "driverName": { "type": "string" },
+      "driverPhone": { "type": "string" },
+      "plannedPickupAt": { "type": "string", "format": "date-time" },
+      "actualPickupAt": { "type": "string", "format": "date-time" },
+      "deliveredAt": { "type": "string", "format": "date-time" },
+      "proofOfDelivery": {
+        "type": "object",
+        "properties": { "sha256": { "type": "string" } }
+      },
+      "cancellationReason": { "type": "string" }
+    }
+  },
+
+  "transitions": [
+    {
+      "id": "startExecution",
+      "title": "Quotation agreed — start execution",
+      "from": ["PENDING_CONTRACT"],
+      "to": "CONTRACTED",
+      "by": []
+    },
+    {
+      "id": "assign",
+      "title": "Assign vehicle and driver",
+      "from": ["CONTRACTED"],
+      "to": "ASSIGNED",
+      "by": ["transporter"],
+      "patch": {
+        "type": "object",
+        "required": ["vehiclePlate", "plannedPickupAt"],
+        "properties": {
+          "vehiclePlate": { "type": "string" },
+          "driverName": { "type": "string" },
+          "driverPhone": { "type": "string" },
+          "plannedPickupAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    {
+      "id": "pickup",
+      "title": "Confirm pickup",
+      "from": ["ASSIGNED"],
+      "to": "PICKED_UP",
+      "by": ["transporter"],
+      "patch": {
+        "type": "object",
+        "required": ["actualPickupAt"],
+        "properties": {
+          "actualPickupAt": { "type": "string", "format": "date-time" },
+          "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" }
+        }
+      }
+    },
+    {
+      "id": "deliver",
+      "title": "Confirm delivery",
+      "from": ["PICKED_UP"],
+      "to": "DELIVERED",
+      "by": ["transporter"],
+      "attachments": { "required": true, "mime": ["application/pdf", "image/jpeg"] },
+      "patch": {
+        "type": "object",
+        "required": ["deliveredAt", "proofOfDelivery"],
+        "properties": {
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "proofOfDelivery": {
+            "type": "object",
+            "required": ["sha256"],
+            "properties": { "sha256": { "type": "string" } }
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel",
+      "title": "Cancel",
+      "from": ["*"],
+      "to": "CANCELLED",
+      "by": ["shipper", "transporter"],
+      "patch": {
+        "type": "object",
+        "properties": { "cancellationReason": { "type": "string" } }
+      }
+    }
+  ],
+
+  "visibility": [
+    { "path": "driverName", "roles": ["transporter"] },
+    { "path": "driverPhone", "roles": ["transporter"] },
+    { "path": "driverName", "roles": ["shipper"], "whenState": ["PICKED_UP", "DELIVERED"] }
+  ],
+
+  "links": [
+    { "onEvent": "quotation:AGREED", "triggers": "startExecution" },
+    { "onEvent": "quotation:REJECTED", "triggers": "cancel" },
+    { "onEvent": "quotation:WITHDRAWN", "triggers": "cancel" },
+    { "onEvent": "quotation:EXPIRED", "triggers": "cancel" }
+  ]
+}

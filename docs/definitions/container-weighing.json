@@ -1,0 +1,152 @@
+{
+  "@context": "https://pilots.example/process/v1",
+  "id": "container-weighing",
+  "version": "1.0.0",
+  "kind": "service",
+  "title": "Container weighing (VGM)",
+  "description": "A container is weighed and a Verified Gross Mass certificate is issued. The weighed mass is withheld from the shipper until payment is recorded — enforced by visibility rules, not by convention.",
+
+  "roles": [
+    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
+    { "id": "weigher", "title": "Weighing company", "cardinality": 1, "protocolRole": "provider" }
+  ],
+  "hostedBy": "weigher",
+
+  "initialState": "ORDERED",
+  "states": [
+    { "id": "ORDERED", "title": "Ordered" },
+    { "id": "TRUCK_ANNOUNCED", "title": "Truck announced" },
+    { "id": "WEIGHED", "title": "Weighed" },
+    { "id": "PAID", "title": "Paid" },
+    { "id": "VGM_ISSUED", "title": "VGM issued" },
+    { "id": "CANCELLED", "title": "Cancelled" }
+  ],
+  "terminalStates": ["VGM_ISSUED", "CANCELLED"],
+
+  "defaultVisibility": "all",
+
+  "data": {
+    "type": "object",
+    "required": ["containerNumber", "terminal"],
+    "properties": {
+      "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" },
+      "bookingNumber": { "type": "string" },
+      "terminal": { "type": "string" },
+      "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] },
+      "truckPlate": { "type": "string" },
+      "expectedAt": { "type": "string", "format": "date-time" },
+      "grossMass": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "number", "minimum": 0 },
+          "unit": { "type": "string", "enum": ["kg"] },
+          "measuredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "paymentReference": { "type": "string" },
+      "certificate": {
+        "type": "object",
+        "properties": {
+          "sha256": { "type": "string" },
+          "issuedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "cancellationReason": { "type": "string" }
+    }
+  },
+
+  "transitions": [
+    {
+      "id": "announceTruck",
+      "title": "Announce the truck",
+      "from": ["ORDERED"],
+      "to": "TRUCK_ANNOUNCED",
+      "by": ["shipper"],
+      "patch": {
+        "type": "object",
+        "required": ["truckPlate"],
+        "properties": {
+          "truckPlate": { "type": "string" },
+          "expectedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    {
+      "id": "weigh",
+      "title": "Record the weighing",
+      "from": ["TRUCK_ANNOUNCED"],
+      "to": "WEIGHED",
+      "by": ["weigher"],
+      "patch": {
+        "type": "object",
+        "required": ["grossMass"],
+        "properties": {
+          "grossMass": {
+            "type": "object",
+            "required": ["value", "unit", "measuredAt"],
+            "properties": {
+              "value": { "type": "number", "minimum": 0 },
+              "unit": { "type": "string", "enum": ["kg"] },
+              "measuredAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "recordPayment",
+      "title": "Record payment",
+      "from": ["WEIGHED"],
+      "to": "PAID",
+      "by": ["weigher"],
+      "patch": {
+        "type": "object",
+        "required": ["paymentReference"],
+        "properties": { "paymentReference": { "type": "string" } }
+      }
+    },
+    {
+      "id": "issueVgm",
+      "title": "Issue the VGM certificate",
+      "from": ["PAID"],
+      "to": "VGM_ISSUED",
+      "by": ["weigher"],
+      "attachments": { "required": true, "mime": ["application/pdf"] },
+      "patch": {
+        "type": "object",
+        "required": ["certificate"],
+        "properties": {
+          "certificate": {
+            "type": "object",
+            "required": ["sha256", "issuedAt"],
+            "properties": {
+              "sha256": { "type": "string" },
+              "issuedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel",
+      "title": "Cancel",
+      "from": ["*"],
+      "to": "CANCELLED",
+      "by": ["shipper", "weigher"],
+      "patch": {
+        "type": "object",
+        "properties": { "cancellationReason": { "type": "string" } }
+      }
+    }
+  ],
+
+  "visibility": [
+    { "path": "grossMass", "roles": ["weigher"] },
+    { "path": "grossMass", "roles": ["shipper"], "whenState": ["PAID", "VGM_ISSUED"] },
+    { "path": "certificate", "roles": ["weigher"] },
+    { "path": "certificate", "roles": ["shipper"], "whenState": ["VGM_ISSUED"] },
+    { "path": "paymentReference", "roles": ["weigher"] }
+  ],
+
+  "links": []
+}
