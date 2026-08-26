@@ -138,6 +138,7 @@ Checks process definitions for: undefined roles/states, duplicate transition IDs
 - **`packages/protocol` is the spec.** If behaviour is not expressed there as schema or tested function, it is not decided.
 - **Simplicity target**: `docker compose up` → first transaction in < 60s; containers per party = 1 (+ Postgres only for large-party profile); memory < 150 MB small-party; no inbound HTTPS for `stream` delivery users.
 - Ask when unsure or sources conflict. **Matteus decides** on direction questions.
+- **Never commit or push.** Git write operations are also blocked in `.claude/settings.json`. When a coherent unit of work is done — a milestone exit criterion met, a test suite green, a logical stopping point before switching tasks — stop and prompt Matteus to review and commit, rather than continuing on top of uncommitted work.
 
 ## Key decisions and their reasons
 
