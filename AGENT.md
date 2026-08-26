@@ -98,7 +98,7 @@ State this unprompted whenever the hosting model comes up. Do not oversell it.
 - **Simplicity is a hard requirement, not a preference.** Container count and time-to-first-transaction
   are acceptance criteria. If a change adds a container or a dependency, say what it buys.
 - **Be concise.** These documents are inputs to live architecture discussions, not reports. No novels.
-- **Ask when unsure, or when sources conflict.** Matteus decides.
+- **Ask when unsure, or when sources conflict.** the human supervisor decides.
 - **Prefer boring, standard pieces.** JSON Schema, JCS (RFC 8785), `did:web`, JWS, JSON Merge Patch,
   SSE. The composition is the contribution; the parts should be unsurprising.
 - **Never commit private keys, and never hardcode credentials** — not even in demo seed scripts.
