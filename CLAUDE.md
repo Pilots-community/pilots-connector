@@ -4,70 +4,127 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Quick start
 
-**Read [AGENT.md](AGENT.md) first.** It is the standing context for all work in this repo. It covers the scope, non-negotiables, architecture, and working agreements.
+**Read [AGENT.md](AGENT.md) first.** It is the standing context for all work in this repo. It covers the
+scope, non-negotiables, architecture, and working agreements.
 
-This repo is a **clean slate** — ignore the sibling directories (`../pilots-dataspace`, `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned approach.
+This repo is a **clean slate** — ignore the sibling directories (`../pilots-dataspace`,
+`../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
+approach.
 
-Current status: **M0** — documentation only. No implementation code yet. M1 (the protocol package) is the first milestone to build.
+Current status: **M0** — documentation only. No implementation code yet. M1 (the protocol package) is the
+first milestone to build.
 
 ## What we're building
 
-A demonstrator of **process sharing**: a way for two or more logistics companies to run a shared business process from start to finish, with the same connector software, while each keeps its own internal procedures.
+A demonstrator of **process sharing**: a way for two or more logistics companies to run a shared business
+process from start to finish, with the same connector software, while each keeps its own internal
+procedures.
 
-**Design goal**: both a one-truck haulier (cheap VPS or laptop, no HTTPS endpoint required) and a terminal operator (Postgres, scale) must be able to run the same image with different configuration.
+**Design goal**: both a one-truck haulier (cheap VPS or laptop, no HTTPS endpoint required, no database
+container) and a terminal operator (managed document store, scale) must be able to run the same image
+with different configuration — or have someone else host it for them entirely.
+
+## Three deliverables, not one program
+
+| Deliverable | What it is | Container |
+|---|---|---|
+| `apps/connector` | The core. Three API surfaces + a **minimal admin UI**, built in and served by it. | 1 |
+| `apps/process-ui` | Demo process management UI, for orgs not building their own integration. | 1, optional |
+| `packages/protocol`, `packages/client` | The spec, and the typed client + OpenAPI doc third parties integrate against. | — |
+
+Deployment topologies (`[…]` is one container):
+
+| Setup | Shape | Self-run containers |
+|---|---|---|
+| Full self-hosting | `[process-ui]` + `[connector + admin UI]` | 2 |
+| Semi-lightweight | `[process-ui]` + third-party `[connector + admin UI]` | 1 |
+| Fully lightweight | third-party `[process-ui]` + third-party `[connector + admin UI]` | 0 |
+| Headless integrator | `[connector + admin UI]`, own systems on the local API | 1 |
 
 ## Key documents
 
 - [AGENT.md](AGENT.md) — standing context, non-negotiables, tech stack, cost targets
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — terminology, the three artefacts (definition, instance, event), hosting and trust model
-- [docs/PROTOCOL.md](docs/PROTOCOL.md) — wire spec: handshake, events, auth, endpoints
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, terminology, the three artefacts, the three logs, hosting and trust
+- [docs/PROTOCOL.md](docs/PROTOCOL.md) — wire spec: the three surfaces, auth, events, endpoints
 - [docs/DEFINITIONS.md](docs/DEFINITIONS.md) — process definition schema, annotated
-- [docs/SCENARIOS.md](docs/SCENARIOS.md) — end-to-end walkthroughs (S1, S2, S4a-c)
+- [docs/TESTING.md](docs/TESTING.md) — the four test tiers and why scenario tests are hermetic
+- [docs/SCENARIOS.md](docs/SCENARIOS.md) — end-to-end walkthroughs (S0–S4)
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones M1–M6 from empty repo to running demo
 - [docs/definitions/](docs/definitions/) — five real example process definitions
+- [docs/superpowers/specs/](docs/superpowers/specs/) — design decision records, with the reasoning
 
 ## Non-negotiables
 
-These are settled decisions. Do not re-litigate; flag if you think one is wrong.
+These are settled decisions. Do not re-litigate; flag if you think one is wrong. The authoritative
+wording is in [AGENT.md](AGENT.md).
 
-1. **One runtime primitive: the `Instance`.** A quotation and a service execution are the same thing with different `kind` values. A standing quotation is a definition whose first transition auto-fires — not a special case in code.
+1. **One runtime primitive: the `Instance`.** A quotation and a service execution are the same thing with
+   different `kind` values. A standing quotation is a definition whose first transition auto-fires — not a
+   special case in code.
 
-2. **Every change is a transition.** One mutating endpoint. A transition applies an optional state change and optional JSON Merge Patch to the instance's data. "Update a field" and "advance the state" are not two mechanisms.
+2. **Every change is a transition.** One mutating endpoint. A transition applies an optional state change
+   and an optional JSON Merge Patch. "Update a field" and "advance the state" are not two mechanisms.
 
-3. **`roles` is an array with cardinality from day one.** Bilateral-by-assumption is the single most expensive mistake in this problem space. First demo is two parties; adding a third must be a definition change, never a redesign.
+3. **Multi-party from day one.** `roles` is an array with cardinality; hosting is declared per definition
+   via `"hostedBy": "<role>"`. Adding a third party must be a definition change, never a redesign.
 
-4. **Hosting is declared per definition** via `"hostedBy": "<role>"`. The party in that role runs the **home node**; everyone else is a **peer node**.
+4. **The event log is the record.** Hash-chain the event *header*, commit to the payload by `payloadHash`
+   (so peers can verify redacted events). Three mechanisms for three problems: `seq` + `If-Match`
+   (concurrency), `prev` + `sig` (tamper evidence), `Idempotency-Key` (safe retries).
 
-5. **Three separate mechanisms for three separate problems**: `seq` (optimistic concurrency via `If-Match`), `prev` + `sig` (tamper evidence + non-repudiation), `Idempotency-Key` (safe retries). Not alternatives.
+5. **Connections are first-class**, established before any process runs. Never a callback URL per request.
+   Peer delivery channel declared once: `webhook` or `stream` (SSE, no inbound endpoint needed).
 
-6. **Hash-chain the event *header*, not the payload.** Commit to payload by `payloadHash`. Field-level visibility means peers legitimately receive redacted events. Header-chaining lets peers verify without holding redacted bytes.
+6. **Three API surfaces, three auth layers, no privileged path.** `/api/peer/v1` (JWS bearer, `did:web`)
+   · `/api/local/v1` (API key + scopes, `X-Actor-Ref`) · `/api/admin/v1` (admin session). Anything our
+   demo UI can do, a third party's UI can do, over the same surface.
 
-7. **Connections are first-class.** Establish once before any process runs. Never a callback URL per request. Declared delivery channel: `webhook` (we POST) or `stream` (SSE, no inbound endpoint required).
+7. **Three logs, three jobs.** Application (stdout; every rejected auth and refused change) · audit (in
+   the store, locally hash-chained, never replicated; who did what, including denials) · event (signed,
+   chained, replicated). The logger can flag an entry for the audit sink at its call site.
 
-8. **Two distinct auth layers**: node-to-node (JWS bearer, DID key), human-to-UI (session, scoped to participant).
+8. **Persistence is a port; the store is document-oriented.** Every document carries `participantId`.
+   Memory (test default) / file (small party, zero infrastructure) / Mongo (large party), one conformance
+   suite. No ORM, no SQL, no migrations.
 
-9. **Multi-tenancy readiness, not multi-tenancy.** Every table carries `participantId`. Demo runs one participant per node. This costs almost nothing now and enables hosted "connector-as-a-service" later.
+9. **Everything external is a port, and tests are hermetic.** `Clock`, `IdGenerator`, `Signer`, peer
+   `Transport`. No unit, contract or scenario test may need a network, container, real clock, or a
+   filesystem outside a temp dir. Default signer is local Ed25519; key management never blocks the state
+   machine.
 
-10. **The node serves its own built UI.** One container per party.
+10. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states
+    reachable via `from: ["*"]`.
 
-11. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states reachable via `from: ["*"]`. Cheap now, miserable to retrofit.
+## The honest limitations
 
-12. **Signing is a plugin interface.** Default local Ed25519. A remote signer can be added later. Never let key management block the state machine.
+State both unprompted when the topic comes up; do not oversell either.
+
+- **The host holds the bytes.** Visibility rules govern who may *read* fields; they do not blind the host.
+  The guarantee is that **the host cannot lie** — every event signed, chained, independently verifiable.
+- **A hosted connector holds your signing key.** An **accepted** trade-off, like using a payment
+  processor: the answer is provider compliance, not architecture. `Signer` stays a plugin interface.
 
 ## Stack and structure
 
 ```
 pilots-service/
-  packages/protocol/   Zod schemas, JCS canonicalisation, sign/verify, definition linter.
-                       THIS PACKAGE IS THE SPEC. Behaviour not expressed here as schema
-                       or tested function is not decided. Tests live here.
-  apps/node/           NestJS (Fastify adapter) + Drizzle. SQLite dev, Postgres prod.
-  apps/ui/             Vite + React + TS + Tailwind + shadcn + TanStack Query.
-                       Built into node image and served by it.
-  docs/                Design documents (below).
+  packages/protocol/     THE SPEC. Zod schemas, JCS canonicalisation, sign/verify, evaluator,
+                         visibility filter, definition linter, JSON Schema export. Tests live here.
+  packages/client/       Typed local-API client + OpenAPI doc. The integration surface.
+  apps/connector/        NestJS (Fastify adapter). Three API surfaces + admin UI.
+    src/store/           Repository port, memory/file/mongo adapters, conformance suite.
+                         Connector-internal by design — do not promote to a shared package.
+    src/admin-ui/        Minimal admin UI: API keys, trusted connectors, settings, audit log.
+  apps/process-ui/       Demo process management. BFF (holds the API key, owns its own users) + SPA.
+  tests/e2e/             Playwright. Wiring and UI only, never protocol behaviour.
+  docs/                  Design documents.
 ```
 
-**pnpm workspace.** Key libraries: `zod`, `drizzle-orm`, `jose`, `did-resolver` + `web-did-resolver`, `canonicalize`, `better-auth`.
+**Boundary rule, lint-enforced:** `apps/process-ui` may import `packages/client` and `packages/protocol`.
+It may **never** import from `apps/connector`. A gap there is a gap in the local API.
+
+**pnpm workspace.** Key libraries: `zod`, `jose`, `did-resolver` + `web-did-resolver`, `canonicalize`,
+`better-auth`, `mongodb` (large-party adapter only), React + Tailwind + shadcn + TanStack Query.
 
 ## Available commands
 
@@ -77,71 +134,63 @@ Currently only the Python linting tool:
 python3 tools/lint-definitions.py docs/definitions
 ```
 
-Checks process definitions for: undefined roles/states, duplicate transition IDs, dangling onDeadline / link / visibility references, unreachable states, and states with no path to terminal states. **This is temporary.** Will be replaced by the Zod-based linter in `packages/protocol` (M1), then delete `tools/lint-definitions.py`.
+Checks process definitions for: undefined roles/states, duplicate transition IDs, dangling onDeadline /
+link / visibility references, unreachable states, and states with no path to terminal states. **This is
+temporary.** Will be replaced by the Zod-based linter in `packages/protocol` (M1), then delete
+`tools/lint-definitions.py`.
 
 ## Roadmap milestones
 
-**M1 — The protocol package** (current target)
-- Zod schemas: definition, instance, event header, event, connection, offering
-- JCS canonicalisation (RFC 8785), `sha256` helpers, event-header hashing
-- `Signer` interface + local Ed25519; `verify()` against resolved `did:web`
-- Chain verification: given ordered headers, confirm `prev` linkage, `from`/`to` continuity, signatures — **must pass with redacted payloads**
-- State machine evaluator: pure function
-- JSON Merge Patch (RFC 7386) application and validation
-- Visibility filter: given definition, role, instance/event, return filtered view
-- Definition linter (replaces Python tool)
-- JSON Schema export for non-TypeScript implementations
-- Exit: `pnpm --filter protocol test` green; definitions load and lint; tampered events fail; redacted events pass
+Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-**M2 — The node, single party**
-- Drizzle schema: `participantId` on every table from the start
-- Definition registry, `If-Match` / `409` / `428`, `Idempotency-Key`, RFC 7807 errors
-- `auto` transitions fire on state entry
-- `GET /.well-known/did.json` from config
-- Exit: one node, one container, S1's weighing sequence runs with `curl`, single-party
-
-**M3 — Two nodes: connections, delivery, replication**
-- Connection handshake with `did:web` resolution
-- Delivery: `webhook` push + backoff, `stream` (SSE) with `Last-Event-ID` catch-up
-- Peer replication with verification
-- Node-to-node auth (JWS bearer)
-- Event signing switched on
-- Exit: two nodes, `docker compose up`, S1 runs end-to-end, both sides' replicas verify
-
-**M4 — Quotations, links, deadlines**
-- `quotationId` on POST `/instances`
-- `links` evaluation: subscribe to related instances
-- Deadline scheduling and `onDeadline` firing
-- Attachments: content-addressed store
-- Exit: S2 runs end-to-end with counter-offer loop, auto-started service, deadline expiry
-
-**M5 — The UI**
-- Connection list, offerings browser, instance detail
-- Generic transition rendering from definitions
-- Event log with verification status
-- Better Auth sessions per participant
-- Exit: S1 and S2 driven via UI on Acme side; Van Moer via mock backoffice webhook
-
-**M6 — Measure and harden**
-- Postgres profile for large party; SQLite stays small-party default
-- Mock backoffice as separate service
-- Cost target measurements (containers, memory, cold-start, time-to-first-transaction)
-- Retries, dead letters, replay, re-hosting
-- Multi-participant-per-node exercised in tests
-- Exit: cost targets measured, not claimed; S1, S2, S4a-c all run from one command
+| Milestone | Scope | Exit |
+|---|---|---|
+| **M1** — protocol package *(current target)* | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | `pnpm --filter protocol test` green; five definitions lint; tampered event fails, redacted event passes |
+| **M2** — connector, single party | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, **admin UI starts** | One container, **no database**. S1 runs on the local API with `curl` + an API key; audit log shows every call including a refusal |
+| **M3** — two connectors | **Scenario harness + in-process transport first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, **Mongo adapter + conformance in CI** | **S4a and S4b pass as scenario tests in `pnpm test`**; then two containers, S1 end to end, both replicas verify |
+| **M4** — quotations, links, deadlines | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachments, `GET /offerings` | S2 end to end as a scenario test and across containers |
+| **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
+| **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
 
 ## Working agreements
 
-- **Simplicity is a hard requirement.** Container count and time-to-first-transaction are acceptance criteria. If a change adds a container or dependency, say what it buys.
-- **Prefer boring, standard pieces.** JSON Schema, JCS (RFC 8785), `did:web`, JWS, JSON Merge Patch, SSE. The composition is the contribution.
-- **Never commit private keys or hardcode credentials** — not even in demo seed scripts.
-- **`packages/protocol` is the spec.** If behaviour is not expressed there as schema or tested function, it is not decided.
-- **Simplicity target**: `docker compose up` → first transaction in < 60s; containers per party = 1 (+ Postgres only for large-party profile); memory < 150 MB small-party; no inbound HTTPS for `stream` delivery users.
+- **Simplicity is a hard requirement.** Container count and time-to-first-transaction are acceptance
+  criteria. If a change adds a container or dependency, say what it buys.
+- **Prefer boring, standard pieces.** JSON Schema, JCS (RFC 8785), `did:web`, JWS, JSON Merge Patch, SSE,
+  RFC 7807. The composition is the contribution.
+- **Never commit private keys or hardcode credentials** — not even in demo seed scripts or test fixtures.
+  Test keys are generated at test setup.
+- **`packages/protocol` is the spec.** If behaviour is not expressed there as schema or tested function,
+  it is not decided.
+- **Simplicity target**: `docker compose up` → first transaction in < 60s; self-run containers = 1
+  headless / 2 with the demo UI / 0 fully hosted; **0 database containers** in the small profile; memory
+  < 150 MB small-party; no inbound HTTPS for `stream` delivery users; full S0–S4 suite in seconds with no
+  containers.
+- **Nothing is set in stone until implemented, and barely then.** We are in ideation heading for a
+  field-tested demo, not production. Prefer the choice that is easier to pivot away from.
 - Ask when unsure or sources conflict. **The human supervisor decides** on direction questions.
-- **Never commit or push.** Git write operations are also blocked in `.claude/settings.json`. When a coherent unit of work is done — a milestone exit criterion met, a test suite green, a logical stopping point before switching tasks — stop and prompt the human supervisor to review and commit, rather than continuing on top of uncommitted work.
+- **Never commit or push.** Git write operations are also blocked in `.claude/settings.json`. When a
+  coherent unit of work is done — a milestone exit criterion met, a test suite green, a logical stopping
+  point before switching tasks — stop and prompt the human supervisor to review and commit, rather than
+  continuing on top of uncommitted work.
 
 ## Key decisions and their reasons
 
+- **Split connector / admin UI / process UI**: makes "bring your own UI or backend" the normal path
+  rather than a special case, and enables the third-party-hosted topologies
+- **Local API relays by `hostedBy`**: keeps the hosting model out of every client, and keeps the connector
+  the only thing holding a signing key
+- **`X-Actor-Ref` outside the signed header**: peers don't need employee identities, and a replicated
+  chain cannot be retracted
+- **Audit log alongside the event log**: failed actions produce no event, so without it there is no record
+  they happened
+- **Document store behind a port**: no migrations, a dev store needing zero infrastructure, and storage
+  matching the JSON-native artefacts. Note SQL was never what constrained definitions — `instance.data`
+  was always an app-layer-validated blob
+- **Mongo adapter at M3, not M6**: memory and file are both single-writer and in-process, so they hide the
+  contracts a networked store differs on
+- **Hermetic scenario tests**: S4a and S4b are the two most important behaviours in the design and must
+  not be things a person checks by hand
 - **Redacted events in the chain**: enables field-level visibility without losing verification
 - **Connections before processes**: simplifies delivery guarantees and auth
 - **`roles` as array**: unlocks multi-party without a redesign

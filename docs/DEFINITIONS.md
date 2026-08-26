@@ -62,7 +62,7 @@ generic UI and for defaulting `hostedBy`; business logic keys off `id`.
 
 The `id` of the role whose participant runs the **home node** for instances of this definition. That
 node holds the authoritative record and assigns `seq`. See
-[ARCHITECTURE.md §5](ARCHITECTURE.md#5-hosting-and-the-trust-model) for what this does and does not
+[ARCHITECTURE.md §8](ARCHITECTURE.md#8-hosting-and-the-trust-model) for what this does and does not
 imply about trust.
 
 ### `states`, `initialState`, `terminalStates`
@@ -130,8 +130,8 @@ An array of grants. A role may read a path if **any** grant matches.
 - `defaultVisibility: "all"` means unlisted paths are readable by every participant. Set `"none"` for
   processes where withholding is the norm; then every path needs an explicit grant.
 
-Visibility is applied on instance reads, event replay, the SSE stream, and attachment fetches — one
-enforcement point, in the runtime.
+Visibility is applied on instance reads, event replay, the event stream, and attachment fetches, on **both**
+the peer and the local surface — one enforcement point, in the runtime.
 
 ### `links`
 

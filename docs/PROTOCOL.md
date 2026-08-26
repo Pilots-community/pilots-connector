@@ -3,21 +3,35 @@
 *The wire specification. Concepts in [ARCHITECTURE.md](ARCHITECTURE.md); the schema for the definition
 documents referenced here is in [DEFINITIONS.md](DEFINITIONS.md).*
 
-All paths are relative to a participant's node base URL. All bodies are `application/json` unless
-stated. All errors are RFC 7807 `application/problem+json`.
+All paths are relative to a connector's base URL. All bodies are `application/json` unless stated. All
+errors are RFC 7807 `application/problem+json`.
 
-## 1. Identity and authentication
+## 1. Three surfaces
 
-Two layers. Keep them apart.
+The auth boundary is visible in the URL. Nothing is accepted across a boundary: a session is never a
+bearer token, an API key never authenticates a peer.
 
-### 1.1 Node ↔ node
+| Surface | Prefix | Auth | Callers |
+|---|---|---|---|
+| **Peer** | `/api/peer/v1/*` | JWS bearer, `did:web`-resolved (§2.1) | other connectors |
+| **Integration** | `/api/local/v1/*` | API key + scopes, `X-Actor-Ref` (§2.2) | backoffice, own UI, demo UI's BFF |
+| **Admin** | `/api/admin/v1/*` | admin session (§2.3) | the connector's own admin UI |
+| — | `/.well-known/did.json` | none | anyone. Static; not a surface. |
+
+**No privileged path.** Our demo process UI is an ordinary API-key client on `/api/local/v1`. Every
+capability it has is available to any third-party UI or backoffice on the same terms. If a feature ever
+needs a route only our UI can use, that is a design failure, not a shortcut.
+
+## 2. Identity and authentication
+
+### 2.1 Peer — node ↔ node
 
 A participant is identified by a **`did:web` DID**, resolved over ordinary HTTPS. There is nothing to
 run: the participant publishes a static document at `https://<domain>/.well-known/did.json` containing
 an Ed25519 verification method.
 
-Every cross-node request carries a short-lived JWS bearer token signed by the calling participant's
-key:
+Every cross-connector request carries a short-lived JWS bearer token signed by the calling
+participant's key:
 
 ```
 Authorization: Bearer <compact JWS>
@@ -34,16 +48,61 @@ per short window — **nothing expires in the middle of a business process**, be
 authenticates the call, not the process.
 
 There is no handshake, no negotiation, and no session to establish before a call. The only
-prerequisite is an `ACTIVE` connection between the two participants (§2).
+prerequisite is an `ACTIVE` connection between the two participants (§3).
 
-### 1.2 Human ↔ UI
+Every rejection here is recorded in the application log and the audit log (§6).
 
-An ordinary session, issued by Better Auth, scoped to one participant on that node. It authorises use
-of *this* node's UI and API. It is never accepted by another node, and it never substitutes for a DID
-signature. A person acting through the UI causes the node to sign an event with the **participant's**
-key; the person's identity is recorded as metadata on the event, not as its signer.
+### 2.2 Integration — API key + actor reference
 
-### 1.3 Signing
+An integrator authenticates with a key scoped to one participant:
+
+```
+Authorization: ApiKey ak_live_7f3c…
+X-Actor-Ref:   alice@acme.example
+```
+
+A key record holds `participantId`, a label, the **hashed** secret, scopes, created-by, created-at,
+last-used-at, revoked-at and an optional expiry. The secret is displayed once at creation and never
+retrievable afterwards. Keys are created and revoked on the admin surface (§5.3).
+
+Scopes, deliberately few:
+
+| Scope | Grants |
+|---|---|
+| `instances:read` | read instances, read the event log |
+| `instances:write` | create instances, apply transitions |
+| `events:read` | subscribe to local delivery / the local SSE stream |
+| `attachments:read` / `attachments:write` | fetch / upload content-addressed documents |
+| `connections:read` | list connections and their status |
+| `definitions:read` | read the definition registry and offerings |
+
+Per-definition and per-role scoping is a named later refinement. Flat scopes for the pilot.
+
+**`X-Actor-Ref` is asserted, not proven.** The connector authenticates the *key*, not the person behind
+it. The header is an opaque, length-limited string — an email, an internal user id, a service name — and
+the connector treats it as an audit hint. It is:
+
+- recorded in the audit log on every call,
+- attached to the resulting event as **unsigned local metadata**,
+- **never** part of the signed event header, and therefore never replicated to a peer.
+
+That last point is deliberate. Peers do not need your employees' identities, and a signed, replicated
+chain cannot be retracted. If individual-level non-repudiation is ever required, it becomes a signed
+header field behind an explicit definition flag — a decision to take on purpose, not by default.
+
+The event's `actor` is always the **participant's** DID (§4.1).
+
+### 2.3 Admin — human ↔ admin UI
+
+An ordinary session, issued by Better Auth, scoped to one participant on that connector. It authorises
+the admin surface only. It is never accepted by another connector, it is never accepted on
+`/api/local/v1` or `/api/peer/v1`, and it never substitutes for a DID signature.
+
+The demo process UI does **not** use this. It owns its own user accounts and holds an API key. The
+connector is not an identity provider for anything except its own admin UI — which is what keeps a
+third-party-hosted connector from ending up holding your user accounts.
+
+### 2.4 Signing
 
 Signing goes through a `Signer` interface keyed by participant:
 
@@ -54,19 +113,22 @@ interface Signer {
 }
 ```
 
-The default implementation holds a local Ed25519 key. Remote signers are additional implementations
-of this interface. Key management must never sit on the critical path of the state machine.
+The default implementation holds a local Ed25519 key. Remote signers are additional implementations of
+this interface. Key management must never sit on the critical path of the state machine.
 
-## 2. Connections
+The connector is the only component that ever holds a key. An integrator never signs anything, which is
+why the local API relays (§4.1) rather than letting clients address peers directly.
+
+## 3. Connections
 
 Two participants establish a connection once. Everything else flows over it. **There is no per-request
 callback URL.**
 
-### 2.1 Handshake
+### 3.1 Handshake
 
 ```
 A                                                    B
-│  POST /api/v1/connections/requests                 │
+│  POST /api/peer/v1/connections/requests            │
 │  Authorization: Bearer <JWS signed by A>           │
 │  { fromDid, fromBaseUrl, displayName,              │
 │    delivery: "webhook" | "stream",                 │
@@ -74,30 +136,34 @@ A                                                    B
 ├───────────────────────────────────────────────────▶│  202 Accepted
 │                                                    │  status PENDING_INBOUND
 │                                                    │
-│                              (B's operator accepts in the UI, or
-│                               auto-accepts from an allowlist)
+│                              (B's operator accepts in the ADMIN UI, or
+│                               auto-accepts from a configured allowlist)
 │                                                    │
-│  POST /api/v1/connections/{id}/accepted            │
+│  POST /api/peer/v1/connections/{id}/accepted       │
 │  { delivery, deliveryUrl? }                        │
 │◀───────────────────────────────────────────────────┤
 │  both sides ACTIVE                                 │
 ```
 
-`POST /api/v1/connections/{id}/accept` is the **local** call B's UI makes to approve; `/accepted` is
-the **remote** callback B then makes to A. A rejection is `POST /api/v1/connections/{id}/rejected`.
+Note which surface each call sits on. `POST /api/admin/v1/connections/{id}/accept` is the **local**
+call B's admin UI makes to approve; `/api/peer/v1/connections/{id}/accepted` is the **remote** callback
+B then makes to A. A rejection is `POST /api/peer/v1/connections/{id}/rejected`.
 
-### 2.2 Connection lifecycle
+Accepting or rejecting a connection is an administrative act and is recorded in the audit log with the
+admin session that did it.
+
+### 3.2 Connection lifecycle
 
 | State | Meaning |
 |---|---|
 | `PENDING_INBOUND` | A peer has requested a connection; our operator has not yet decided. |
 | `PENDING_OUTBOUND` | We have requested a connection; the peer has not yet decided. |
 | `ACTIVE` | Both sides agreed. Processes may flow. **Every instance and transition call requires an `ACTIVE` connection between the caller and the home node.** |
-| `DEGRADED` | Active, but delivery is failing (webhook unreachable, stream repeatedly dropping). Events accumulate and are delivered on recovery or pulled with `?since=`. Not an error state for the business process. |
+| `DEGRADED` | Active, but peer delivery is failing. Events accumulate and are delivered on recovery or pulled with `?since=`. Not an error state for the business process. |
 | `REJECTED` | The peer declined. Terminal; a new request starts a new connection. |
 | `REVOKED` | Either side ended it. Existing instances become read-only rather than disappearing — history is not deleted. |
 
-### 2.3 Trust checks on accept
+### 3.3 Trust checks on accept
 
 1. Resolve `did:web` from `fromDid`.
 2. Confirm the DID document's host matches the origin of `fromBaseUrl`. `did:web` is domain-bound by
@@ -109,7 +175,7 @@ the **remote** callback B then makes to A. A rejection is `POST /api/v1/connecti
 
 Demo deployments may seed connections as `ACTIVE` from configuration. The handshake must still work.
 
-### 2.4 Delivery
+### 3.4 Peer delivery
 
 The connection records a delivery channel **per direction**. Both carry the identical signed event
 object; only the transport differs.
@@ -117,16 +183,177 @@ object; only the transport differs.
 - **`webhook`** — the home node POSTs a batch of signed events to the peer's registered `deliveryUrl`.
   Retries with exponential backoff; failures park the connection in `DEGRADED` and events are picked
   up on the next successful delivery or by a `?since=` pull. One URL, registered once.
-- **`stream`** — the peer holds an SSE connection to `GET /api/v1/stream`. The SSE `id:` field carries
-  a global cursor; on reconnect the peer sends `Last-Event-ID` and receives everything it missed. A
-  peer using `stream` needs **no inbound endpoint, no DNS entry and no certificate**.
+- **`stream`** — the peer holds an SSE connection to `GET /api/peer/v1/stream`. The SSE `id:` field
+  carries a global cursor; on reconnect the peer sends `Last-Event-ID` and receives everything it
+  missed. A peer using `stream` needs **no inbound endpoint, no DNS entry and no certificate**.
 
-Both are pull-recoverable: `GET /api/v1/instances/{id}/events?since=<seq>` is always authoritative,
-and a peer that has missed anything can catch up without operator involvement.
+Both are pull-recoverable: `GET /api/peer/v1/instances/{id}/events?since=<seq>` is always
+authoritative, and a peer that has missed anything can catch up without operator involvement.
 
-## 3. Events
+### 3.5 Peer delivery is not local delivery
 
-### 3.1 Format
+Do not conflate these:
+
+| | Between | Channels | Declared where |
+|---|---|---|---|
+| **Peer delivery** (§3.4) | connector ↔ connector | `webhook`, `stream` | on the connection, at handshake |
+| **Local delivery** (§4.4) | connector → your own systems | `webhook`, SSE | in the admin UI, once |
+
+A large party's "webhook into the backoffice" is *local* delivery. It has no protocol standing.
+
+## 4. The local API
+
+The surface an integrator actually writes against. It mirrors the resource endpoints and **relays
+transparently**.
+
+### 4.1 Relay by `hostedBy`
+
+An integrator calls its **own** connector, always. It never addresses a peer and it never learns which
+node hosts what.
+
+```
+POST  /api/local/v1/instances
+      Authorization: ApiKey …      X-Actor-Ref: alice@acme.example
+      { "definition": "container-transport@1.0.0",
+        "participants": { "shipper": "did:web:acme…", "transporter": "did:web:vanmoer…" }, … }
+
+  → connector reads the definition's hostedBy: `transporter`
+  → that is not us
+  → relay to  vanmoer/api/peer/v1/instances,  signed JWS, ACTIVE connection required
+  → return the peer's 201 Created as our own
+```
+
+If `hostedBy` resolves to us, the call is served locally. Same request, same response shape, either
+way. `hostedBy` therefore stays an implementation detail of the connector rather than something every
+client must understand.
+
+### 4.2 Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/local/v1/connections` | Our connections and their status. |
+| `POST` | `/api/local/v1/connections` | Initiate an outbound connection request. |
+| `GET` | `/api/local/v1/offerings?peer=<did>` | Browse a peer's offerings. Relayed. |
+| `GET` | `/api/local/v1/definitions/{id}@{version}` | A definition plus its content hash. |
+| `POST` | `/api/local/v1/instances` | Start a quotation or a service instance. Relayed by `hostedBy`. |
+| `GET` | `/api/local/v1/instances` \| `/{id}` | Read, visibility-filtered. `ETag: <seq>`. |
+| `POST` | `/api/local/v1/instances/{id}/transitions` | **The one mutating call.** Relayed. |
+| `GET` | `/api/local/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
+| `GET` | `/api/local/v1/events?since=<cursor>` | SSE across every instance this participant is in. |
+| `POST` \| `GET` | `/api/local/v1/attachments[/{sha256}]` | Content-addressed documents. |
+
+### 4.3 Relay error semantics
+
+A `409`, `422` or `403` from the home node **passes through unchanged** — it is the integrator's
+problem to resolve, and rewriting it would only obscure it.
+
+A peer that is unreachable is **not** the same thing and gets its own problem type:
+
+| Status | Problem type | When |
+|---|---|---|
+| `502` | `urn:pilots:problem:peer-unreachable` | The home node did not answer, or the connection is `DEGRADED`. Retryable. |
+| `502` | `urn:pilots:problem:peer-response-invalid` | The peer answered but the response failed verification. Not retryable. |
+| `409` | *(pass-through)* | The home node reported a real `seq` conflict. |
+
+Collapsing a network fault into a business conflict would make retry logic on the integrator's side
+unwriteable. Every relay failure is recorded in the audit log with the peer DID and the outcome.
+
+### 4.4 Local delivery
+
+An integrator receives events one of two ways, chosen in the admin UI and registered once:
+
+- **SSE** — hold `GET /api/local/v1/events`. Reconnects with `Last-Event-ID`. Needs no inbound endpoint.
+- **webhook** — the connector POSTs batches to one registered internal URL, with backoff.
+
+Both are visibility-filtered exactly as a read would be. Both are pull-recoverable via `?since=`.
+
+## 5. The admin API
+
+The minimal surface for operating your own connector. Everything here is an administrative act and
+everything here is audited.
+
+### 5.1 What it covers
+
+| Area | Operations |
+|---|---|
+| API keys | create (secret shown once), list, revoke |
+| Connections | list, accept, reject, revoke; manage the auto-accept allowlist |
+| Local delivery | register / update / remove the internal webhook target |
+| Definitions | list the registry, register a definition, view content hashes |
+| Participants | view; signer configuration |
+| Audit log | read and filter (§6.2) |
+
+### 5.2 What it deliberately does not cover
+
+Starting processes, applying transitions, or reading business data. Those are the local API's job, and
+routing them through the admin surface would create exactly the privileged path §1 forbids. The admin
+UI is for managing the connector, not for running processes.
+
+### 5.3 Key creation
+
+```jsonc
+// POST /api/admin/v1/apikeys      (admin session)
+{ "label": "backoffice-prod", "scopes": ["instances:read", "instances:write", "events:read"] }
+
+// 201 Created — the ONLY time the secret is returned
+{ "id": "ak_7f3c", "secret": "ak_live_7f3c…", "scopes": [ … ], "createdAt": "…" }
+```
+
+Audited as `apiKey.create`, with the admin session that did it.
+
+## 6. Logging and audit
+
+Three records, three jobs. See [ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-three-logs).
+
+### 6.1 Application log
+
+Structured JSON to stdout, shaped for an ordinary log sink (CloudWatch and friends). It **must** record
+every rejected authentication, every authorisation failure, and every attempt to change something the
+caller was not entitled to change — the class of event that by definition produces no business event.
+
+The logger carries an `audit` flag so one call site can reach both destinations:
+
+```ts
+log.warn({ audit: { action: 'transition.apply', outcome: 'denied',
+                    subject: { instance } },
+           problem: 'urn:pilots:problem:role-not-permitted' },
+         'transition refused')
+```
+
+Which entries carry `audit` is a deliberate per-call-site choice, not a level threshold.
+
+### 6.2 Audit log
+
+Append-only, **locally hash-chained**, unsigned, and **never replicated**.
+
+```jsonc
+{ "seq": 41, "at": "2026-08-26T09:14:02Z", "participantId": "…",
+  "category": "admin" | "local" | "peer",
+  "action":  "apiKey.create" | "connection.accept" | "instance.create" |
+             "transition.apply" | "chain.verify" | "delivery.fail" | …,
+  "actor":   { "kind": "adminSession" | "apiKey" | "peer" | "runtime",
+               "id": "…", "actorRef": "alice@acme.example" },
+  "subject": { "instance": "018f2c…" },
+  "outcome": "ok" | "denied" | "failed",
+  "problem": "urn:pilots:problem:…",
+  "request": { "method": "POST", "path": "…", "ip": "…", "jti": "…" },
+  "prev":    "sha256:…" }
+```
+
+- `prev` is `sha256` of the JCS-canonicalised previous entry. Same primitives as the event chain, so
+  this costs nothing new and gives tamper evidence on your own administrative trail with no key
+  ceremony.
+- **Mutations and denials are always recorded.** Read-auditing is configurable and defaults to denials
+  only, or the log drowns in `GET`s.
+- Retention is configurable. Entries never leave the connector.
+
+Always audited: every admin action, every mutating local call, every inbound peer call, every JWS
+verification failure, every chain verification failure, every delivery failure, and every `4xx` that
+represents a refusal.
+
+## 7. Events
+
+### 7.1 Format
 
 ```jsonc
 { "header": {
@@ -150,14 +377,16 @@ and a peer that has missed anything can catch up without operator involvement.
 - `prev` is `sha256` of the canonicalised **header** of event `seq - 1`; `null` for `seq == 1`.
 - `payloadHash` is `sha256` of the canonicalised payload, or of the empty object when there is none.
 - `to` and `payload` are both optional — a transition may change state, patch data, or do both.
+- `actor` is the **participant's** DID. The `X-Actor-Ref` of the caller who caused it is stored locally
+  alongside the event and in the audit log; it is not in the header and not replicated.
 
-### 3.2 Canonicalisation
+### 7.2 Canonicalisation
 
 **JCS, RFC 8785**, applied before every hash and every signature. Use the `canonicalize` package. Do
 not hand-roll key ordering. An implementation that skips this appears to work perfectly until a second
 implementation exists.
 
-### 3.3 Verification
+### 7.3 Verification
 
 On receiving events for an instance, a peer must:
 
@@ -167,52 +396,56 @@ On receiving events for an instance, a peer must:
 4. Check `from` matches the state it computed after `seq - 1`.
 5. If the payload is present, check `payloadHash` matches it.
 
-A failure at step 3 or 4 means the host has rewritten history. It is a hard error: surface it, do not
-retry, do not silently resync.
+A failure at step 3 or 4 means the host has rewritten history. It is a hard error: surface it, audit it
+as `chain.verify` / `failed`, do not retry, do not silently resync.
 
 **Redacted payloads are not verification failures.** When visibility rules withhold fields, the payload
 arrives partial or absent. The header still verifies, the chain still verifies, and the instance's
 visible state is still exact. Only the withheld values are unknown — which is the intent.
 
-### 3.4 Attachments
+### 7.4 Attachments
 
 Documents are content-addressed. The event header lists `{ sha256, mime, size }`; the bytes are fetched
-from `GET /api/v1/attachments/{sha256}`, subject to the same visibility rules. This keeps the log small,
-makes documents deduplicated and tamper-evident, and avoids base64 in the event stream.
+from `/attachments/{sha256}` on either surface, subject to the same visibility rules. This keeps the log
+small, makes documents deduplicated and tamper-evident, and avoids base64 in the event stream.
 
-## 4. Concurrency and idempotency
+## 8. Concurrency and idempotency
 
 Three separate mechanisms for three separate problems:
 
 | Problem | Mechanism |
 |---|---|
 | Two parties act on the same instance at once | `If-Match: <seq>` on the transition call. Mismatch → `409 Conflict` with the current `seq`. Missing → `428 Precondition Required`. |
-| The host rewrote history | `prev` hash chain + per-event signature (§3.3). |
+| The host rewrote history | `prev` hash chain + per-event signature (§7.3). |
 | A client retried after a timeout | `Idempotency-Key: <uuid>` header. A repeat with the same key returns the original result rather than applying the transition twice. |
 
-`ETag` on instance reads carries the current `seq`.
+`ETag` on instance reads carries the current `seq`. Both are honoured identically on the peer and local
+surfaces; the local surface forwards them across a relay.
 
-## 5. Endpoints
+Appending the event and updating the materialised instance is **one atomic store operation**
+([ARCHITECTURE.md §7.1](ARCHITECTURE.md#71-the-port-is-shaped-by-two-operations)). `Idempotency-Key`
+claims require a real unique constraint. These two contracts are why the repository is a port with a
+conformance suite rather than an ad-hoc data-access layer.
 
-Eleven, of which an integrator meets four: create an instance, make a transition, read the instance,
-receive events.
+## 9. Peer endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/.well-known/did.json` | Static DID document. No auth. |
-| `GET` | `/api/v1/offerings` | What this participant offers, with the quotation definition that applies to each. |
-| `GET` | `/api/v1/definitions/{id}@{version}` | A definition plus its content hash. |
-| `POST` | `/api/v1/connections/requests` | Inbound connection request from a peer. |
-| `POST` | `/api/v1/connections/{id}/accept` | Local: operator approves a pending request. |
-| `POST` | `/api/v1/connections/{id}/accepted` \| `/rejected` | Remote: peer reports the outcome. |
-| `POST` | `/api/v1/instances` | Start a quotation or a service instance. |
-| `GET` | `/api/v1/instances` \| `/api/v1/instances/{id}` | Read, visibility-filtered. `ETag: <seq>`. |
-| `POST` | `/api/v1/instances/{id}/transitions` | **The one mutating call.** |
-| `GET` | `/api/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
-| `GET` | `/api/v1/stream?since=<cursor>` | SSE across every instance the caller participates in. |
-| `GET` | `/api/v1/attachments/{sha256}` | Content-addressed document bytes. |
+| `GET` | `/api/peer/v1/offerings` | What this participant offers, with the quotation definition that applies to each. |
+| `GET` | `/api/peer/v1/definitions/{id}@{version}` | A definition plus its content hash. |
+| `POST` | `/api/peer/v1/connections/requests` | Inbound connection request from a peer. |
+| `POST` | `/api/peer/v1/connections/{id}/accepted` \| `/rejected` | Remote: peer reports the outcome. |
+| `POST` | `/api/peer/v1/instances` | Start a quotation or a service instance. |
+| `GET` | `/api/peer/v1/instances` \| `/{id}` | Read, visibility-filtered. `ETag: <seq>`. |
+| `POST` | `/api/peer/v1/instances/{id}/transitions` | **The one mutating call.** |
+| `GET` | `/api/peer/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
+| `GET` | `/api/peer/v1/stream?since=<cursor>` | SSE across every instance the caller participates in. |
+| `GET` | `/api/peer/v1/attachments/{sha256}` | Content-addressed document bytes. |
 
-### 5.1 `POST /api/v1/instances`
+### 9.1 `POST /instances`
+
+Identical body on both surfaces. On the local surface it may be relayed (§4.1).
 
 ```jsonc
 // request
@@ -222,7 +455,7 @@ receive events.
   "offering": "urn:offering:vanmoer:container-transport",
   "data": { "pickup": { … }, "dropoff": { … }, "window": { … } } }
 
-// 201 Created, Location: /api/v1/instances/018f2b…, ETag: "1"
+// 201 Created, Location: …/instances/018f2b…, ETag: "1"
 ```
 
 Rejected with `422` if the caller's DID is not among `participants`, if the definition forbids the
@@ -232,7 +465,7 @@ If the referenced offering carries a **standing** quotation, the node creates th
 and immediately auto-fires its initial transition, so it is returned already in `AGREED`. Same code
 path as a negotiated quotation — the definition differs, the runtime does not.
 
-### 5.2 `POST /api/v1/instances/{id}/transitions`
+### 9.2 `POST /instances/{id}/transitions`
 
 ```jsonc
 // request  — If-Match: "3"   Idempotency-Key: <uuid>
@@ -246,31 +479,47 @@ path as a negotiated quotation — the definition differs, the runtime does not.
 The home node checks, in order: the connection is `ACTIVE`; the caller holds a role listed in the
 transition's `by`; the instance's current state is in the transition's `from`; the patch validates
 against the transition's `patch` schema and the resulting data document validates against the
-definition's `data` schema; any `guards` hold. Then it assigns `seq`, builds the header, signs, appends,
-updates the materialised instance, evaluates `links`, and delivers to peers.
+definition's `data` schema; any `guards` hold. Then it assigns `seq`, builds the header, signs, appends
+the event and the materialised instance atomically, writes the audit entry, evaluates `links`, and
+delivers to peers and to local delivery targets.
+
+Any check that fails produces an audit entry with `outcome: "denied"` and no event.
 
 `patch` is **JSON Merge Patch (RFC 7386)** against the instance's `data` document. `null` deletes a key.
 
-### 5.3 Errors
+### 9.3 Errors
 
-RFC 7807 throughout.
+RFC 7807 throughout, on all three surfaces.
 
 | Status | When |
 |---|---|
-| `401` | Missing, malformed, expired or unverifiable bearer JWS. |
-| `403` | Authenticated, but not a participant in this instance, or role not permitted this transition, or connection not `ACTIVE`. |
+| `401` | Missing, malformed, expired or unverifiable credential — bearer JWS, API key, or session. |
+| `403` | Authenticated, but: not a participant in this instance; role not permitted this transition; connection not `ACTIVE`; or the API key lacks the required scope. |
 | `404` | Unknown instance, or one the caller may not see. Do not distinguish the two. |
 | `409` | `If-Match` does not equal the current `seq`. Body carries the current `seq`. |
 | `422` | Schema validation failure, illegal `from` state, unknown transition, failed guard. Body lists the individual errors. |
 | `428` | `If-Match` absent on a mutating call. |
+| `502` | Relay only: peer unreachable or peer response invalid (§4.3). |
 
-## 6. What an integrator actually does
+## 10. What an integrator actually does
 
-1. Publish a `did.json` at their domain.
-2. Accept one connection request.
-3. `POST /api/v1/instances` to start something.
-4. `POST /api/v1/instances/{id}/transitions` to make each move.
-5. Receive events — hold an SSE connection, or register one webhook URL.
+1. Get an API key from the admin UI (or from their hosting provider).
+2. `POST /api/local/v1/instances` to start something.
+3. `POST /api/local/v1/instances/{id}/transitions` to make each move.
+4. Receive events — hold the local SSE stream, or register one internal webhook.
 
-No catalog, no negotiation handshake, no transfer setup, no token lifecycle to manage. If this list
-grows, something has gone wrong.
+That is the whole list, and note what is absent: no DID to publish, no key to manage, no peer address to
+resolve, no catalog, no token lifecycle, no knowledge of who hosts what. Publishing a `did.json` and
+accepting connections are one-time **operator** tasks on the admin surface, not integration work.
+
+If this list grows, something has gone wrong.
+
+## 11. Deferred: a `public` view-only surface
+
+Recorded so it is a choice rather than an omission. Not scheduled — see [ROADMAP.md](ROADMAP.md).
+
+A party involved in a process but not running a connector should be able to watch it progress. The
+shape: a long-lived, view-only token embedded in a URL, resolving to a filtered read of a single
+instance, on a fourth `/api/public/v1/*` surface. It reuses the existing visibility filter, so the hard
+part is already built in M1. What needs deciding when it is picked up: token issuance and revocation,
+which role the viewer is filtered as, and whether the token grants event history or current state only.
