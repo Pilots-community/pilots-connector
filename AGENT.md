@@ -195,12 +195,19 @@ pilots-service/
 `packages/protocol`. It may **never** import from `apps/connector`. If the demo UI needs something the
 local API does not expose, that is a gap in the local API, not a reason to reach inside.
 
-pnpm workspace. Key libraries: `zod`, `jose`, `did-resolver` + `web-did-resolver`, `canonicalize`,
-`better-auth`, `mongodb` (large-party adapter only), React + Tailwind + shadcn + TanStack Query for both
-UIs. Documents carry an `@context` so they are JSON-LD/ODRL-projectable, but there is **no JSON-LD
-processor on the hot path**.
+**Full stack, finalised, with reasons: [docs/STACK.md](docs/STACK.md).** Summary: pnpm workspace,
+Node 24, TypeScript strict, **Vitest**. `zod` 4 (protocol shapes) + **`Ajv`** (definition-supplied JSON
+Schema) — two validators, two jobs. `jose`, `did-resolver` + `web-did-resolver`, `canonicalize`,
+**`ulidx`**, **`pino`**, `better-auth`, `mongodb` (large-party adapter only). NestJS 11 + Fastify for the
+connector, **CommonJS** there and dual-output ESM/CJS for `packages/*`. Vite + React + Tailwind + shadcn
++ TanStack Query for both UIs, with a thin Fastify BFF for the process UI. ESLint + Prettier +
+`eslint-plugin-boundaries`. Playwright.
 
-No ORM, no SQL, no migrations.
+Hand-rolled in `packages/protocol` because they *are* the spec: JSON Merge Patch, and a restricted ISO
+8601 duration subset. Documents carry an `@context` so they are JSON-LD/ODRL-projectable, but there is
+**no JSON-LD processor on the hot path**.
+
+No ORM, no SQL, no migrations, no broker, no Redis, no BPMN engine.
 
 ## Key files
 
@@ -208,6 +215,7 @@ No ORM, no SQL, no migrations.
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — wire spec: the three surfaces, auth, events, endpoints
 - [docs/DEFINITIONS.md](docs/DEFINITIONS.md) — the process definition schema, annotated
 - [docs/definitions/](docs/definitions/) — five real definitions used by the scenarios
+- [docs/STACK.md](docs/STACK.md) — the finalised tech stack, and what each dependency buys
 - [docs/TESTING.md](docs/TESTING.md) — the four test tiers and why scenarios are hermetic
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) — the end-to-end walkthroughs we are building toward
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones from empty repo to running demo

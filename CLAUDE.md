@@ -48,6 +48,7 @@ Deployment topologies (`[…]` is one container):
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, terminology, the three artefacts, the three logs, hosting and trust
 - [docs/PROTOCOL.md](docs/PROTOCOL.md) — wire spec: the three surfaces, auth, events, endpoints
 - [docs/DEFINITIONS.md](docs/DEFINITIONS.md) — process definition schema, annotated
+- [docs/STACK.md](docs/STACK.md) — the finalised tech stack, and what each dependency buys
 - [docs/TESTING.md](docs/TESTING.md) — the four test tiers and why scenario tests are hermetic
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) — end-to-end walkthroughs (S0–S4)
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones M1–M6 from empty repo to running demo
@@ -135,8 +136,17 @@ pilots-service/
 **Boundary rule, lint-enforced:** `apps/process-ui` may import `packages/client` and `packages/protocol`.
 It may **never** import from `apps/connector`. A gap there is a gap in the local API.
 
-**pnpm workspace.** Key libraries: `zod`, `jose`, `did-resolver` + `web-did-resolver`, `canonicalize`,
-`better-auth`, `mongodb` (large-party adapter only), React + Tailwind + shadcn + TanStack Query.
+**Stack is finalised — see [docs/STACK.md](docs/STACK.md) before adding any dependency.** pnpm
+workspace, Node 24, TS strict, **Vitest**. `zod` 4 for protocol shapes, **`Ajv`** (2020-12) for the JSON
+Schema *inside* definitions — two validators, two jobs, do not unify. `jose`, `did-resolver` +
+`web-did-resolver`, `canonicalize`, `ulidx`, `pino`, `better-auth`, `mongodb` (large-party only).
+NestJS 11 + Fastify (**CJS**; `packages/*` are dual ESM+CJS via tsup). Vite + React + Tailwind + shadcn +
+TanStack Query; process UI has a thin Fastify BFF. ESLint + Prettier + `eslint-plugin-boundaries`.
+Playwright.
+
+Hand-rolled in `packages/protocol` because they are the spec: JSON Merge Patch, restricted ISO 8601
+durations. API keys are hashed with **HMAC-SHA256 + pepper, not argon2** (high-entropy secrets — see
+STACK.md §4.1). Timers are a **scan loop driven by `Clock`, never `setTimeout`**.
 
 ## Available commands
 

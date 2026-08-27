@@ -21,7 +21,10 @@ in a document.*
 
 One package, no server. This is the milestone that decides whether the design is real.
 
-- Zod schemas: definition, instance, event header, event, connection, offering, **API key, audit entry**.
+- Zod schemas: definition, instance, event header, event, connection, offering, **API key, audit entry,
+  notification subscription**. `zod` 4, so JSON Schema export is `z.toJSONSchema()`.
+- **Ajv** (2020-12) wired for the JSON Schema *inside* a definition — `data` and `patch`. Distinct job
+  from zod; see [STACK.md §3](STACK.md#3-packagesprotocol--the-spec).
 - JCS canonicalisation (RFC 8785), `sha256` helpers, event-header hashing, **audit-entry chaining**
   (the same primitive, applied to a second chain).
 - `Signer` interface + local Ed25519 implementation; `verify()` against a resolved `did:web` document.
@@ -76,6 +79,11 @@ lint; a tampered event fails verification; a redacted event does not.
 **Exit:** one container, no database. S1's full weighing sequence runs against the **local API** with
 `curl` and an API key, single-party, no counterparty. Visibility filtering demonstrably withholds
 `grossMass` before `PAID`. The audit log shows every call, including a deliberately refused one.
+
+**Plus a measured number: resident memory and cold-start time.** NestJS costs roughly 30–50 MB of
+baseline RSS over plain Fastify, so the < 150 MB target is a real constraint rather than a comfortable
+one ([STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6)). M2 is when swapping the framework would
+still be cheap; finding out at M6 would be finding out too late.
 
 ## M3 — Two connectors: connections, delivery, replication, and the scenario harness
 

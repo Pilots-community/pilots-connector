@@ -30,6 +30,7 @@ docs/ARCHITECTURE.md      components, the three artefacts, the three logs, hosti
 docs/PROTOCOL.md          wire spec: the three API surfaces, auth, events, endpoints
 docs/DEFINITIONS.md       the process definition schema, annotated
 docs/definitions/         five real definitions used by the scenarios
+docs/STACK.md             the finalised tech stack, and what each dependency buys
 docs/TESTING.md           the four test tiers, and why scenario tests need no containers
 docs/SCENARIOS.md         the end-to-end walkthroughs we are building toward (S0–S4)
 docs/ROADMAP.md           milestones from empty repo to running demo
