@@ -79,32 +79,39 @@ These are settled. Do not re-litigate them; if you think one is wrong, say so ex
 5. **Connections are first-class and established before any process runs.** Two participants complete a
    handshake once; processes then flow over that connection. **Never a callback URL per request.** The
    connection declares its delivery channel once — `webhook` or `stream` (SSE, requiring no inbound
-   endpoint). Distinct from *local* delivery into your own systems, which is configuration.
+   endpoint).
 
-6. **Three API surfaces, three auth layers, no privileged path.**
+6. **A party with no UI is a first-class participant.** *Local* delivery is separate from peer delivery
+   and is configuration, not protocol: the operator registers **notification subscriptions** in the admin
+   UI, filtered by definition, state and transition. The type that matters is **`action.required`** — it
+   is our turn — computed from the definition, carrying the signed event and the list of available
+   transitions, so an internal system can act without holding a state machine of its own. `channel` is a
+   port: `webhook` and `sse` now, **queues later**, with no change to the subscription model.
+
+7. **Three API surfaces, three auth layers, no privileged path.**
    `/api/peer/v1` (JWS bearer, `did:web`) · `/api/local/v1` (API key + scopes) · `/api/admin/v1`
    (admin session). Never conflated, never interchangeable. **Anything our demo UI can do, a third
    party's UI can do, over the same surface with the same auth.** If that stops being true, "bring your
    own UI" is a false claim.
 
-7. **Three logs, three jobs.** *Application* (stdout, structured; every rejected auth and refused
+8. **Three logs, three jobs.** *Application* (stdout, structured; every rejected auth and refused
    change) · *audit* (in the store, locally hash-chained, never replicated; who did what, including
    what was denied) · *event* (signed, chained, replicated; what happened to the business process).
    The logger can flag an entry for the audit sink at its call site, so the two never drift apart.
 
-8. **Persistence is a port, and the store is document-oriented.** Every document carries
+9. **Persistence is a port, and the store is document-oriented.** Every document carries
    `participantId`. Three adapters behind one conformance suite: memory (test default), file (small
    party and demo, zero infrastructure), Mongo or a cloud equivalent (large party). This is
    multi-tenancy *readiness*, not multi-tenancy: the demo runs one participant per node, the code never
    assumes it.
 
-9. **Everything external is a port, and tests are hermetic.** `Clock`, `IdGenerator`, `Signer` and peer
+10. **Everything external is a port, and tests are hermetic.** `Clock`, `IdGenerator`, `Signer` and peer
    `Transport` are all injectable. **No unit, contract or scenario test may require a network, a
    container, a real clock, or a filesystem outside a temp dir.** Two connectors run in one test
    process. The default signer holds a local Ed25519 key; key management never sits on the critical
    path of the state machine.
 
-10. **Timers and abort paths exist from the start.** `deadline` / `onDeadline` on transitions, and
+11. **Timers and abort paths exist from the start.** `deadline` / `onDeadline` on transitions, and
     terminal states reachable via `from: ["*"]`. Both are cheap now and miserable to retrofit.
 
 ## The honest limitations
@@ -147,6 +154,7 @@ Absolute, not relative to anything:
 | Self-run containers, fully hosted | 0 |
 | Database containers, small-party profile | **0** — file store on a mounted volume |
 | Memory, small-party profile | < 150 MB |
+| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases** |
 | `docker compose up` → first transaction | < 60 s |
 | Inbound public HTTPS endpoint required | No, for a party using `stream` delivery |
 | Onboarding a new participant | Publish one static `did.json`, accept one connection request |

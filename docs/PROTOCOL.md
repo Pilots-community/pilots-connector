@@ -197,7 +197,7 @@ Do not conflate these:
 | | Between | Channels | Declared where |
 |---|---|---|---|
 | **Peer delivery** (§3.4) | connector ↔ connector | `webhook`, `stream` | on the connection, at handshake |
-| **Local delivery** (§4.4) | connector → your own systems | `webhook`, SSE | in the admin UI, once |
+| **Local delivery** (§4.4) | connector → your own systems | `webhook`, SSE, later `queue` | on a notification subscription, in the admin UI |
 
 A large party's "webhook into the backoffice" is *local* delivery. It has no protocol standing.
 
@@ -240,6 +240,7 @@ client must understand.
 | `POST` | `/api/local/v1/instances/{id}/transitions` | **The one mutating call.** Relayed. |
 | `GET` | `/api/local/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
 | `GET` | `/api/local/v1/events?since=<cursor>` | SSE across every instance this participant is in. |
+| `GET` | `/api/local/v1/notifications?since=<cursor>` | Replay notifications after an outage. Authoritative (§4.4). |
 | `POST` \| `GET` | `/api/local/v1/attachments[/{sha256}]` | Content-addressed documents. |
 
 ### 4.3 Relay error semantics
@@ -258,14 +259,89 @@ A peer that is unreachable is **not** the same thing and gets its own problem ty
 Collapsing a network fault into a business conflict would make retry logic on the integrator's side
 unwriteable. Every relay failure is recorded in the audit log with the peer DID and the outcome.
 
-### 4.4 Local delivery
+### 4.4 Local delivery — notification subscriptions
 
-An integrator receives events one of two ways, chosen in the admin UI and registered once:
+How a party with **no UI at all** runs processes: its internal systems are told when something needs
+doing, and they answer on the local API. This is the path that makes a fully automated participant
+possible, so it is specified rather than left as "register a webhook".
 
-- **SSE** — hold `GET /api/local/v1/events`. Reconnects with `Last-Event-ID`. Needs no inbound endpoint.
-- **webhook** — the connector POSTs batches to one registered internal URL, with backoff.
+A **notification subscription** is admin-configured state, created once and owned by the operator:
 
-Both are visibility-filtered exactly as a read would be. Both are pull-recoverable via `?since=`.
+```jsonc
+{ "id": "sub_7f3c", "participantId": "…", "label": "backoffice-prod",
+  "channel": "webhook",
+  "target": { "url": "https://backoffice.internal/pilots/hook",
+              "headers": { "X-Internal-Route": "weighing" },
+              "secretRef": "env:BACKOFFICE_HOOK_SECRET" },
+  "notify": ["action.required", "state.changed"],
+  "filter": { "definitions": ["container-weighing@1.0.0"],
+              "kinds":       ["service"],
+              "states":      ["TRUCK_ANNOUNCED", "WEIGHED"],
+              "transitions": ["weigh", "recordPayment"] },
+  "status": "ACTIVE" }
+```
+
+Every `filter` key is optional and they AND together; an absent key matches everything. An empty
+`filter` with `notify: ["event"]` is the firehose.
+
+#### Notification types
+
+| Type | Fires when | Why an internal system wants it |
+|---|---|---|
+| `action.required` | The instance entered a state where **at least one transition is available to one of our roles** | "It is our turn." The one an automated backoffice actually needs. |
+| `action.cleared` | We are no longer the party who must act | Lets a work queue drain itself instead of growing forever. |
+| `state.changed` | Any state change on an instance we participate in | Progress tracking, dashboards, ERP status sync. |
+| `event` | Every signed event, state change or not | Mirroring the log. Includes pure data patches. |
+
+`action.required` is computed, not configured: for the instance's current state, the connector asks the
+definition which transitions list one of our roles in `by`. Nothing new is declared in a definition to
+support it — it falls out of the state machine that already exists, and `packages/protocol` exposes the
+same `availableTransitions(definition, instance, roles)` function that the UI uses to render buttons.
+One rule, three consumers: notifications, the UI, and the permission check.
+
+#### Envelope
+
+```jsonc
+{ "notification": "action.required",
+  "subscription": "sub_7f3c",
+  "cursor":       "0000000041",
+  "at":           "2026-08-26T09:14:02Z",
+  "instance":     { "id": "018f2c…", "definition": "container-weighing@1.0.0",
+                    "state": "TRUCK_ANNOUNCED", "seq": 4 },
+  "available":    [ { "transition": "weigh", "role": "weigher" } ],
+  "event":        { "header": { … }, "payload": { … }, "sig": "…" } }
+```
+
+The **signed event is carried whole**, so an internal system may verify it independently instead of
+trusting its own connector. `available` is what turns a notification into an instruction: the internal
+system reads the transition id and posts it straight back to
+`POST /api/local/v1/instances/{id}/transitions`. It needs no copy of the definition and no state
+machine of its own.
+
+#### Channels
+
+`channel` is a port with one implementation for now:
+
+| Channel | Status | Notes |
+|---|---|---|
+| `webhook` | **now** | POST the envelope (batched) to `target.url`. `X-Pilots-Signature` carries an HMAC over the body using the shared secret, so the internal system can authenticate the caller across its own network. |
+| `sse` | now | Hold `GET /api/local/v1/events?since=<cursor>`, filtered by the same subscription. For an internal system that cannot accept inbound connections either. |
+| `queue` | **later** | SQS / AMQP / Pub-Sub. Deliberately deferred — the subscription model above does not change when it arrives, only the adapter does. |
+
+Adding a queue adapter must not require touching subscriptions, notification types or the envelope. If
+it does, this model is wrong.
+
+#### Delivery guarantees
+
+- **At-least-once, ordered per instance.** An internal system must tolerate a duplicate; the
+  `Idempotency-Key` it sends on the resulting transition is what makes that safe end to end.
+- **Retry with exponential backoff**, then park the subscription in `DEGRADED` and dead-letter.
+- **Replay from a cursor.** `GET /api/local/v1/notifications?since=<cursor>` is authoritative, so a
+  backoffice that was down catches up without operator involvement — the same recovery shape as peer
+  delivery.
+- **Visibility-filtered** exactly as a read would be. A notification never carries a field its
+  recipient could not have read from `GET /instances/{id}`.
+- Every delivery failure is audited (`delivery.fail`) and logged.
 
 ## 5. The admin API
 
@@ -278,7 +354,7 @@ everything here is audited.
 |---|---|
 | API keys | create (secret shown once), list, revoke |
 | Connections | list, accept, reject, revoke; manage the auto-accept allowlist |
-| Local delivery | register / update / remove the internal webhook target |
+| Notification subscriptions | create / update / pause / delete; view `DEGRADED` status, dead letters, and replay from a cursor (§4.4) |
 | Definitions | list the registry, register a definition, view content hashes |
 | Participants | view; signer configuration |
 | Audit log | read and filter (§6.2) |
@@ -506,7 +582,11 @@ RFC 7807 throughout, on all three surfaces.
 1. Get an API key from the admin UI (or from their hosting provider).
 2. `POST /api/local/v1/instances` to start something.
 3. `POST /api/local/v1/instances/{id}/transitions` to make each move.
-4. Receive events — hold the local SSE stream, or register one internal webhook.
+4. Receive notifications — register one subscription, or hold the local SSE stream.
+
+A **fully automated** party does only steps 1 and 4, plus step 3 in response: subscribe to
+`action.required`, and when one arrives, post the transition id it names straight back. No UI, no polling,
+no copy of the definition, no state machine of its own.
 
 That is the whole list, and note what is absent: no DID to publish, no key to manage, no peer address to
 resolve, no catalog, no token lifecycle, no knowledge of who hosts what. Publishing a `did.json` and

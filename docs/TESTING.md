@@ -24,6 +24,7 @@ migrates into a slow flaky browser suite that everybody learns to re-run until i
 | `IdGenerator` | deterministic ULIDs from a seed | unstable snapshots and unreproducible failures |
 | `Signer` | keys generated at test setup | key files, and any temptation to commit one |
 | `Transport` (peer delivery) | in-process — two connectors wired directly together | HTTP, ports, containers, network flake |
+| `NotificationChannel` (local delivery) | in-memory collector | a webhook receiver, and any real queue |
 | Repository | memory adapter | a database of any kind |
 
 `Transport` is the one that changes what is possible. With it, a complete two-party run is a function
@@ -81,6 +82,14 @@ loses nothing". They should not be things a person checks by hand before a demo.
 Also proven here, because they are cheap once the harness exists: the `409` on a stale `If-Match`, the
 same `Idempotency-Key` returning the original result, visibility withholding `grossMass` before `PAID`
 and releasing it after, a redacted payload verifying, and every refusal producing an audit entry.
+
+**Notifications too**, and this is the tier that must cover them, because a webhook receiver is exactly
+the kind of external dependency that tempts people into containers. Against an in-memory channel: that
+`action.required` fires for the party whose turn it is and *not* for the other one; that
+`action.cleared` follows; that a subscription's filters exclude what they should; that the envelope is
+visibility-filtered; that a failed delivery retries, then dead-letters, then replays from its cursor.
+An **automated participant is a test fixture**: subscribe to `action.required`, post back the transition
+it names, and S1 runs with no UI and no human in it at all.
 
 ### 3.4 `e2e`
 

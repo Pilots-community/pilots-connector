@@ -31,6 +31,9 @@ One package, no server. This is the milestone that decides whether the design is
   and signatures. Must pass with **redacted payloads**.
 - State machine evaluator: given a definition, a current instance and a proposed transition, return the
   next instance or a typed error. Pure function, no I/O.
+- **`availableTransitions(definition, instance, roles)`** — which transitions this participant may fire
+  right now. One rule with three consumers: `action.required` notifications, the UI's buttons, and the
+  permission check. Pure function; belongs here so the three cannot disagree.
 - JSON Merge Patch (RFC 7386) application and patch-schema validation.
 - Visibility filter: given a definition, a role and an instance or event, return the filtered view.
 - Definition linter, replacing `tools/lint-definitions.py` (then delete that file).
@@ -59,8 +62,11 @@ lint; a tampered event fails verification; a redacted event does not.
 - `If-Match` / `409` / `428`, `Idempotency-Key`, RFC 7807 errors.
 - `auto` transitions fire on state entry — which is what makes standing quotations work.
 - `GET /.well-known/did.json` served from configuration.
-- **The admin UI starts here**, minimal: mint and revoke an API key, browse the audit log. It is needed
-  to *operate* this milestone.
+- **Notification subscriptions**: the schema, admin CRUD, and the `NotificationChannel` port with the
+  in-memory adapter. Delivery machinery itself lands in M3; the model exists here so the store and the
+  admin UI carry it from the first write.
+- **The admin UI starts here**, minimal: mint and revoke an API key, browse the audit log, register a
+  notification subscription. It is needed to *operate* this milestone.
 
 **Exit:** one container, no database. S1's full weighing sequence runs against the **local API** with
 `curl` and an API key, single-party, no counterparty. Visibility filtering demonstrably withholds
@@ -78,8 +84,10 @@ the rest of the milestone testable.
   **peer** surface. Config-seeded connections as a demo shortcut.
 - **Peer delivery**: `webhook` push with backoff, and `stream` (SSE) with `Last-Event-ID` catch-up. Both
   emit the identical signed event object.
-- **Local delivery**: the internal webhook target and the local SSE stream, registered once in the admin
-  UI. Kept clearly distinct from peer delivery.
+- **Local delivery / notifications**: the `webhook` and `sse` channel adapters, `action.required` and
+  `action.cleared` computed from `availableTransitions`, subscription filtering, at-least-once ordered
+  delivery, backoff, dead letters, and cursor replay. Kept clearly distinct from peer delivery.
+  Queue adapters are explicitly **not** built here — the port is what makes them a later, additive change.
 - **The relay**: the local API resolves `hostedBy` and forwards to the home node, with the
   `peer-unreachable` / `peer-response-invalid` problem types kept separate from a real `409`.
 - Peer replication: verified local replica of every instance the participant is in; `?since=` pull as the
@@ -92,9 +100,10 @@ the rest of the milestone testable.
 - Admin UI gains connection accept / reject and the trusted-peer allowlist.
 
 **Exit:** **S4a and S4b pass as scenario tests, in milliseconds, in `pnpm test`** — those are the
-milestone's real acceptance tests, not the happy path. Then, separately: two containers,
-`docker compose up`, S1 runs end to end across both, and each side's replica verifies against the
-other's.
+milestone's real acceptance tests, not the happy path. Plus: **S1 runs with an automated participant** —
+a test fixture that subscribes to `action.required` and posts back the transition it names, with no UI
+and no human in the loop. Then, separately: two containers, `docker compose up`, S1 runs end to end
+across both, and each side's replica verifies against the other's.
 
 ## M4 — Quotations, links, deadlines
 
@@ -129,10 +138,11 @@ UI already shipped incrementally in M2 and M3.
 - **Playwright** arrives: process UI flows plus the admin flows (mint a key, accept a connection, read
   the audit log, see a red chain). Wiring and UI only.
 
-**Exit:** S1 and S2 driven entirely through the process UI on the Acme side, while the Van Moer side is
-driven by its mock backoffice over a local delivery webhook. Two profiles, one connector image — the
-claim made visible. **And: the process UI's container can be stopped without the connector caring**,
-which is the split's whole point.
+**Exit:** S1 and S2 driven entirely through the process UI **on both sides** — every step verifiable and
+demonstrable by hand, which is what the first real demo needs. Then the same runs again with Van Moer's
+UI idle and its mock backoffice driving instead, over a notification subscription: same process, same
+connector image, advancing unattended. **And: either process-UI container can be stopped without the
+connector caring**, which is the split's whole point.
 
 ## M6 — Measure and harden
 
@@ -140,8 +150,8 @@ which is the split's whole point.
 - The mock backoffice as a separate tiny service, so "large supplier automates, small consumer clicks"
   is a real deployment difference rather than a slide.
 - **S4c**: a `bench` script that prints containers, resident memory, cold-start time and
-  time-to-first-transaction, **for each of the four topologies** (0, 1, 1 and 2 self-run containers).
-  Record the numbers in `ARCHITECTURE.md §12`.
+  time-to-first-transaction, **for each of the four topologies** (0, 1, 1 and 2 self-run containers per
+  party; 4 for the full two-party demo). Record the numbers in `ARCHITECTURE.md §12`.
 - Retries, dead letters, replay from log, and re-hosting a stalled instance from a replica.
 - Multi-participant-per-connector exercised at least once in a test, to keep the hosted path honest.
 - Audit log retention and export.
@@ -159,6 +169,9 @@ Named so they are choices rather than omissions:
   a process progress. The visibility filter it needs is built in M1, so this is mostly token issuance
   and revocation plus a decision about which role the viewer is filtered as. See
   [PROTOCOL.md §11](PROTOCOL.md#11-deferred-a-public-view-only-surface).
+- **Queue channels for notifications** (SQS, AMQP, Pub/Sub). `webhook` and `sse` cover the pilot. The
+  `NotificationChannel` port and the subscription model are built so a queue adapter is additive — if
+  adding one requires changing subscriptions, notification types or the envelope, that is a design bug.
 - **Per-definition or per-role API key scoping.** Flat scopes for the pilot.
 - **Verifiable credential gates on transitions.** The hook belongs in the definition schema now
   (`requiresCredential`); enforcement can wait.

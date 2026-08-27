@@ -37,6 +37,8 @@ Three of the four broke a stated non-negotiable. None of them required a redesig
 | D8 | Persistence is a port with memory / file / mongo adapters and one conformance suite. Mongo lands at M3. | Mongo at M6. Rejected: memory and file are both single-writer and in-process, so they hide precisely the contracts a networked store differs on. |
 | D9 | Hermetic tests are a non-negotiable. `Clock`, `IdGenerator`, `Signer` and peer `Transport` are injectable ports. Two connectors run in one test process. | Proving scenarios only through Playwright. Rejected: it puts all confidence in the slowest, flakiest tier. |
 | D10 | Playwright covers wiring and UI only, and most likely runs against local processes rather than containers. | Playwright as the primary scenario proof. Rejected, see D9. |
+| D11 | **Both parties run the demo process UI in the first real demo.** The mock backoffice sits alongside Van Moer's UI, not instead of it. | Only the small party getting a UI. Rejected: the first demo has to be verifiable by hand on both sides, and a UI-less party is harder to demonstrate than to build. |
+| D12 | **Notification subscriptions** are how a party with no UI participates. `action.required` is computed from the definition. `channel` is a port: `webhook` + `sse` now, queues later. | Leaving "register a webhook" underspecified. Rejected: an internal system needs to know *when it is its turn*, and deriving that from a raw event firehose would force every integrator to reimplement the state machine. |
 
 ## 3. Components
 
@@ -311,3 +313,73 @@ it incrementally viable.
   acceptable rather than urgent.
 - **Whether Playwright uses local processes or containers by default.** Local processes look lighter and
   sufficient. Not committed; revisit when there is something to run.
+
+
+---
+
+## 12. Amendment, 2026-08-26 — the demo runs two UIs, and internal systems get notified
+
+Two additions after the first review. Neither changes the model; both make it demonstrable.
+
+### 12.1 Both parties run the process UI (D11)
+
+The first cut had Acme clicking and Van Moer automated, to dramatise "small consumer, large supplier, one
+stack". Good slide, bad first demo: half of it could only be verified by reading logs.
+
+So the demo runs **four containers** — two connectors, two process UIs, still zero databases — and every
+step is drivable by hand on either side. Van Moer's mock backoffice then sits *alongside* its UI, which
+turns out to be the better demonstration anyway: run the same scenario twice, once clicked and once
+unattended, and show that the connector cannot tell the difference. The claim survives, and it is now
+something you watch rather than something you are told.
+
+Cost targets and S4c updated to four containers. The per-party numbers (2 self-hosting, 1 headless, 0
+fully hosted) are unchanged.
+
+### 12.2 Notification subscriptions (D12)
+
+"Local delivery" existed before this amendment, but only as *register a webhook and we will POST events at
+it*. That is not enough to run a party with no UI, for one specific reason: **a raw event stream does not
+tell a system when it is that system's turn.** Deriving it would mean every integrator reimplementing the
+state machine — which is exactly the thing this whole design exists to avoid.
+
+So the model is:
+
+- **A subscription** is admin-configured state: a channel, a target, the notification types wanted, and
+  filters on definition / kind / state / transition. Registered once, owned by the operator.
+- **`action.required`** is the type that matters — the instance entered a state where a transition is
+  available to one of our roles. It is **computed, not declared**: the connector asks the definition,
+  via the same `availableTransitions(definition, instance, roles)` function the UI uses to render its
+  buttons. Nothing new appears in a definition to support it.
+- **The envelope carries the whole signed event plus the available transitions.** So an internal system
+  can verify independently instead of trusting its own connector, and can act by echoing back a
+  transition id — no definition copy, no state machine, no polling.
+- **`channel` is a port.** `webhook` (HMAC-signed, so the internal network boundary is authenticated) and
+  `sse` now. **Queues — SQS, AMQP, Pub/Sub — later, as adapters.** The test of whether this model is
+  right: adding a queue must not change subscriptions, notification types, or the envelope. If it does,
+  come back and fix this section.
+- Delivery is at-least-once and ordered per instance, retried with backoff, dead-lettered, replayable
+  from a cursor, and visibility-filtered exactly as a read would be.
+
+Three consequences worth naming.
+
+**One rule, three consumers.** `availableTransitions` is a pure function in `packages/protocol` (M1), and
+notifications, UI buttons and the permission check all read from it. They cannot disagree about who may
+act, because there is only one place that decides.
+
+**An automated participant becomes a test fixture.** Subscribe to `action.required`, post back the
+transition it names. S1 then runs with no UI and no human in it, inside the scenario tier, against an
+in-memory channel adapter — so notification behaviour is covered without a webhook receiver, which is
+precisely the kind of dependency that would otherwise smuggle a container into the fast tests.
+
+**A dead backoffice is not a broken process.** A failing subscription degrades and dead-letters; the
+instance is untouched and catches up on replay. Local delivery has no protocol standing, and this is
+where that pays off.
+
+### 12.3 Where it landed
+
+| Milestone | Notification work |
+|---|---|
+| M1 | `availableTransitions`, and the subscription + envelope schemas |
+| M2 | Admin CRUD for subscriptions, the `NotificationChannel` port, in-memory adapter |
+| M3 | `webhook` and `sse` adapters, `action.required` / `action.cleared`, filtering, backoff, dead letters, cursor replay. **Exit adds: S1 runs with an automated participant.** |
+| later | Queue adapters. Additive by construction. |

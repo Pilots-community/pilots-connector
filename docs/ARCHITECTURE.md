@@ -58,27 +58,42 @@ promoting it to a shared package would be packaging for its own sake.
 
 ### 3.1 Runtime shape
 
+Above the connector sits an **integrator layer**: a process UI, an internal system, or both. The
+connector cannot tell them apart — they are all API-key clients on `/api/local/v1`.
+
 ```
-  Party A — small, self-hosted                    Party B — large, self-hosted
+  Party A — small                                 Party B — large
   ┌──────────────────────────┐                    ┌──────────────────────────┐
-  │ process-ui  (container)  │                    │ their own backoffice     │
-  │  · own user accounts     │                    │  · registers ONE local   │
-  │  · holds one API key     │                    │    delivery webhook      │
-  └───────────┬──────────────┘                    └───────────┬──────────────┘
-              │  /api/local/v1  (API key)                     │  /api/local/v1
-              ▼                                               ▼
+  │ process-ui  (container)  │                    │ process-ui  (container)  │
+  │  · own user accounts     │                    │  · a person can always   │
+  │  · holds one API key     │                    │    take over by hand     │
+  └───────────┬──────────────┘                    └──────┬───────────────────┘
+              │                                          │   ┌────────────────┐
+              │                                          │   │ their own      │
+              │                                          │   │ backoffice     │
+              │                                          │   │  · acts on     │
+              │                                          │   │  action.required│
+              │                                          │   └──────┬─────────┘
+              │  /api/local/v1  (API key)                 │         │
+              ▼                                           ▼         ▼
   ┌──────────────────────────┐                    ┌──────────────────────────┐
-  │ connector   (container)  │ ─── /api/peer/v1 ─▶ │ connector   (container)  │
+  │ connector   (container)  │ ─── /api/peer/v1 ──▶ connector   (container)  │
   │  · admin UI              │    signed JWS      │  · admin UI              │
-  │  · file store, no DB     │ ◀── events ──────── │  · Mongo (managed)       │
+  │  · file store, no DB     │ ◀── events ──────── │  · managed doc store     │
   │  · local Ed25519 key     │    over the        │  · signer plugin         │
   │  · verified replica      │    Connection      │  · public HTTPS endpoint │
   │  · no inbound endpoint   │                    │  · authoritative record  │
+  │  · notif. subscriptions  │                    │  · notif. subscriptions  │
   └──────────────────────────┘                    └──────────────────────────┘
 ```
 
-Same image both sides, two configuration files. That difference — and only that difference — is what
-separates the haulier from the terminal operator.
+Same connector image both sides, two configuration files. That difference — and only that difference —
+is what separates the haulier from the terminal operator.
+
+**The first demo runs a process UI on both sides**, so every step can be driven and verified by hand
+without reading logs. Party B additionally registers a notification subscription into a mock backoffice,
+so the automated path is demonstrated alongside the manual one — the same process, advancing either way.
+A party may run the UI, the backoffice integration, or both; nothing in the connector prefers one.
 
 ### 3.2 Deployment topologies
 
@@ -134,10 +149,44 @@ These are separate mechanisms and must not be conflated:
 | | Between | Channels | Nature |
 |---|---|---|---|
 | **Peer delivery** | connector ↔ connector | `webhook`, `stream` | Protocol. Declared on the connection. |
-| **Local delivery** | connector → your own systems | `webhook`, SSE | Configuration. Registered once, in the admin UI. |
+| **Local delivery** | connector → your own systems | `webhook`, SSE, later `queue` | Configuration. Declared on a notification subscription. |
 
 A large party's "webhook into the backoffice" is *local* delivery. It has no protocol standing and the
 peer on the other side neither knows nor cares about it.
+
+### 4.3 Local notifications — how a party with no UI participates
+
+The path that makes a fully automated participant possible. An operator configures **notification
+subscriptions** in the admin UI; the connector then tells the party's internal systems when something
+needs doing, and those systems answer on the local API.
+
+The type that matters is **`action.required`**: the instance has entered a state where at least one
+transition is available to one of our roles. *It is our turn.* This is computed rather than configured —
+the connector asks the definition which transitions list one of our roles in `by` for the current state,
+using the same `availableTransitions(definition, instance, roles)` function the UI uses to render its
+buttons. One rule, three consumers: notifications, the UI, and the permission check.
+
+| Type | Fires when |
+|---|---|
+| `action.required` | It is our turn to act |
+| `action.cleared` | It no longer is — so a work queue can drain |
+| `state.changed` | Any state change on an instance we are in |
+| `event` | Every signed event, including pure data patches |
+
+Each notification carries the **whole signed event**, so an internal system can verify independently
+rather than trusting its own connector, plus the list of available transitions. That last part is what
+turns a notification into an instruction: the internal system reads a transition id and posts it back.
+It needs no copy of the definition and no state machine of its own.
+
+Subscriptions are filterable by definition, kind, state and transition, so a backoffice hears only about
+what it handles. Delivery is at-least-once and ordered per instance, retried with backoff, dead-lettered
+on repeated failure, replayable from a cursor after an outage, and visibility-filtered exactly as a read
+would be.
+
+`channel` is a port. **`webhook` and `sse` now; queues (SQS, AMQP, Pub/Sub) later.** Adding a queue
+adapter must not change subscriptions, notification types or the envelope — only the adapter. If it
+does, this model is wrong. Full schema in
+[PROTOCOL.md §4.4](PROTOCOL.md#44-local-delivery--notification-subscriptions).
 
 ## 5. The three artefacts
 
@@ -259,7 +308,7 @@ A document store behind a port. Three adapters, one conformance suite, configura
 
 Collections, each document carrying `participantId`: `participants`, `apiKeys`, `connections`,
 `definitions`, `instances`, `events`, `attachments`, `idempotencyKeys`, `auditEntries`,
-`deliveryQueue`, `timers`.
+`subscriptions`, `deliveryQueue`, `deadLetters`, `timers`.
 
 ### 7.1 The port is shaped by two operations
 
@@ -353,8 +402,9 @@ The demo uses it for something real: the weighed gross mass is withheld from the
 payment is recorded. That is a genuine commercial rule, enforced by the runtime rather than by whoever
 assembled the message.
 
-The same filter is what would make a future view-only `public` surface (§4.3 of the design record)
-cheap: the hard part is already built.
+The same filter is what would make a future view-only `public` surface
+([PROTOCOL.md §11](PROTOCOL.md#11-deferred-a-public-view-only-surface)) cheap: the hard part is already
+built.
 
 ## 11. Multi-tenancy readiness
 
@@ -380,6 +430,7 @@ infrastructure at all.
 | Self-run containers, fully hosted | 0 |
 | Database containers, small-party profile | **0** |
 | Memory, small-party profile | < 150 MB |
+| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases** |
 | `docker compose up` → first transaction | < 60 s |
 | Public HTTPS endpoint required | No, with `stream` delivery |
 | Onboarding a participant | Publish one static `did.json`; accept one connection request |

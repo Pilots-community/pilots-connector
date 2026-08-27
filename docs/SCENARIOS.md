@@ -13,13 +13,19 @@ Two participants throughout:
 
 | | DID | Profile |
 |---|---|---|
-| **Acme Shipping** (small) | `did:web:acme-shipping.example` | File store, no database container, local key, `stream` peer delivery, no public endpoint. A person clicks in the **process UI**, which holds an API key. |
-| **Van Moer** (large) | `did:web:vanmoer.example` | Managed document store, public endpoint, `webhook` **local** delivery into a mock backoffice that auto-responds. No process UI. |
+| **Acme Shipping** (small) | `did:web:acme-shipping.example` | File store, no database container, local key, `stream` peer delivery, no public endpoint. Driven by a person in the **process UI**. |
+| **Van Moer** (large) | `did:web:vanmoer.example` | Managed document store, public endpoint. **Also runs the process UI**, and additionally subscribes a mock backoffice to `action.required`. |
 
 Same connector image, two configuration files. That difference is the entire "small consumer and large
-supplier on one stack" claim, and it should be visible in the demo rather than argued in a slide. Note
-that the two sides differ in a second way now: Acme runs a second container for the UI and Van Moer does
-not, because Van Moer integrates its own systems instead.
+supplier on one stack" claim, and it should be visible in the demo rather than argued in a slide.
+
+**Both sides run the process UI.** That is a deliberate choice for the first real demo: every step can be
+driven and verified by hand, on either side, without reading logs or curling anything. Van Moer's mock
+backoffice sits alongside its UI rather than instead of it, so the same scenario can be run twice — once
+clicked through, once unattended — and the connector cannot tell the difference. Where a step below says
+*Van Moer*, either the person or the backoffice may have done it.
+
+Container count for the full demo: **four** — two connectors, two process UIs, and **no database**.
 
 **How to read the `Call` column.** Acme's process UI never addresses Van Moer. It calls Acme's connector
 on `/api/local/v1`, and Acme's connector relays to Van Moer's `/api/peer/v1` because the definitions are
@@ -66,11 +72,11 @@ hosts both instances** and Acme holds verified replicas.
 | 2 | Acme UI | local → peer | `POST /instances` with the quotation definition and the offering URI | quotation `agree` fires automatically (`auto: true`) → **`AGREED`** at `seq 1` |
 | 3 | Acme UI | local → peer | `POST /instances` with the service definition + `quotationId` | service **`ORDERED`** |
 | 4 | Acme UI | local → peer | `POST …/transitions` `announceTruck` `{ truckPlate, expectedAt }`, `If-Match: 1` | **`TRUCK_ANNOUNCED`** |
-| 5 | Van Moer backoffice | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
+| 5 | Van Moer *(UI or backoffice)* | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
 | 6 | Acme UI | local | reads the instance | `grossMass` is **absent** — no grant matches `shipper` in `WEIGHED`. The event header still verifies; only the value is withheld. |
-| 7 | Van Moer backoffice | local | `recordPayment` `{ paymentReference }` | **`PAID`** |
+| 7 | Van Moer *(UI or backoffice)* | local | `recordPayment` `{ paymentReference }` | **`PAID`** |
 | 8 | Acme UI | local | reads the instance | `grossMass` is **now present** — the `whenState: ["PAID","VGM_ISSUED"]` grant matches. Nothing was re-sent; the same stored event is filtered differently. |
-| 9 | Van Moer backoffice | local | `issueVgm` with a PDF attachment `{ sha256, mime, size }` | **`VGM_ISSUED`** (terminal) |
+| 9 | Van Moer *(UI or backoffice)* | local | `issueVgm` with a PDF attachment `{ sha256, mime, size }` | **`VGM_ISSUED`** (terminal) |
 | 10 | Acme UI | local | `GET /api/local/v1/attachments/{sha256}` | certificate bytes, hash checked against the event header |
 
 Step 6→8 is the point of the scenario. The withheld field is a genuine commercial rule, and it is
@@ -80,6 +86,13 @@ Two things the surface column makes visible. Van Moer's backoffice and Acme's UI
 authenticated the same way — one is a person clicking and one is a machine reacting, and the connector
 cannot tell the difference. And Acme's UI made every call to its own connector; the relay to Van Moer
 never appears in its code.
+
+**Where the notification fits.** At step 4 Acme announces the truck, and the instance enters
+`TRUCK_ANNOUNCED` — a state where `weigh` is available to `weigher` and to nobody else. Van Moer's
+connector therefore emits **`action.required`** to its subscription, carrying the signed event and
+`available: [{ transition: "weigh", role: "weigher" }]`. Its backoffice posts that transition id back
+without consulting the definition, and its process UI lights up the same button from the same rule.
+Run the scenario clicking, or run it unattended; the state machine does not know which happened.
 
 ---
 
@@ -95,15 +108,15 @@ Definitions: [`container-transport-quotation`](definitions/container-transport-q
 |---|---|---|---|---|---|
 | 1 | Acme UI | local → peer | `POST /instances` — quotation, with pickup, dropoff, container type | `REQUESTED` | — |
 | 2 | Acme UI | local → peer | `POST /instances` — service, referencing `quotationId` | `REQUESTED` | **`PENDING_CONTRACT`** |
-| 3 | Van Moer backoffice | local | local delivery webhook fires; auto-quotes: `offer` `{ price: 320 EUR, pickup.earliest +1d }` | `OFFERED` | `PENDING_CONTRACT` |
+| 3 | Van Moer *(UI or backoffice)* | local | `action.required` fires (`REQUESTED`, `offer` is ours); auto-quotes: `offer` `{ price: 320 EUR, pickup.earliest +1d }` | `OFFERED` | `PENDING_CONTRACT` |
 | 4 | Acme UI | local → peer | `counter` `{ pickup.earliest: original, notes }` | `COUNTERED` | `PENDING_CONTRACT` |
-| 5 | Van Moer backoffice | local | `offer` `{ price: 355 EUR }` | `OFFERED` | `PENDING_CONTRACT` |
+| 5 | Van Moer *(UI or backoffice)* | local | `offer` `{ price: 355 EUR }` | `OFFERED` | `PENDING_CONTRACT` |
 | 6 | Acme UI | local → peer | `accept` | **`AGREED`** | — |
 | 7 | *runtime* | — | link `quotation:AGREED → startExecution` fires on the service instance | `AGREED` | **`CONTRACTED`** |
-| 8 | Van Moer backoffice | local | `assign` `{ vehiclePlate, driverName, plannedPickupAt }` | | **`ASSIGNED`** |
+| 8 | Van Moer *(UI or backoffice)* | local | `assign` `{ vehiclePlate, driverName, plannedPickupAt }` | | **`ASSIGNED`** |
 | 9 | Acme UI | local | reads | | `driverName` absent — granted to `shipper` only from `PICKED_UP` |
-| 10 | Van Moer backoffice | local | `pickup` `{ actualPickupAt, containerNumber }` | | **`PICKED_UP`**, `driverName` now visible |
-| 11 | Van Moer backoffice | local | `deliver` `{ deliveredAt, proofOfDelivery }` + PDF | | **`DELIVERED`** (terminal) |
+| 10 | Van Moer *(UI or backoffice)* | local | `pickup` `{ actualPickupAt, containerNumber }` | | **`PICKED_UP`**, `driverName` now visible |
+| 11 | Van Moer *(UI or backoffice)* | local | `deliver` `{ deliveredAt, proofOfDelivery }` + PDF | | **`DELIVERED`** (terminal) |
 
 Three things to demonstrate explicitly alongside the happy path:
 
@@ -174,13 +187,13 @@ Do not make this failure recoverable by resyncing. It is a hard error and must l
 docker compose up
 ```
 
-Expected: **three containers** for the full-self-hosting demo — Acme's connector, Acme's process UI, Van
-Moer's connector — both connectors healthy, connection established, first transaction completed in
-**under 60 seconds**, with container count and resident memory printed at the end.
+Expected: **four containers** for the full demo — two connectors and two process UIs — both connectors
+healthy, connection established, first transaction completed in **under 60 seconds**, with container
+count and resident memory printed at the end.
 
-Measure it for each topology, since the container count is the claim: 2 self-run for full self-hosting,
-1 for the headless integrator, 0 for fully hosted. Note that **neither connector needs a database
-container**.
+Measure it per topology, since the container count is the claim: 2 self-run per party for full
+self-hosting, 1 for the headless integrator, 0 for fully hosted. Note that **neither connector needs a
+database container**, so four containers here means four application processes and nothing else.
 
 Measure it. Do not assert it. The number is the argument.
 
@@ -196,6 +209,7 @@ event, so before the audit log there was no record any of it happened.
 | A peer presents a JWS that fails verification | `401`, audit entry with the peer DID, application log warning |
 | A connection request is rejected by the operator | connection `REJECTED`, audit entry with the admin session |
 | The relay target is unreachable | `502 peer-unreachable` — **not** a `409` — audit entry, retryable |
+| A notification subscription's target is down | retries with backoff, subscription goes `DEGRADED`, entry dead-lettered, `delivery.fail` audited — **the business process is unaffected** |
 
 Expected: five entries in the audit log, an unbroken audit hash chain across them, and five lines in the
 application log. The point to make out loud: **the event log is silent about all of this, by design.**

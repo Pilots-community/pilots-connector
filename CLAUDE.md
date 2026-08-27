@@ -75,24 +75,30 @@ wording is in [AGENT.md](AGENT.md).
 5. **Connections are first-class**, established before any process runs. Never a callback URL per request.
    Peer delivery channel declared once: `webhook` or `stream` (SSE, no inbound endpoint needed).
 
-6. **Three API surfaces, three auth layers, no privileged path.** `/api/peer/v1` (JWS bearer, `did:web`)
+6. **A party with no UI is a first-class participant.** Local delivery is configuration, not protocol:
+   **notification subscriptions** registered in the admin UI, filtered by definition/state/transition.
+   **`action.required`** ("it is our turn") is computed from the definition and carries the signed event
+   plus the available transitions, so an internal system needs no state machine. `channel` is a port —
+   `webhook` + `sse` now, **queues later**, no change to the subscription model.
+
+7. **Three API surfaces, three auth layers, no privileged path.** `/api/peer/v1` (JWS bearer, `did:web`)
    · `/api/local/v1` (API key + scopes, `X-Actor-Ref`) · `/api/admin/v1` (admin session). Anything our
    demo UI can do, a third party's UI can do, over the same surface.
 
-7. **Three logs, three jobs.** Application (stdout; every rejected auth and refused change) · audit (in
+8. **Three logs, three jobs.** Application (stdout; every rejected auth and refused change) · audit (in
    the store, locally hash-chained, never replicated; who did what, including denials) · event (signed,
    chained, replicated). The logger can flag an entry for the audit sink at its call site.
 
-8. **Persistence is a port; the store is document-oriented.** Every document carries `participantId`.
+9. **Persistence is a port; the store is document-oriented.** Every document carries `participantId`.
    Memory (test default) / file (small party, zero infrastructure) / Mongo (large party), one conformance
    suite. No ORM, no SQL, no migrations.
 
-9. **Everything external is a port, and tests are hermetic.** `Clock`, `IdGenerator`, `Signer`, peer
+10. **Everything external is a port, and tests are hermetic.** `Clock`, `IdGenerator`, `Signer`, peer
    `Transport`. No unit, contract or scenario test may need a network, container, real clock, or a
    filesystem outside a temp dir. Default signer is local Ed25519; key management never blocks the state
    machine.
 
-10. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states
+11. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states
     reachable via `from: ["*"]`.
 
 ## The honest limitations
@@ -162,7 +168,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   Test keys are generated at test setup.
 - **`packages/protocol` is the spec.** If behaviour is not expressed there as schema or tested function,
   it is not decided.
-- **Simplicity target**: `docker compose up` → first transaction in < 60s; self-run containers = 1
+- **Simplicity target**: `docker compose up` → first transaction in < 60s; full two-party demo = 4
+  containers (two connectors, two process UIs) and **0 databases**; self-run containers = 1
   headless / 2 with the demo UI / 0 fully hosted; **0 database containers** in the small profile; memory
   < 150 MB small-party; no inbound HTTPS for `stream` delivery users; full S0–S4 suite in seconds with no
   containers.
@@ -184,6 +191,10 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   chain cannot be retracted
 - **Audit log alongside the event log**: failed actions produce no event, so without it there is no record
   they happened
+- **`action.required` computed, not declared**: it falls out of the state machine (`by` on transitions),
+  so notifications, UI buttons and the permission check are one rule with three consumers
+- **Both sides run the demo UI in the first demo**: every step verifiable by hand; Van Moer additionally
+  subscribes a mock backoffice so the automated path shows alongside the manual one
 - **Document store behind a port**: no migrations, a dev store needing zero infrastructure, and storage
   matching the JSON-native artefacts. Note SQL was never what constrained definitions — `instance.data`
   was always an app-layer-validated blob
