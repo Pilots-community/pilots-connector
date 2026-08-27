@@ -26,10 +26,14 @@ in-house UI — is their own business, and all three go through the same API.
 | **Home node** | The connector of the participant holding the role named in the definition's `hostedBy`. Stores the authoritative instance. |
 | **Peer node** | Every other participant's connector. Holds a verified replica. |
 | **Integrator** | Anything speaking the local API on a participant's behalf: their backoffice, their own UI, or our demo process UI. |
+| **Offering** | A published statement that this participant provides a service, naming the quotation definition that applies. Publishing one is what makes a participant a supplier — see §3.3. |
 | **`requester` / `provider`** | The two generic protocol roles. Business roles (`shipper`, `weigher`, `transporter`, `terminal`) come from the definition. |
 
 Deliberately **not** used as protocol terms: *consumer/producer* (collides with messaging),
 *customer/supplier* (fine as UI labels, too narrow for three-party processes).
+
+**Nor are they attributes of a participant.** "Supplier" and "consumer" describe a role *in one
+instance*, never a kind of company and never a kind of connector. See §3.3.
 
 ## 3. Components
 
@@ -62,7 +66,7 @@ Above the connector sits an **integrator layer**: a process UI, an internal syst
 connector cannot tell them apart — they are all API-key clients on `/api/local/v1`.
 
 ```
-  Party A — small                                 Party B — large
+  Party A — lightweight profile                   Party B — scaled profile
   ┌──────────────────────────┐                    ┌──────────────────────────┐
   │ process-ui  (container)  │                    │ process-ui  (container)  │
   │  · own user accounts     │                    │  · a person can always   │
@@ -81,14 +85,15 @@ connector cannot tell them apart — they are all API-key clients on `/api/local
   │  · admin UI              │    signed JWS      │  · admin UI              │
   │  · file store, no DB     │ ◀── events ──────── │  · managed doc store     │
   │  · local Ed25519 key     │    over the        │  · signer plugin         │
-  │  · verified replica      │    Connection      │  · public HTTPS endpoint │
-  │  · no inbound endpoint   │                    │  · authoritative record  │
+  │  · no inbound endpoint   │    Connection      │  · public HTTPS endpoint │
   │  · notif. subscriptions  │                    │  · notif. subscriptions  │
+  │  · hosts some instances, │                    │  · hosts some instances, │
+  │    replicates others     │                    │    replicates others     │
   └──────────────────────────┘                    └──────────────────────────┘
 ```
 
-Same connector image both sides, two configuration files. That difference — and only that difference —
-is what separates the haulier from the terminal operator.
+The two boxes differ in **deployment profile** — store adapter, delivery channel, whether there is a
+public endpoint. Nothing else. Same image, same code paths, no build flag and no "supplier mode".
 
 **The first demo runs a process UI on both sides**, so every step can be driven and verified by hand
 without reading logs. Party B additionally registers a notification subscription into a mock backoffice,
@@ -107,6 +112,47 @@ A party may run the UI, the backoffice integration, or both; nothing in the conn
 Note what the small-party profile no longer needs: **a database container**. The file store is a
 mounted volume holding JSON. A remotely running connector with one volume is a complete deployment.
 
+### 3.3 Every connector is both supplier and consumer
+
+There is no supplier connector and no consumer connector. **A participant becomes a supplier by
+publishing an offering** — which is a record in its own store, created in the admin UI at runtime, not a
+configuration file and not a deployment decision. Withdraw the offering and it stops being a supplier,
+with no restart. Consume a peer's offering and it is a consumer, in that instance, at the same time.
+
+The case this has to survive is ordinary rather than exotic — a freight forwarder and two transporters:
+
+```
+  Freight forwarder ──── requests transport ────▶ Transporter A
+                                                        │
+                                                        │  subcontracts the same
+                                                        │  or another movement
+                                                        ▼
+                                                  Transporter B
+
+  Instance 1   container-transport   shipper: FF   transporter: A   →  home node: A
+  Instance 2   container-transport   shipper: A    transporter: B   →  home node: B
+```
+
+Transporter A is the **provider** in instance 1 and the **requester** in instance 2, under the *same
+definition*, at the same time. Its connector is the home node for one and holds a verified replica of the
+other. Both instances sit in the same store, both appear in the same instance list, and `action.required`
+fires for whichever of A's roles is next to move.
+
+Three things follow, and each is a rule the implementation has to honour:
+
+1. **Hosting resolves per instance, never per definition.** See §8 — getting this wrong is the one way to
+   break symmetry, and it is easy to get wrong because a definition names a *role* while only an instance
+   names the *participant* filling it.
+2. **A connection is bidirectional and role-free.** A and B complete one handshake and it serves traffic
+   in both directions and for either party's offerings. There is no "supplier connection".
+3. **Offerings are data, not config.** They belong in the store with `participantId`, and in the admin
+   API alongside API keys and connections.
+
+The demo deliberately exercises one direction only — Acme consumes, Van Moer supplies — because that is
+enough to show the protocol. **Symmetry is proven by a scenario test instead**
+([SCENARIOS.md S5](SCENARIOS.md#s5--a-participant-is-both-supplier-and-consumer)), so it is a tested
+property rather than a claim resting on a demo nobody ran.
+
 ## 4. The three API surfaces
 
 The auth boundary is visible in the URL. Details in [PROTOCOL.md](PROTOCOL.md).
@@ -124,8 +170,9 @@ third party cannot.
 ### 4.1 The local API relays
 
 An integrator calls its **own** connector, always, and never addresses a peer directly. The connector
-reads the definition's `hostedBy`, works out whether it is the home node, and if not relays to the peer
-signing with the participant's key:
+reads the definition's `hostedBy` role, looks up which participant fills that role *in this request*,
+works out whether that is one of its own participants, and if not relays to the peer signing with the
+participant's key:
 
 ```
 POST  our-connector/api/local/v1/instances
@@ -133,9 +180,14 @@ POST  our-connector/api/local/v1/instances
       { "definition": "container-transport@1.0.0",
         "participants": { "shipper": "did:web:acme…", "transporter": "did:web:vanmoer…" } }
 
-  → hostedBy is `transporter`, that is not us
+  → definition's hostedBy role is `transporter`
+  → participants.transporter is did:web:vanmoer… — not one of ours
   → relay to  vanmoer/api/peer/v1/instances,  signed JWS
   → return the peer's 201 as our own
+
+  (same endpoint, a different participants map, and `transporter` could just as
+   easily be US — then it is served locally with no relay. The caller cannot tell,
+   and the same connector does both, for the same definition, at the same time.)
 ```
 
 Two consequences. The integrator never learns which node hosts what, so `hostedBy` stays an
@@ -188,7 +240,7 @@ adapter must not change subscriptions, notification types or the envelope — on
 does, this model is wrong. Full schema in
 [PROTOCOL.md §4.4](PROTOCOL.md#44-local-delivery--notification-subscriptions).
 
-## 5. The three artefacts
+## 5. The artefacts
 
 ### 5.1 Definition
 
@@ -269,6 +321,36 @@ quotation reaches `AGREED`.
 - `actor` is the **participant's** DID. The human or system behind the call is recorded as unsigned
   local metadata and in the audit log, never in the signed header. See §6.
 
+### 5.4 Offering
+
+What makes a participant a supplier (§3.3). A record in its own store, published and withdrawn in the
+admin UI at runtime — not a config file, not a deployment decision.
+
+```jsonc
+{ "id": "urn:offering:vanmoer:container-weighing",
+  "participantId": "…",
+  "title": "Container weighing, Antwerp 869",
+  "quotationDefinition": "container-weighing-quotation@1.0.0",
+  "serviceDefinition":   "container-weighing@1.0.0",
+  "conditions": { "terminal": ["869"], "containerType": ["40HC", "20DV"] },
+  "price": { "value": 45, "currency": "EUR" },
+  "status": "PUBLISHED" }
+```
+
+- `quotationDefinition` is what a would-be consumer instantiates first. If that definition's initial
+  transition is `auto`, the offering is a **standing quotation** — a fixed price, agreed on creation.
+- `conditions` narrow when the offering applies. Advisory at this stage: the authoritative check is the
+  quotation definition's `data` schema and its guards.
+- Offerings are **not** part of the signed protocol core, which is why they sit here rather than among
+  the three chained artefacts. They are discovery, and a wrong offering costs a rejected quotation rather
+  than a corrupted record.
+
+Peers read them at `GET /api/peer/v1/offerings`; an integrator browses a peer's at
+`GET /api/local/v1/offerings?peer=<did>`. Publishing and withdrawing are admin acts, and audited.
+
+**Nothing stops a participant publishing offerings and consuming others' at the same time** — that is the
+normal case, not a special one (§3.3).
+
 ## 6. The three logs
 
 Three records, three jobs. Conflating them is how you end up with an audit trail that is either
@@ -345,9 +427,26 @@ storage that matches the JSON-native artefacts.
 
 ## 8. Hosting and the trust model
 
-The definition names one role in `hostedBy`. That participant's connector is the home node for every
-instance of that definition: it holds the authoritative record, assigns `seq`, and is the address every
-other participant's connector talks to.
+The definition names one **role** in `hostedBy`. The home node is resolved **per instance**, in two
+steps: read `hostedBy` from the definition, then look up which participant fills that role in *this
+instance's* `participants` map. That participant's connector holds the authoritative record, assigns
+`seq`, and is the address every other participant's connector talks to.
+
+**Per instance, not per definition.** This distinction is the whole of role symmetry (§3.3). The same
+definition, deployed unchanged, has different home nodes for different instances:
+
+```
+container-transport, hostedBy: "transporter"
+
+  instance 1   participants: { shipper: FF, transporter: A }   →  home node: A
+  instance 2   participants: { shipper: A,  transporter: B }   →  home node: B
+```
+
+A's connector is authoritative for instance 1 and a verifying replica for instance 2. Any code that
+caches "we host definition X" instead of "we host instance Y" breaks this, and it breaks it silently — the
+one-sided demo would still pass. The stored instance document therefore carries a resolved `home` flag,
+computed at write time from the two steps above, so the question is answered once rather than re-derived
+by every caller.
 
 Peers do not take this on faith:
 

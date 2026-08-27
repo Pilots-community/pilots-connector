@@ -22,7 +22,8 @@ procedures.
 
 **Design goal**: both a one-truck haulier (cheap VPS or laptop, no HTTPS endpoint required, no database
 container) and a terminal operator (managed document store, scale) must be able to run the same image
-with different configuration — or have someone else host it for them entirely.
+with different configuration — or have someone else host it for them entirely. The two differ in
+**deployment profile only**; either can be supplier or consumer, in either direction, at the same time.
 
 ## Three deliverables, not one program
 
@@ -65,8 +66,13 @@ wording is in [AGENT.md](AGENT.md).
 2. **Every change is a transition.** One mutating endpoint. A transition applies an optional state change
    and an optional JSON Merge Patch. "Update a field" and "advance the state" are not two mechanisms.
 
-3. **Multi-party from day one.** `roles` is an array with cardinality; hosting is declared per definition
-   via `"hostedBy": "<role>"`. Adding a third party must be a definition change, never a redesign.
+3. **Multi-party from day one, and role-symmetric.** `roles` is an array with cardinality; hosting is
+   declared per definition via `"hostedBy": "<role>"` but **resolved per instance** (a definition names a
+   role; only an instance names the participant). Adding a third party must be a definition change, never
+   a redesign. **No participant is typed** — supplier/consumer is a role in one instance, so the same
+   connector is supplier to one peer and consumer of another under the same definition simultaneously.
+   Publishing an offering is what makes a participant a supplier, and it is a runtime store record.
+   Deciding local-vs-remote per definition rather than per instance breaks this silently.
 
 4. **The event log is the record.** Hash-chain the event *header*, commit to the payload by `payloadHash`
    (so peers can verify redacted events). Three mechanisms for three problems: `seq` + `If-Match`
@@ -195,6 +201,10 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   so notifications, UI buttons and the permission check are one rule with three consumers
 - **Both sides run the demo UI in the first demo**: every step verifiable by hand; Van Moer additionally
   subscribes a mock backoffice so the automated path shows alongside the manual one
+- **Offerings are runtime data, not config**: publishing one is what makes a participant a supplier, so
+  supplier/consumer never becomes a build flag or a deployment mode
+- **Home node resolved per instance**: the demo is one-directional, so only a scenario test (S5) catches a
+  per-definition shortcut here
 - **Document store behind a port**: no migrations, a dev store needing zero infrastructure, and storage
   matching the JSON-native artefacts. Note SQL was never what constrained definitions — `instance.data`
   was always an app-layer-validated blob

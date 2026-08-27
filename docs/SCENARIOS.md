@@ -16,8 +16,14 @@ Two participants throughout:
 | **Acme Shipping** (small) | `did:web:acme-shipping.example` | File store, no database container, local key, `stream` peer delivery, no public endpoint. Driven by a person in the **process UI**. |
 | **Van Moer** (large) | `did:web:vanmoer.example` | Managed document store, public endpoint. **Also runs the process UI**, and additionally subscribes a mock backoffice to `action.required`. |
 
-Same connector image, two configuration files. That difference is the entire "small consumer and large
-supplier on one stack" claim, and it should be visible in the demo rather than argued in a slide.
+Same connector image, two configuration files. That difference is the entire "one stack fits a one-truck
+haulier and a terminal operator" claim, and it should be visible in the demo rather than argued in a slide.
+
+**The two profiles differ in deployment, not in role.** Acme consumes and Van Moer supplies throughout
+S0–S4 because one direction is enough to exercise the protocol — not because either connector is built
+for its side. Neither has a supplier mode; Van Moer is a supplier because it published an offering, which
+is a runtime record. **S5 proves the symmetry as a scenario test**, so the property does not rest on a
+demo that only ever runs one way.
 
 **Both sides run the process UI.** That is a deliberate choice for the first real demo: every step can be
 driven and verified by hand, on either side, without reading logs or curling anything. Van Moer's mock
@@ -213,3 +219,49 @@ event, so before the audit log there was no record any of it happened.
 
 Expected: five entries in the audit log, an unbroken audit hash chain across them, and five lines in the
 application log. The point to make out loud: **the event log is silent about all of this, by design.**
+
+---
+
+## S5 — A participant is both supplier and consumer
+
+**Scenario test only. Never part of the container demo**, because the demo deliberately runs one
+direction (see the preamble) and this claim must not depend on it.
+
+Proves that supplier and consumer are per-instance roles rather than kinds of connector, and — the part
+that actually breaks if nobody tests it — that the **home node is resolved per instance, not per
+definition**.
+
+Three participants, one definition, run inside a single test process:
+
+```
+  Freight forwarder ──── requests transport ────▶ Transporter A
+                                                        │
+                                                        │  subcontracts
+                                                        ▼
+                                                  Transporter B
+```
+
+| # | Actor | Action | Expected |
+|---|---|---|---|
+| 1 | A | publishes an offering for `container-transport` | A is now a supplier. Runtime record, no restart. |
+| 2 | B | publishes an offering for the same definition | Two suppliers, same definition, no conflict. |
+| 3 | FF | starts instance 1 — `{ shipper: FF, transporter: A }` | `hostedBy: transporter` → **A is home node.** A holds the authoritative record; FF holds a replica. |
+| 4 | A | starts instance 2 — `{ shipper: A, transporter: B }` | Same definition → **B is home node.** A holds a *replica* of this one. |
+| 5 | A | reads its instance list | **Both instances present**, one with `home: true`, one with `home: false`. |
+| 6 | *runtime* | instance 1 enters a state where `offer` is the transporter's move | `action.required` fires at A **as provider** |
+| 7 | *runtime* | instance 2 enters a state where `accept` is the shipper's move | `action.required` fires at A **as requester**, from the same subscription, with no extra config |
+| 8 | A | advances both instances | One write is local and authoritative; the other relays to B. The local API call is **identical in shape**. |
+| 9 | A | verifies both chains | Both verify. A signed instance 1's events itself; it verified B's signatures on instance 2. |
+| 10 | A | withdraws its offering | A stops being a supplier. Instance 1 continues unaffected — offerings govern discovery, not running processes. |
+
+Two assertions that are the whole point of the test:
+
+- **Step 3 vs step 4.** One definition, two instances, two different home nodes. An implementation that
+  resolves hosting per definition — or caches "we host `container-transport`" — passes S0–S4 and fails
+  here. That is exactly why this is a test and not a demo.
+- **Step 6 vs step 7.** The same notification subscription serves both directions, because
+  `action.required` is computed from *our roles in that instance*. If it needed a per-role subscription,
+  the model has leaked a participant type.
+
+Only one connection is needed between A and B, and it carries both directions. There is no supplier
+connection and no consumer connection.

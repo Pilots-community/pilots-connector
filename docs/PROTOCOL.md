@@ -217,15 +217,23 @@ POST  /api/local/v1/instances
       { "definition": "container-transport@1.0.0",
         "participants": { "shipper": "did:web:acme…", "transporter": "did:web:vanmoer…" }, … }
 
-  → connector reads the definition's hostedBy: `transporter`
-  → that is not us
+  → definition's hostedBy names the ROLE `transporter`
+  → participants.transporter = did:web:vanmoer… — not one of ours
   → relay to  vanmoer/api/peer/v1/instances,  signed JWS, ACTIVE connection required
   → return the peer's 201 Created as our own
 ```
 
-If `hostedBy` resolves to us, the call is served locally. Same request, same response shape, either
-way. `hostedBy` therefore stays an implementation detail of the connector rather than something every
-client must understand.
+Resolution is **two steps and per request**: the definition names a *role*, only the `participants` map
+names the *participant*. If that participant is one of ours the call is served locally with no relay.
+Same request, same response shape, either way — `hostedBy` stays an implementation detail of the
+connector rather than something every client must understand.
+
+**The same connector does both, for the same definition, concurrently.** Swap `participants` so that
+`transporter` is us and this exact call is local. That is not an edge case; it is how a transporter acts
+as supplier to a freight forwarder and as consumer to a subcontractor at once
+([ARCHITECTURE.md §3.3](ARCHITECTURE.md#33-every-connector-is-both-supplier-and-consumer)). Any
+implementation that decides local-vs-remote from the definition alone, or caches it per definition, is
+wrong — and would still pass a one-sided demo.
 
 ### 4.2 Endpoints
 
@@ -343,6 +351,19 @@ it does, this model is wrong.
   recipient could not have read from `GET /instances/{id}`.
 - Every delivery failure is audited (`delivery.fail`) and logged.
 
+### 4.5 Offerings and symmetry
+
+`GET /api/local/v1/offerings?peer=<did>` browses what a peer provides; the participant's own offerings
+are managed on the admin surface (§5.1). There is no flag anywhere that marks a connector as a supplier
+or a consumer:
+
+- **Publishing an offering** makes this participant a supplier. It is a store record created at runtime.
+- **Consuming a peer's offering** makes it a consumer, in that instance.
+- Both at once is the normal case. One `ACTIVE` connection carries traffic in both directions and for
+  either side's offerings; there is no "supplier connection".
+- `action.required` (§4.4) is computed from *our roles in that instance*, so it fires correctly whether we
+  are provider or requester, with no extra configuration.
+
 ## 5. The admin API
 
 The minimal surface for operating your own connector. Everything here is an administrative act and
@@ -355,6 +376,7 @@ everything here is audited.
 | API keys | create (secret shown once), list, revoke |
 | Connections | list, accept, reject, revoke; manage the auto-accept allowlist |
 | Notification subscriptions | create / update / pause / delete; view `DEGRADED` status, dead letters, and replay from a cursor (§4.4) |
+| **Offerings** | publish / update / withdraw. **This is what makes this participant a supplier** — a runtime act, not configuration (§4.5). |
 | Definitions | list the registry, register a definition, view content hashes |
 | Participants | view; signer configuration |
 | Audit log | read and filter (§6.2) |

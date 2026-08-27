@@ -51,6 +51,11 @@ lint; a tampered event fails verification; a redacted event does not.
   The two operations that shape the port — atomic `appendEvent`, `claimIdempotencyKey` — are the ones
   the suite is really about.
 - Definition registry: load from disk, verify content hash, cache, serve.
+- **Offerings**: schema, admin publish / update / withdraw, and `GET /offerings`. Publishing an offering
+  is what makes a participant a supplier, so it belongs with the store and the admin UI rather than at
+  M4 — nothing about it is protocol-hard.
+- **Home-node resolution is per instance from the first write**: definition names a role, the instance's
+  `participants` map names the participant, and the stored instance carries the resolved `home` flag.
 - **All three API surfaces exist from the start**, even where thin: `/api/peer/v1`, `/api/local/v1`,
   `/api/admin/v1`. Retrofitting a surface split later would touch every route.
 - **API keys and scopes**: creation, hashing at rest, revocation, scope enforcement, `X-Actor-Ref`.
@@ -99,10 +104,11 @@ the rest of the milestone testable.
   assumption would first bite, and the port is still cheap to change.
 - Admin UI gains connection accept / reject and the trusted-peer allowlist.
 
-**Exit:** **S4a and S4b pass as scenario tests, in milliseconds, in `pnpm test`** — those are the
-milestone's real acceptance tests, not the happy path. Plus: **S1 runs with an automated participant** —
-a test fixture that subscribes to `action.required` and posts back the transition it names, with no UI
-and no human in the loop. Then, separately: two containers, `docker compose up`, S1 runs end to end
+**Exit:** **S4a, S4b and S5 pass as scenario tests, in milliseconds, in `pnpm test`** — those are the
+milestone's real acceptance tests, not the happy path. **S5 matters disproportionately here**: it is the
+only thing that catches a per-definition hosting shortcut, which the one-directional demo would happily
+hide. Plus: **S1 runs with an automated participant** — a test fixture that subscribes to
+`action.required` and posts back the transition it names, with no UI and no human in the loop. Then, separately: two containers, `docker compose up`, S1 runs end to end
 across both, and each side's replica verifies against the other's.
 
 ## M4 — Quotations, links, deadlines
@@ -114,7 +120,7 @@ across both, and each side's replica verifies against the other's.
   **Tested by advancing the fake clock — no test sleeps.**
 - Attachments: content-addressed store, upload, `GET /attachments/{sha256}`, visibility-filtered on both
   surfaces.
-- `GET /offerings`, including standing quotations.
+- Standing quotations surfaced through offerings (the offering itself landed in M2).
 
 **Exit:** **S2 runs end to end as a scenario test and across two containers**, including the
 counter-offer loop, the auto-started service instance, the `409` on a stale `If-Match`, and an offer
@@ -147,8 +153,8 @@ connector caring**, which is the split's whole point.
 ## M6 — Measure and harden
 
 - The managed document-store profile for the large party; the file store stays the small-party default.
-- The mock backoffice as a separate tiny service, so "large supplier automates, small consumer clicks"
-  is a real deployment difference rather than a slide.
+- The mock backoffice as a separate tiny service, so "one side automates, the other clicks" is a real
+  deployment difference rather than a slide.
 - **S4c**: a `bench` script that prints containers, resident memory, cold-start time and
   time-to-first-transaction, **for each of the four topologies** (0, 1, 1 and 2 self-run containers per
   party; 4 for the full two-party demo). Record the numbers in `ARCHITECTURE.md §12`.

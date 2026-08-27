@@ -39,6 +39,7 @@ Three of the four broke a stated non-negotiable. None of them required a redesig
 | D10 | Playwright covers wiring and UI only, and most likely runs against local processes rather than containers. | Playwright as the primary scenario proof. Rejected, see D9. |
 | D11 | **Both parties run the demo process UI in the first real demo.** The mock backoffice sits alongside Van Moer's UI, not instead of it. | Only the small party getting a UI. Rejected: the first demo has to be verifiable by hand on both sides, and a UI-less party is harder to demonstrate than to build. |
 | D12 | **Notification subscriptions** are how a party with no UI participates. `action.required` is computed from the definition. `channel` is a port: `webhook` + `sse` now, queues later. | Leaving "register a webhook" underspecified. Rejected: an internal system needs to know *when it is its turn*, and deriving that from a raw event firehose would force every integrator to reimplement the state machine. |
+| D13 | **No participant is typed.** Supplier/consumer is a role in one instance. Home node resolves **per instance**; offerings are runtime store records. Proven by scenario test S5, not by the demo. | Treating supplier and consumer as deployment profiles. Rejected: it would make subcontracting — a transporter supplying a forwarder while consuming from another transporter — a redesign rather than ordinary use. |
 
 ## 3. Components
 
@@ -383,3 +384,67 @@ where that pays off.
 | M2 | Admin CRUD for subscriptions, the `NotificationChannel` port, in-memory adapter |
 | M3 | `webhook` and `sse` adapters, `action.required` / `action.cleared`, filtering, backoff, dead letters, cursor replay. **Exit adds: S1 runs with an automated participant.** |
 | later | Queue adapters. Additive by construction. |
+
+---
+
+## 13. Amendment, 2026-08-26 — role symmetry (D13)
+
+### 13.1 What was wrong
+
+`ARCHITECTURE.md §8` said:
+
+> The definition names one role in `hostedBy`. That participant's connector is the home node for **every
+> instance of that definition**.
+
+That is false, and the error is not cosmetic. A definition names a *role*; only an instance names the
+*participant* filling it. So the same definition has different home nodes for different instances:
+
+```
+container-transport, hostedBy: "transporter"
+
+  instance 1   { shipper: FF, transporter: A }   →  home node: A
+  instance 2   { shipper: A,  transporter: B }   →  home node: B
+```
+
+Transporter A is provider in one and requester in the other, concurrently, under one definition. Its
+connector is authoritative for instance 1 and a verifying replica of instance 2, with both in the same
+store and the same instance list.
+
+The surrounding prose reinforced the mistake by pairing deployment profile with business role — "small
+consumer, large supplier", "that difference, and only that difference, separates the haulier from the
+terminal operator". Those two axes are independent, and conflating them in the *documentation* is how it
+ends up conflated in the *code*.
+
+### 13.2 The rule
+
+- **Home node resolves per instance, in two steps**: definition → `hostedBy` role; instance →
+  `participants[role]`. The stored instance carries the resolved `home` flag so it is answered once.
+- **A participant becomes a supplier by publishing an offering** — a store record with `participantId`,
+  created and withdrawn in the admin UI at runtime. Not a config file, not a build flag, not a mode.
+  Withdrawing it does not affect running instances; offerings govern discovery only.
+- **One connection, both directions.** No supplier connection, no consumer connection.
+- **`action.required` already works** without change, because it is computed from *our roles in that
+  instance*. This is a second dividend from D12 having made it computed rather than declared.
+- Deployment profile (store adapter, delivery channel, public endpoint) is orthogonal to role, and the
+  documents must stop implying otherwise.
+
+### 13.3 Why this is a test and not a demo
+
+The demo runs one direction — Acme consumes, Van Moer supplies — which is enough to exercise the
+protocol and is the right scope. But it means **a per-definition hosting shortcut passes every demo and
+every happy path.** An implementation could cache "we host `container-transport`" and nothing in S0–S4
+would notice.
+
+Hence **S5**, scenario-test-only: three participants, one definition, two instances with opposite
+participants, asserting different home nodes and `action.required` firing for both of A's roles. It is
+cheap only because the M3 harness can already run two connectors in one process — an unplanned dividend
+from D9.
+
+Landed in M2 (offerings, per-instance `home` resolution from the first write) and M3 (S5 in the exit
+criteria).
+
+### 13.4 The honest scope note
+
+Symmetry is designed and tested, not demonstrated. The first demo stays one-directional. When someone
+asks whether a party can be both, the answer is "yes, and there is a test for it" — not "yes, in
+principle".

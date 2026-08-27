@@ -30,6 +30,8 @@ Two things must both be true of whatever we build:
   endpoint required, no key ceremony. Runs on a cheap VPS or a laptop — or on someone else's hosting.
 - **A terminal operator can run it at scale.** Same image, different configuration: a managed document
   store, a webhook into their backoffice, many concurrent processes.
+- **Either of them can be the supplier or the consumer, at the same time.** The two profiles above differ
+  in deployment, never in role. See non-negotiable 3.
 
 If a design choice makes one of those false, it is the wrong choice.
 
@@ -65,10 +67,20 @@ These are settled. Do not re-litigate them; if you think one is wrong, say so ex
    JSON Merge Patch to the instance's data document. There is exactly **one** mutating endpoint.
    "Update a field" and "advance the state" are not two mechanisms.
 
-3. **Multi-party from day one.** `roles` is an array with cardinality, always. Hosting is declared per
-   definition via `"hostedBy": "<role>"` — not "the supplier always", not "whoever started it". Adding
-   a third participant must be a change to a definition file, never a redesign. Bilateral-by-assumption
-   is the single most expensive mistake available in this problem space.
+3. **Multi-party from day one, and role-symmetric.** `roles` is an array with cardinality, always.
+   Hosting is declared per definition via `"hostedBy": "<role>"` — not "the supplier always", not
+   "whoever started it" — and **resolved per instance**, because a definition names a role while only an
+   instance names the participant filling it. Adding a third participant must be a change to a definition
+   file, never a redesign. Bilateral-by-assumption is the single most expensive mistake available in this
+   problem space.
+
+   **No participant is typed.** "Supplier" and "consumer" describe a role in one instance, never a kind of
+   company and never a kind of connector. A transporter is supplier to a freight forwarder and consumer to
+   its own subcontractor, under the *same definition*, at the same time — its connector is home node for
+   one instance and verifying replica of another. A participant becomes a supplier by **publishing an
+   offering**, which is a store record created at runtime, not configuration and not a deployment
+   decision. Any code that decides local-vs-remote per *definition* rather than per *instance* breaks
+   this, silently, while a one-sided demo still passes.
 
 4. **The event log is the record.** Hash-chain the event *header* and commit to the payload by
    `payloadHash`, so a peer can verify a complete history including events whose payload it was never

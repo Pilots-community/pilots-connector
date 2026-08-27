@@ -74,7 +74,13 @@ The three that matter most stop being manual demo steps:
 |---|---|
 | **S4a** offline catch-up | drop the transport, advance the instance on the host, reattach, assert convergence and a verified chain |
 | **S4b** tamper detection | mutate a stored event, assert a hard failure at the `prev` hash or the `from` state, assert the audit entry, assert **no silent resync** |
+| **S5** role symmetry | three participants, one definition, two instances with *different* home nodes; assert one connector is authoritative for one and a replica of the other, and that `action.required` fires for both of its roles |
 | **deadlines** | advance the fake clock past `PT24H`, assert `expire` fired with `by: []` |
+
+**S5 is the clearest case for this tier existing at all.** The demo runs one direction, so a
+per-definition hosting shortcut would pass every container demo and every happy path. Only a test that
+stands up two instances of one definition with opposite participants catches it — and that test is
+impossible to write cheaply *unless* two connectors can run in one process.
 
 These are the two most important behaviours in the whole design — "the host cannot lie" and "a restart
 loses nothing". They should not be things a person checks by hand before a demo.
