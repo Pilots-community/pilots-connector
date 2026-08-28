@@ -6,9 +6,9 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
-apps/ui/dist/
-apps/node/dist/
 packages/*/dist/
+apps/*/dist/
+apps/connector/src/admin-ui/dist/
 
 # Env / secrets
 .env
@@ -16,14 +16,35 @@ packages/*/dist/
 !.env.example
 *.pem
 *.key
+*.p8
 
-# Local databases (SQLite dev profile)
-*.sqlite
-*.sqlite3
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
+# ---------------------------------------------------------------------------
+# This repository is expected to become public (see docs/ROADMAP.md M7).
+# Git history cannot be un-leaked, so everything below is ignored from day one,
+# not from the milestone that introduces it.
+# ---------------------------------------------------------------------------
+
+# Terraform — values and state are one organisation's, never the repo's
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend.hcl
+!backend.tf.example
+
+# Local file-store data (the small-party persistence profile)
+.data/
+data/
+*.jsonl
 
 # Logs
 *.log
@@ -33,6 +54,9 @@ pnpm-debug.log*
 # Test / coverage
 coverage/
 .nyc_output/
+test-results/
+playwright-report/
+.playwright/
 
 # Editor / OS
 .DS_Store

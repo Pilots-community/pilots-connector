@@ -173,6 +173,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M4** — quotations, links, deadlines | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachments, `GET /offerings` | S2 end to end as a scenario test and across containers |
 | **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
 | **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
+| **M7** — publish and deploy | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
 ## Working agreements
 
@@ -182,6 +183,10 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   RFC 7807. The composition is the contribution.
 - **Never commit private keys or hardcode credentials** — not even in demo seed scripts or test fixtures.
   Test keys are generated at test setup.
+- **Assume this repo becomes public.** Origin is Bitbucket now, GitHub later, possibly public
+  ([ROADMAP.md M7](docs/ROADMAP.md)). Git history cannot be un-leaked, so from M1: no account ids, ARNs,
+  VPC/subnet ids, real hostnames or internal URLs in any commit. Secret *names* are fine, values are not.
+  Demo DIDs stay on the reserved `.example` TLD.
 - **`packages/protocol` is the spec.** If behaviour is not expressed there as schema or tested function,
   it is not decided.
 - **Simplicity target**: `docker compose up` → first transaction in < 60s; full two-party demo = 4

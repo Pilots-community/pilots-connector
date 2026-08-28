@@ -150,6 +150,11 @@ remote signer remains possible, but nothing is blocked on it.
   SSE, RFC 7807. The composition is the contribution; the parts should be unsurprising.
 - **Never commit private keys, and never hardcode credentials** — not even in demo seed scripts or test
   fixtures. Test keys are generated at test setup.
+- **Assume this repository becomes public.** Origin is Bitbucket during the build phase and moves to
+  GitHub when participants collaborate, possibly public ([docs/ROADMAP.md](docs/ROADMAP.md) M7). **Git
+  history cannot be un-leaked**, so the discipline starts now, not at M7: no account ids, ARNs, VPC or
+  subnet ids, real hostnames or internal URLs in any commit. Secret *names* are fine; secret *values* and
+  infrastructure identifiers are not. Demo DIDs stay on the reserved `.example` TLD.
 - **`packages/protocol` is the spec.** If behaviour is not expressed there as a schema or a function
   with tests, it is not decided. Documentation and code must not be allowed to drift apart.
 - **Nothing is set in stone until it is implemented, and barely then.** We are in ideation heading for a

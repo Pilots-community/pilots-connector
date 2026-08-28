@@ -25,7 +25,8 @@ here is a decision someone can overturn — but not silently, and not without sa
 | Lint / format | **ESLint 9** (flat config) + **Prettier** + **typescript-eslint** | one lint run, inline in the editor |
 | Boundary rule | **eslint-plugin-boundaries** | `process-ui → client, protocol` allowed; `process-ui → connector` forbidden |
 | Tests | **Vitest** | workspace mode; fast enough to run on save |
-| CI | **GitHub Actions** | the only place the Mongo conformance tier runs |
+| CI, build, publish | **GitHub Actions** | tests; the only place the Mongo conformance tier runs; publishes images to GHCR |
+| Internal deploy | **Bitbucket Pipelines** + **Terraform** | separate infra repo, consumes GHCR images by tag. M7 — see §9 |
 
 ### 2.1 Module format
 
@@ -161,7 +162,77 @@ Named so each is a choice rather than an omission.
 | argon2 / bcrypt | wrong tool for high-entropy keys — §4.1 |
 | A DI framework in `packages/protocol` | it is pure functions. Ports are constructor arguments. |
 
-## 8. Version policy
+## 8. Build, publish and deploy
+
+Not built until **M7**, and only once the application runs locally. Recorded here so the shape is a
+decision rather than a discovery.
+
+### 8.1 Two CI systems, split by audience
+
+Both build and both publish. Same Dockerfiles, same tests, same `pnpm` scripts — they differ only in who
+the images are for.
+
+| | System | Registry | Audience |
+|---|---|---|---|
+| Our demos | **Bitbucket Pipelines** | **AWS ECR** (private) | T-Mining's hosted demos, ECS or similar |
+| Collaboration | **GitHub Actions** | **GHCR**, possibly public | other participants running the same setup |
+
+**Both CI files are thin shims**, ~20 lines each, calling commands that also run locally. Build logic
+lives in the repo, never in a CI system — so two configs cost almost nothing to keep in step, and a
+contributor can run the pipeline on a laptop.
+
+**Origin moves.** Bitbucket is origin through the build phase. When participants start collaborating,
+GitHub becomes origin and Bitbucket becomes the mirror, so PRs land where the other participants work
+while our own tooling keeps running off the mirror. The cutover is an event, not a milestone.
+
+### 8.2 Terraform: in this repo, one organisation
+
+`infra/modules/{connector,process-ui,did-hosting}` plus a complete runnable
+`infra/examples/single-org-aws`. Anyone can stand up their own connector and UIs; process sharing still
+needs a counterparty's connector, which is the design, not a gap.
+
+**AWS is the reference implementation, not an abstraction.** `docker compose` is the zero-cloud path;
+another cloud is an additive sibling module. Terraform abstracting over three clouds is a fiction that
+costs more than it returns.
+
+**`did:web` hosting is a separate module** — one static file over HTTPS at the participant's own domain.
+Not the connector service, because keeping them apart is what preserves "no inbound endpoint required".
+
+### 8.3 What must never enter this repo
+
+The boundary is not deploy-code vs application-code. It is **reusable infrastructure code** vs **one
+organisation's values and state**:
+
+| Committed | Never committed |
+|---|---|
+| Terraform modules and a runnable example | account ids, ARNs, VPC/subnet ids, real hostnames |
+| `terraform.tfvars.example`, `backend.tf.example` | `terraform.tfvars`, real backend config, any `*.tfstate` |
+| The *names* of secrets the connector reads | any secret *value* |
+| Both CI configs | registry credentials, pipeline secured variables |
+
+So a live deployment is a private `terraform.tfvars` plus Bitbucket secured variables. No second repo is
+needed for the module — only, at most, for one org's values.
+
+Enforced by: `.gitignore` (already covers all of the above, before any of it exists), and **secret
+scanning in CI from M1**.
+
+### 8.4 Secrets, and why the key generates itself
+
+Signing key, API-key pepper and better-auth secret are injected at runtime from a secret manager. An
+image with a baked key is a committed key one layer down.
+
+Better: **the connector generates its Ed25519 key on first boot**, writes the private half to the
+configured secret store, and publishes the public half in `did.json`. No human, repo or pipeline variable
+ever handles a private key — the rule stops being something to remember and becomes structurally true.
+Designed in at M2, because retrofitting it after deployment exists is much harder.
+
+### 8.5 Publishability starts at M1
+
+The repo is expected to become public. **Git history cannot be un-leaked**, so every rule in §8.3 applies
+from the first commit, not from M7. The demo DIDs already use the reserved `.example` TLD, so the
+scenarios and definitions are publishable as they stand — keep it that way.
+
+## 9. Version policy
 
 Pin exact versions in `package.json`; no `^` ranges in the pilot. Renovate or manual bumps, deliberately,
 with the test suite as the gate. We are heading for a field-tested demo, and a transitive surprise during

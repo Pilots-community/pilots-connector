@@ -42,6 +42,9 @@ One package, no server. This is the milestone that decides whether the design is
 - Definition linter, replacing `tools/lint-definitions.py` (then delete that file).
 - JSON Schema export, so the definitions can be validated by non-TypeScript implementations.
 
+- **Secret scanning in CI**, from the first pipeline. The repo is expected to go public (M7), and history
+  cannot be un-leaked, so this is cheap now and impossible later.
+
 **Exit:** `pnpm --filter protocol test` is green; the five definitions in `docs/definitions/` load and
 lint; a tampered event fails verification; a redacted event does not.
 
@@ -70,6 +73,10 @@ lint; a tampered event fails verification; a redacted event does not.
 - `If-Match` / `409` / `428`, `Idempotency-Key`, RFC 7807 errors.
 - `auto` transitions fire on state entry — which is what makes standing quotations work.
 - `GET /.well-known/did.json` served from configuration.
+- **The signer bootstraps its own key**: on first start, generate Ed25519, write the private half to the
+  configured secret store (env / file / secret manager, behind the same port), publish the public half in
+  `did.json`. No key is ever typed, committed or passed through a pipeline variable. Cheap here; awkward
+  to retrofit once deployment exists.
 - **Notification subscriptions**: the schema, admin CRUD, and the `NotificationChannel` port with the
   in-memory adapter. Delivery machinery itself lands in M3; the model exists here so the store and the
   admin UI carry it from the first write.
@@ -172,6 +179,95 @@ connector caring**, which is the split's whole point.
 
 **Exit:** the cost targets in `AGENT.md` are measured, not claimed. S1, S2, S4a, S4b and S4c all run
 from one command.
+
+## M7 — Publish and deploy
+
+Only once the whole thing runs locally. Nothing here changes the application; it packages and ships what
+M1–M6 built.
+
+### Two CI systems, split by audience — not by job
+
+Both build and both publish. They differ in *who the images are for*.
+
+| | System | Registry | For |
+|---|---|---|---|
+| Our own demos | **Bitbucket Pipelines** | **AWS ECR** (private) | T-Mining's hosted demos on ECS or similar |
+| The collaboration | **GitHub Actions** | **GHCR**, possibly public | other project participants running the same setup |
+
+Same Dockerfiles, same test suite, same `pnpm` scripts. **Both CI files are thin shims** — roughly twenty
+lines each, calling commands that also run locally. The build logic lives in the repo, so keeping two CI
+configs in step is nearly free and a contributor can run the whole pipeline on a laptop.
+
+- **Images**: `connector` and `process-ui`, multi-stage, **multi-arch amd64 + arm64** — development is on
+  arm Macs and servers are not.
+- **Tagging**: semver from the git tag, plus the git SHA, plus `latest` on release. Terraform pins an
+  explicit version; `latest` in a deploy means the deploy is not reproducible.
+
+### Terraform, in this repo, single-organisation scope
+
+Anyone reading this repo should be able to stand up **their own** connector and UIs on their own
+infrastructure. End-to-end process sharing still needs a counterparty's connector — that is a property of
+the design, not a gap in the module, and the example's README says so plainly.
+
+```
+infra/
+  modules/
+    connector/        one participant: service, store, secrets wiring
+    process-ui/       optional
+    did-hosting/      static /.well-known/did.json  — deliberately separate
+  examples/
+    single-org-aws/   complete and runnable, one participant
+      terraform.tfvars.example
+      README.md       what you still need from a counterparty
+```
+
+**AWS is the reference implementation, not an abstraction.** It is what we run. `docker compose` remains
+the zero-cloud path. Another cloud is an additive sibling module someone contributes. Terraform that
+abstracts over AWS, GCP and Azure is a fiction that costs more than it returns.
+
+**`did:web` hosting is its own tiny module.** It needs one static file reachable over HTTPS at *the
+participant's own domain* — S3 + CloudFront, or any static host at all. Deliberately **not** the connector
+service: keeping it separate is what preserves "a `stream`-delivery party needs no inbound endpoint".
+
+### The GitHub cutover
+
+When participants start collaborating, **GitHub becomes origin and Bitbucket becomes the mirror.** PRs
+then land natively where the other participants work, while our org tooling and Pipelines keep running off
+the mirror.
+
+The cutover is an *event*, driven by collaboration readiness rather than by a milestone. M7's job is to
+leave the repo **ready** for it: both CI configs present, no Bitbucket-specific assumption baked in, and
+nothing in the history that would embarrass us on a public repo. That last part is not M7 work — see
+§"Publishability is an M1 concern" below.
+
+### Secrets never enter an image or the repo
+
+- The Ed25519 signing key, the API-key pepper and the better-auth secret are injected at runtime from a
+  secret manager. An image with a baked key is the same mistake as a committed key, one layer down.
+- The connector **generates its signing key on first boot**, writes the private half to the configured
+  secret store, and serves the public half in `did.json`. No human, no repo and no pipeline variable ever
+  handles a private key — the rule becomes structurally true rather than a thing to remember. Designed in
+  at M2; see that milestone.
+
+**Exit:** a tagged release publishes both images; Bitbucket Pipelines deploys one participant to ECS from
+Terraform with no manual step; a third party can run `infra/examples/single-org-aws` against their own
+account using only the committed files plus their own `terraform.tfvars`; and a secret scan over the full
+history is clean.
+
+### Publishability is an M1 concern, not an M7 one
+
+Called out here because this is where the reasoning lives, but the work starts immediately.
+
+Since the repository is expected to become public, **every commit from M1 onward is a commit that will be
+public.** Git history cannot be un-leaked. So from the first milestone:
+
+- `.gitignore` already excludes `*.tfvars`, `*.tfstate*`, `.terraform/`, backend config and file-store
+  data — before any of those exist.
+- No account id, ARN, VPC or subnet id, real hostname or internal URL is ever committed. Secret *names*
+  are fine; secret *values* and infrastructure identifiers are not.
+- The demo DIDs use the reserved `.example` TLD (`did:web:acme-shipping.example`), so the scenarios and
+  definitions are publishable as they stand. Keep it that way.
+- **Secret scanning runs in CI from M1**, when CI first exists — not from M7, when it would be too late.
 
 ---
 
