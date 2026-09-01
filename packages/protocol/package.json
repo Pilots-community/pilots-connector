@@ -1,0 +1,53 @@
+{
+  "name": "@pilots/protocol",
+  "version": "0.1.0",
+  "description": "The pilots process-sharing specification: schemas, canonicalisation, signing, the state-machine evaluator, the visibility filter and the definition linter.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js",
+      "require": "./dist/testing/index.cjs"
+    },
+    "./did-web": {
+      "types": "./dist/did-web.d.ts",
+      "import": "./dist/did-web.js",
+      "require": "./dist/did-web.cjs"
+    },
+    "./schema/*": "./schema/*"
+  },
+  "bin": {
+    "pilots-lint-definitions": "./dist/bin/lint-definitions.js"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "schema:export": "tsx src/bin/export-schemas.ts schema",
+    "lint:definitions": "tsx src/bin/lint-definitions.ts"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "canonicalize": "4.0.0",
+    "did-resolver": "4.1.0",
+    "jose": "6.2.10",
+    "ulidx": "2.4.1",
+    "web-did-resolver": "2.0.32",
+    "zod": "4.5.4"
+  }
+}

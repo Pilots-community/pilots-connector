@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pilots.example/schema/v1/did-document.schema.json",
+  "title": "DID document",
+  "description": "The static document a participant publishes to be identifiable.",
+  "type": "object",
+  "properties": {
+    "@context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verificationMethod": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "controller": {
+            "type": "string",
+            "minLength": 1
+          },
+          "publicKeyJwk": {
+            "type": "object",
+            "properties": {
+              "kty": {
+                "type": "string",
+                "const": "OKP"
+              },
+              "crv": {
+                "type": "string",
+                "const": "Ed25519"
+              },
+              "x": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kty",
+              "crv",
+              "x"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "controller",
+          "publicKeyJwk"
+        ]
+      }
+    },
+    "authentication": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assertionMethod": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "verificationMethod"
+  ]
+}

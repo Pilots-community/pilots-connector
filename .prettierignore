@@ -1,0 +1,14 @@
+dist/
+coverage/
+node_modules/
+pnpm-lock.yaml
+
+# The design documents are hand-wrapped and hand-aligned. Prettier's markdown
+# rules churn every table and every emphasis marker for no gain.
+*.md
+
+# Agent tooling that ships with the skills, not this project's source.
+.claude/
+
+# Generated from the zod schemas by `pnpm schema:export`.
+packages/*/schema/

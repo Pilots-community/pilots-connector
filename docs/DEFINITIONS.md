@@ -6,8 +6,16 @@ Real examples live in [definitions/](definitions/).*
 A definition is a JSON document. It carries an `@context` so it can be projected to JSON-LD/ODRL for
 publication, but the runtime reads it as plain JSON — **there is no JSON-LD processor on the hot path**.
 
-The canonical schema lives in `packages/protocol` as a Zod schema. This document is its annotation; if
-the two disagree, the code wins and this file is a bug.
+The canonical schema lives in `packages/protocol` as a Zod schema
+(`src/schemas/definition.ts`). This document is its annotation; if the two disagree, the code wins and
+this file is a bug. A JSON Schema projection is generated from it for non-TypeScript implementations:
+[`packages/protocol/schema/process-definition.schema.json`](../packages/protocol/schema/process-definition.schema.json).
+
+Check a definition with:
+
+```bash
+pnpm lint:definitions
+```
 
 ## 1. Skeleton
 
@@ -65,6 +73,12 @@ node holds the authoritative record and assigns `seq`. See
 [ARCHITECTURE.md §8](ARCHITECTURE.md#8-hosting-and-the-trust-model) for what this does and does not
 imply about trust.
 
+### `createdBy`
+
+Optional. Roles permitted to create an instance; absent means any participant may. None of the shipped
+definitions restrict it, but the field exists so that "the definition forbids the caller's role from
+creating an instance" ([PROTOCOL.md §9.1](PROTOCOL.md#91-post-instances)) is a real check.
+
 ### `states`, `initialState`, `terminalStates`
 
 `states` is a list of `{ id, title }`. Every state must be reachable from `initialState`, and every
@@ -100,15 +114,19 @@ transition, not merely at creation.
 | `to` | Resulting state. Omit for a pure data update. |
 | `by` | Roles permitted to fire it. **An empty array means no participant may fire it manually** — only the runtime, via `auto`, a `deadline`, or a `link`. |
 | `patch` | JSON Schema for the JSON Merge Patch (RFC 7386) applied to `data`. Omit for a pure state change. |
-| `guards` | Extra conditions on the resulting data document. Evaluated after the patch. |
-| `attachments` | Whether this transition requires content-addressed documents. |
-| `deadline` | ISO 8601 duration, measured from entry into the `from` state. |
-| `onDeadline` | The `id` of another transition to fire when the deadline passes. |
+| `guards` | Extra conditions on the resulting data document, each an ordinary **JSON Schema fragment** — `{ "required": ["price"] }` already is one, so guards add no second expression language. Evaluated after the patch. |
+| `attachments` | Whether this transition requires content-addressed documents, and which mime types. |
+| `deadline` | ISO 8601 duration, from the restricted subset `P#D` / `PT#H` / `PT#M`. It **arms on entry into this transition's `to` state**, and `onDeadline` fires if the instance is still there when it elapses. So `offer` → `OFFERED` with `PT24H` means "an offer may sit unanswered for a day". A `deadline` therefore requires a `to`. |
+| `onDeadline` | The `id` of another transition to fire when the deadline passes. It must be applicable in the state the deadline arms in; the linter checks this, because otherwise it silently never fires. |
 | `auto` | Fire immediately when the `from` state is entered. This is what makes standing quotations a definition concern rather than a code concern. |
 | `requiresCredential` | Name of a verifiable credential the actor must present to fire this transition. **Declared but not yet enforced** — the field exists so credential gating can be switched on without a schema change. See [ROADMAP.md](ROADMAP.md#deliberately-not-in-scope-yet). |
 
 **Every change is a transition.** There is no separate "update a field" operation, because a transition
 with a `patch` and no `to` already is one. One mutating endpoint, one audit trail, one permission check.
+
+**`create` is a reserved transition id.** Creating an instance is event `seq` 1, recorded with that id,
+so the log alone can reconstruct the instance — which definition it pins, who is in it, and what data it
+was born with. The linter refuses a definition that declares a transition called `create`.
 
 ### `visibility`
 

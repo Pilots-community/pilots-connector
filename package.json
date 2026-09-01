@@ -1,0 +1,33 @@
+{
+  "name": "pilots-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A demonstrator of process sharing between logistics companies.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "pnpm@11.1.2",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint:definitions": "pnpm --filter @pilots/protocol exec tsx src/bin/lint-definitions.ts ../../docs/definitions",
+    "schema:export": "pnpm --filter @pilots/protocol schema:export"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.4.0",
+    "eslint": "10.9.1",
+    "eslint-plugin-boundaries": "7.2.0",
+    "prettier": "3.9.6",
+    "tsup": "8.5.1",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.68.0",
+    "vitest": "4.1.11"
+  }
+}

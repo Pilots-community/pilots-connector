@@ -11,8 +11,8 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M0** — documentation only. No implementation code yet. M1 (the protocol package) is the
-first milestone to build.
+Current status: **M1 complete** — [`packages/protocol`](packages/protocol) is built, tested and green.
+M2 (the connector) is the next milestone.
 
 ## What we're building
 
@@ -150,16 +150,22 @@ STACK.md §4.1). Timers are a **scan loop driven by `Clock`, never `setTimeout`*
 
 ## Available commands
 
-Currently only the Python linting tool:
-
 ```bash
-python3 tools/lint-definitions.py docs/definitions
+pnpm install
+pnpm test               # unit tier — no network, no containers, no real clock
+pnpm typecheck
+pnpm lint               # ESLint, including the import-boundary rule
+pnpm format             # Prettier. Markdown and .claude/ are excluded on purpose.
+pnpm build              # tsup, dual ESM + CJS
+pnpm lint:definitions   # lint docs/definitions against the schema and the linter
+pnpm schema:export      # regenerate packages/protocol/schema/*.json from the zod schemas
 ```
 
-Checks process definitions for: undefined roles/states, duplicate transition IDs, dangling onDeadline /
-link / visibility references, unreachable states, and states with no path to terminal states. **This is
-temporary.** Will be replaced by the Zod-based linter in `packages/protocol` (M1), then delete
-`tools/lint-definitions.py`.
+`pnpm lint:definitions` replaced `tools/lint-definitions.py`, which is deleted. It checks everything the
+stopgap did — undefined roles and states, duplicate ids, dangling onDeadline / link / visibility
+references, unreachable states, states with no path to a terminal state — plus: JSON Schema validity of
+`data`, `patch` and `guards`; deadline coherence; the reserved `create` transition id; outgoing
+transitions from a terminal state; and warnings that do not fail a definition.
 
 ## Roadmap milestones
 
@@ -167,8 +173,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 | Milestone | Scope | Exit |
 |---|---|---|
-| **M1** — protocol package *(current target)* | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | `pnpm --filter protocol test` green; five definitions lint; tampered event fails, redacted event passes |
-| **M2** — connector, single party | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, **admin UI starts** | One container, **no database**. S1 runs on the local API with `curl` + an API key; audit log shows every call including a refusal |
+| **M1** — protocol package ✅ **done** | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` / `DidResolver` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | Met: `pnpm test` green (217 tests, under a second); the five definitions lint clean; a tampered event fails, a redacted event passes |
+| **M2** — connector, single party *(current target)* | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, **admin UI starts** | One container, **no database**. S1 runs on the local API with `curl` + an API key; audit log shows every call including a refusal |
 | **M3** — two connectors | **Scenario harness + in-process transport first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, **Mongo adapter + conformance in CI** | **S4a and S4b pass as scenario tests in `pnpm test`**; then two containers, S1 end to end, both replicas verify |
 | **M4** — quotations, links, deadlines | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachments, `GET /offerings` | S2 end to end as a scenario test and across containers |
 | **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |

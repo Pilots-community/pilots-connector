@@ -75,7 +75,7 @@ hosts both instances** and Acme holds verified replicas.
 | # | Actor | Surface | Action | State after |
 |---|---|---|---|---|
 | 1 | Acme UI | local → peer | `GET /api/local/v1/offerings?peer=vanmoer` | sees `container-weighing` at a fixed price, conditions `terminal`, `containerType` |
-| 2 | Acme UI | local → peer | `POST /instances` with the quotation definition and the offering URI | quotation `agree` fires automatically (`auto: true`) → **`AGREED`** at `seq 1` |
+| 2 | Acme UI | local → peer | `POST /instances` with the quotation definition and the offering URI | creation is `seq 1`; the quotation's `agree` fires automatically (`auto: true`) → **`AGREED`** at `seq 2` |
 | 3 | Acme UI | local → peer | `POST /instances` with the service definition + `quotationId` | service **`ORDERED`** |
 | 4 | Acme UI | local → peer | `POST …/transitions` `announceTruck` `{ truckPlate, expectedAt }`, `If-Match: 1` | **`TRUCK_ANNOUNCED`** |
 | 5 | Van Moer *(UI or backoffice)* | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
@@ -151,10 +151,10 @@ schema change, no engine change, no second wire format.
 Note the `price` grant excludes `terminal` — a terminal operator sees the movement and the driver, not
 the commercial terms. That is the shape every real multi-party logistics process has.
 
-The acceptance test for this milestone is simply that all five definitions lint. Until M1 replaces it:
+The acceptance test for this milestone is simply that all five definitions lint:
 
 ```bash
-python3 tools/lint-definitions.py docs/definitions
+pnpm lint:definitions
 ```
 
 ---

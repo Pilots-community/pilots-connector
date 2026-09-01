@@ -36,13 +36,20 @@ docs/SCENARIOS.md         the end-to-end walkthroughs we are building toward (S0
 docs/ROADMAP.md           milestones from empty repo to running demo
 docs/superpowers/specs/   design decision records, with the reasoning
 docs/IDEA.md              the original meeting sketch — superseded, kept for provenance
-tools/lint-definitions.py stopgap linter; delete once packages/protocol exists
 ```
 
-No code yet. [docs/ROADMAP.md](docs/ROADMAP.md) M1 is the first thing to build.
+## Where the code is
 
-Check the definitions:
+**M1 is built**: [`packages/protocol`](packages/protocol) — the specification, as schemas and tested
+functions. Schemas, JCS canonicalisation, signing and chain verification, the state machine evaluator,
+the visibility filter, the definition linter, and a JSON Schema export for non-TypeScript
+implementations. [docs/ROADMAP.md](docs/ROADMAP.md) M2 (the connector) is next.
 
 ```bash
-python3 tools/lint-definitions.py docs/definitions
+pnpm install
+pnpm test               # unit tier: no network, no containers, no real clock
+pnpm lint:definitions   # check docs/definitions against the schema and the linter
+pnpm typecheck
+pnpm lint
+pnpm build
 ```

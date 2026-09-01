@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pilots.example/schema/v1/connection-request.schema.json",
+  "title": "Connection request",
+  "description": "The opening move of the handshake.",
+  "type": "object",
+  "properties": {
+    "connectionId": {
+      "type": "string",
+      "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "fromDid": {
+      "type": "string",
+      "pattern": "^did:web:[a-z0-9]([a-z0-9._%-]*[a-z0-9])?(:[A-Za-z0-9._%-]+)*$"
+    },
+    "fromBaseUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "displayName": {
+      "type": "string",
+      "maxLength": 255
+    },
+    "delivery": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string",
+              "const": "webhook"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "channel",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string",
+              "const": "stream"
+            }
+          },
+          "required": [
+            "channel"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 1024
+    }
+  },
+  "required": [
+    "connectionId",
+    "fromDid",
+    "fromBaseUrl",
+    "delivery"
+  ],
+  "additionalProperties": false
+}

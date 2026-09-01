@@ -109,9 +109,17 @@ Signing goes through a `Signer` interface keyed by participant:
 ```ts
 interface Signer {
   did(participantId: string): Promise<string>
-  sign(participantId: string, payload: Uint8Array): Promise<string>  // compact JWS
+  /** The DID URL of the verification method, e.g. `did:web:acme.example#key-1`. */
+  keyId(participantId: string): Promise<string>
+  /** A raw EdDSA (Ed25519) signature over exactly the bytes given. */
+  sign(participantId: string, signingInput: Uint8Array): Promise<Uint8Array>
 }
 ```
+
+The port is deliberately at the level a **remote** signer can implement. A KMS or an HSM offers "sign
+these bytes"; it does not offer "produce a compact JWS". Putting JWS assembly behind the port would make
+the one implementation we care about impossible to write, so assembly lives in `packages/protocol`
+(`crypto/jws.ts`) where it is specified and tested once, whatever holds the key.
 
 The default implementation holds a local Ed25519 key. Remote signers are additional implementations of
 this interface. Key management must never sit on the critical path of the state machine.
@@ -461,20 +469,36 @@ represents a refusal.
     "actor":       "did:web:vanmoer.example",
     "from":        "REQUESTED",
     "to":          "OFFERED",
-    "at":          "2026-08-24T09:14:02Z",
+    "at":          "2026-08-24T09:14:02.000Z",
     "prev":        "sha256:9f3c…",
     "payloadHash": "sha256:1a7b…",
     "attachments": [ { "sha256": "…", "mime": "application/pdf", "size": 41022 } ]
   },
-  "payload": { "price": { "value": 320, "currency": "EUR" } },
-  "sig": "<compact JWS over the canonicalised header>"
+  "payload":  { "price": { "value": 320, "currency": "EUR" } },
+  "redacted": false,
+  "sig": "<detached compact JWS over the canonicalised header>"
 }
 ```
 
+- **Every header field is always present.** Optionality is expressed as `null`, never by omitting a key.
+  The header is canonicalised and hashed, so "did you include the key?" would be a cross-implementation
+  disagreement waiting to happen. `attachments` is `[]` when there are none.
 - `seq` starts at 1 and increases by 1 per instance. Assigned by the home node.
+- **`seq` 1 is the instance's creation**, recorded with the reserved transition id `create`, `from: null`
+  and `to` equal to the definition's `initialState`, carrying the initial `data` as its payload. Without
+  it the log could not reconstruct the instance it describes, and a replica could not rebuild anything.
 - `prev` is `sha256` of the canonicalised **header** of event `seq - 1`; `null` for `seq == 1`.
-- `payloadHash` is `sha256` of the canonicalised payload, or of the empty object when there is none.
-- `to` and `payload` are both optional — a transition may change state, patch data, or do both.
+- `payloadHash` is `sha256` of the canonicalised payload, or of the empty object `{}` when there is none.
+- `to` is `null` for a pure data patch — a transition may change state, patch data, or do both.
+- `at` is UTC, always `Z`. A canonical record with local offsets in it is one two implementations can
+  disagree about.
+- `sig` is a **detached** compact JWS (RFC 7515 Appendix F): `<protected>..<signature>`, with the payload
+  left out because the event already carries the header. A second, base64url copy of the header inside
+  the signature is a copy that could disagree with the first. The protected header is
+  `{ "alg": "EdDSA", "kid": "<the actor's DID URL>" }`.
+- `redacted` sits on the envelope, **outside** the signed header, and is `true` when the visibility
+  filter withheld payload fields from this copy (§7.3). It is a statement about *this copy*, not about
+  what happened, which is exactly why it is not signed.
 - `actor` is the **participant's** DID. The `X-Actor-Ref` of the caller who caused it is stored locally
   alongside the event and in the audit log; it is not in the header and not replicated.
 
@@ -498,8 +522,11 @@ A failure at step 3 or 4 means the host has rewritten history. It is a hard erro
 as `chain.verify` / `failed`, do not retry, do not silently resync.
 
 **Redacted payloads are not verification failures.** When visibility rules withhold fields, the payload
-arrives partial or absent. The header still verifies, the chain still verifies, and the instance's
-visible state is still exact. Only the withheld values are unknown — which is the intent.
+arrives partial or absent and the envelope's `redacted` flag is `true`; a verifier then skips step 5 for
+that event. (A payload withheld *entirely* is detectable without the flag: `payload` is `null` while
+`payloadHash` is not the hash of `{}`.) The header still verifies, the chain still verifies, and the
+**state** the instance folds to is still exact, because state folds from headers alone. Only the withheld
+values are unknown — which is the intent.
 
 ### 7.4 Attachments
 
