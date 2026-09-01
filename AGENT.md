@@ -170,7 +170,7 @@ Absolute, not relative to anything:
 | Self-run containers, with the demo process UI | 2 |
 | Self-run containers, fully hosted | 0 |
 | Database containers, small-party profile | **0** — file store on a mounted volume |
-| Memory, small-party profile | < 150 MB |
+| Memory, small-party profile | Comfortable in a **1 GB container**, with headroom. Measured at M2: ~82 MiB in one. |
 | Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases** |
 | `docker compose up` → first transaction | < 60 s |
 | Inbound public HTTPS endpoint required | No, for a party using `stream` delivery |

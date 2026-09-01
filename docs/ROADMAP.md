@@ -88,9 +88,9 @@ lint; a tampered event fails verification; a redacted event does not.
 `grossMass` before `PAID`. The audit log shows every call, including a deliberately refused one.
 
 **Plus a measured number: resident memory and cold-start time.** NestJS costs roughly 30–50 MB of
-baseline RSS over plain Fastify, so the < 150 MB target is a real constraint rather than a comfortable
-one ([STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6)). M2 is when swapping the framework would
-still be cheap; finding out at M6 would be finding out too late.
+baseline RSS over plain Fastify ([STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6)). M2 is when
+swapping the framework would still be cheap; finding out at M6 would be finding out too late.
+*Measured at M2: ~82 MiB in a 1 GB container, so the framework stays.*
 
 ## M3 — Two connectors: connections, delivery, replication, and the scenario harness
 

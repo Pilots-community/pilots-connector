@@ -61,15 +61,20 @@ node apps/connector/scripts/bench.mjs   # the numbers below, measured
 
 ## Measured, not claimed
 
-One container, zero databases. From `apps/connector/scripts/bench.mjs` on a development laptop:
+One container, zero databases. `docker run --memory=1g`, file store, after S1 has run:
+
+| | |
+|---|---|
+| Image size | 221 MB |
+| Cold start | ~220 ms |
+| Memory in use | **~82 MiB — 8% of a 1 GB limit** |
+
+And on a laptop, via `apps/connector/scripts/bench.mjs`:
 
 | | file store | memory store |
 |---|---|---|
 | Cold start | ~450 ms | ~440 ms |
 | Time to first transaction, from cold | ~110 ms | ~26 ms |
-| Resident memory (target < 150 MB) | ~130–145 MB | ~133 MB |
 | Mean write latency | ~35 ms | ~0.9 ms |
 
-Memory is inside the target but without much headroom — that is Node plus NestJS, and
-[STACK.md §5.3](docs/STACK.md#53-measure-memory-at-m2-not-m6) said to find that out at M2 rather than at
-M6. The file store's write latency is one `fsync` per event: the honest price of "the log is the record".
+The file store's write latency is one `fsync` per event: the honest price of "the log is the record".

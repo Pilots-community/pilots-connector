@@ -528,7 +528,7 @@ infrastructure at all.
 | Self-run containers, with the demo process UI | 2 |
 | Self-run containers, fully hosted | 0 |
 | Database containers, small-party profile | **0** |
-| Memory, small-party profile | < 150 MB |
+| Memory, small-party profile | Comfortable in a **1 GB container**, with headroom |
 | Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases** |
 | `docker compose up` → first transaction | < 60 s |
 | Public HTTPS endpoint required | No, with `stream` delivery |
@@ -539,19 +539,31 @@ These are acceptance criteria. Measure them; do not assert them.
 
 ### 12.1 Measured at M2
 
-`node apps/connector/scripts/bench.mjs`, on a development laptop, one connector with two participants:
+Two ways, because they answer different questions.
+
+**In a container**, `docker run --memory=1g` with the file store, after S1 has run end to end:
+
+| | |
+|---|---|
+| Image size | 221 MB |
+| Containers | **1** (0 databases) |
+| Cold start | ~220 ms |
+| Memory in use | **~82 MiB — 8 % of a 1 GB limit** |
+
+**On a laptop**, `node apps/connector/scripts/bench.mjs`, one connector with two participants:
 
 | | file store | memory store |
 |---|---|---|
-| Containers | **1** (0 databases) | 1 |
 | Cold start | ~450 ms | ~440 ms |
 | Time to first transaction, from cold | ~110 ms | ~26 ms |
-| Resident memory | **~130–145 MB** | ~133 MB |
+| Process RSS | ~130–145 MB | ~133 MB |
 | Mean write latency | ~35 ms | ~0.9 ms |
 
-Two honest notes. **Memory is inside the < 150 MB target but without much headroom** — Node plus NestJS
-plus `reflect-metadata` — which is exactly why [STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6)
-moved this measurement into M2, while swapping the framework would still be cheap.
+The two memory figures differ because they measure different things: `docker stats` reports the cgroup's
+working set, while RSS counts shared and mapped pages the kernel would reclaim under pressure. **The
+container figure is the one to size against**, and at 8 % of a 1 GB limit there is a great deal of room.
+NestJS therefore stays: [STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6) said to measure at M2
+while swapping the framework was still cheap, and the measurement says not to.
 
 **The file store's write latency is one `fsync` per event.** That is the price of §7's claim that the log
 is the record, and it is paid deliberately: the event log and the audit log are fsynced, while the

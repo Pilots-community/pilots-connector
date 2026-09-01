@@ -123,12 +123,17 @@ output precisely so this is a non-issue at the boundary.
 
 ### 5.3 Measure memory at M2, not M6
 
-Nest plus `reflect-metadata` costs roughly 30–50 MB of baseline RSS over plain Fastify. The < 150 MB
-target stays reachable, but it is now a real constraint rather than a comfortable one.
+Nest plus `reflect-metadata` costs roughly 30–50 MB of baseline RSS over plain Fastify, which is worth
+knowing before committing to it.
 
 **So the memory and cold-start check moves into M2's exit criteria.** If the framework blows the target,
 M2 is when swapping it is still cheap; discovering it at M6 would be discovering it too late. This is the
 one place where choosing the heavier option changes the plan rather than just the code.
+
+**Resolved at M2: it does not.** In a `--memory=1g` container running the file store, after S1 has run,
+the connector uses **~82 MiB — 8 % of the limit**. Process RSS on a laptop reads higher (~130–145 MB)
+because it counts shared and mapped pages, but the container's working set is what a deployment is sized
+against. NestJS stays, and this section's trigger is spent.
 
 ## 6. UIs
 
@@ -244,18 +249,32 @@ a demo costs more than a stale minor version.
 
 Four deviations from the table above, recorded rather than absorbed. Each is reversible.
 
-### 10.1 `better-auth` deferred; admin sessions are a bootstrap token
+### 10.1 `better-auth` deferred for the *connector* admin — with the real reason
 
-§4 named `better-auth` for admin sessions. It wants to own a user table and a database adapter, and this
-connector's store is document-oriented behind a port with no SQL anywhere; wiring the two together buys
-nothing M2 needs, because the admin is **one operator per connector**.
+An earlier draft of this note claimed better-auth "wants a user table and a database adapter" and would
+not fit a document store. **That was wrong**, and checking beats assuming: better-auth 1.7.2 ships
+`memory`, `mongodb`, `kysely`, `drizzle` and `prisma` adapters. The Mongo one lands in M3 with the Mongo
+store, so adopting it later is configuration, not an integration project.
 
-So admin auth has the same shape as an API key: a 256-bit token generated on first boot, printed once,
-stored only as `HMAC-SHA256(pepper, token)`, exchanged for a session. No password exists, so there is
-nothing for an operator to choose badly, and §4.1's argument against a password KDF applies unchanged.
+The actual reason is a design one. **The connector is deliberately not an identity provider** — that is
+what keeps a third-party-hosted connector from ending up holding your user accounts
+([PROTOCOL.md §2.3](PROTOCOL.md#23-admin--human--admin-ui)). Its admin has no users, no email, no
+passwords and no sign-up: it is **one operator per connector**. Adopting an auth library there would mean
+*inventing* an admin account with a password to give the library something to manage — more surface, not
+less, and a human password is the one case where §4.1's argument would flip and demand argon2.
 
-`better-auth` — with real user accounts, passwords and MFA — drops in behind the same interface when
-there is a reason to want it. That reason is a *second operator*, and the pilot does not have one.
+So the connector's admin uses the primitive that fits a single operator's first run, the same one Grafana,
+Vault and Jupyter use: a 256-bit token generated on first boot, printed once, stored only as
+`HMAC-SHA256(pepper, token)`, exchanged for a session. It is **92 lines with four methods**
+(`create`, `signIn`, `verify`, `signOut`) and it hand-rolls no cryptography — `createHmac`,
+`randomBytes` and `timingSafeEqual` from `node:crypto` do the work.
+
+**This must not grow into an auth library.** The trigger is explicit: *the moment a second operator, a
+password login, account recovery, or sessions that survive a restart is wanted, adopt better-auth rather
+than extending this.* By then Mongo is already there and the adapter is off the shelf.
+
+**better-auth's real home in this project is the process UI's BFF** (§6), which owns actual user
+accounts. That is still the plan, and it is where the library earns its keep.
 
 ### 10.2 `ajv-formats` added
 

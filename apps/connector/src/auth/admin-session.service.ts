@@ -6,17 +6,27 @@
  * except its own admin UI — which is what keeps a third-party-hosted connector
  * from ending up holding your user accounts.
  *
- * **Deviation from docs/STACK.md, stated rather than hidden.** The stack names
- * `better-auth` here. That library wants to own a user table and a database
- * adapter, and this connector's store is a document store behind a port with no
- * SQL anywhere; wiring the two together is an afternoon that buys nothing M2
- * needs, since the admin is one operator per connector. So this is the same
- * shape as an API key: a high-entropy bootstrap token, HMAC-stored, exchanged
- * for a session. `better-auth` — with real user accounts, passwords and MFA —
- * drops in behind this same interface when there is a reason to want it.
+ * **Why this is not `better-auth`, which docs/STACK.md §6 names.** Not because
+ * better-auth would not fit — it ships memory, mongodb, kysely, drizzle and
+ * prisma adapters, and the Mongo one arrives with the Mongo store in M3. The
+ * reason is the line above: this admin has **no users**. No email, no passwords,
+ * no sign-up, one operator per connector. Adopting an auth library here would
+ * mean inventing an admin account with a password to give the library something
+ * to manage — more surface, not less, and a human password is the one case where
+ * the argument against a password KDF (docs/STACK.md §4.1) would flip.
  *
- * Deliberately **not** a password: a 256-bit random token needs no KDF, and
- * there is nothing for an operator to choose badly.
+ * So this is the primitive that actually fits a single operator's first run, the
+ * same one Grafana, Vault and Jupyter use: a 256-bit token, generated, printed
+ * once, stored only as an HMAC, exchanged for a session. There is nothing for an
+ * operator to choose badly, and no cryptography is hand-rolled — `createHmac`,
+ * `randomBytes` and `timingSafeEqual` do the work.
+ *
+ * **This file must not grow into an auth library.** If a second operator, a
+ * password login, account recovery, or sessions that outlive a restart is ever
+ * wanted, adopt `better-auth` behind this same interface instead of extending
+ * this. By then the Mongo store exists and its adapter is off the shelf.
+ * better-auth's real home in this project is the process UI's BFF, which owns
+ * actual user accounts.
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 

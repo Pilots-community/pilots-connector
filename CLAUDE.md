@@ -176,21 +176,31 @@ transitions from a terminal state; and warnings that do not fail a definition.
 
 ## Measured, not claimed
 
-From `node apps/connector/scripts/bench.mjs`, on a development laptop:
+**In a container** — `docker run --memory=1g`, file store, after S1 has run end to end:
+
+| | |
+|---|---|
+| Image size | 221 MB |
+| Containers | **1** (0 databases) |
+| Cold start | ~220 ms |
+| Memory in use | **~82 MiB — 8% of a 1 GB limit** |
+
+**On a laptop** — `node apps/connector/scripts/bench.mjs`:
 
 | | file store | memory store |
 |---|---|---|
-| Containers | **1** (0 databases) | 1 |
 | Cold start | ~450 ms | ~440 ms |
 | Time to first transaction (cold) | ~110 ms | ~26 ms |
-| Resident memory | **~130–145 MB** (target < 150 MB) | ~133 MB |
+| Process RSS | ~130–145 MB | ~133 MB |
 | Mean write latency | ~35 ms | ~0.9 ms |
 
-Two things to keep an eye on. **Memory is within target but with little headroom**, exactly as
-[STACK.md §5.3](docs/STACK.md#53-measure-memory-at-m2-not-m6) predicted — that is Node plus NestJS plus
-`reflect-metadata`, and M2 was the moment to find out. **The file store's write latency is one `fsync`
-per event**, which is the honest price of "the log is the record"; the materialised instance is a cache
-the log rebuilds, so it is not fsynced.
+The two memory figures measure different things: `docker stats` reports the cgroup working set, RSS
+counts shared and mapped pages too. **Size against the container figure.** At 8% of 1 GB there is ample
+headroom, so [STACK.md §5.3](docs/STACK.md#53-measure-memory-at-m2-not-m6)'s "swap the framework if it
+blows the target" trigger is spent — NestJS stays.
+
+**The file store's write latency is one `fsync` per event**, which is the honest price of "the log is the
+record"; the materialised instance is a cache the log rebuilds, so it is not fsynced.
 
 ## Roadmap milestones
 
@@ -223,7 +233,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 - **Simplicity target**: `docker compose up` → first transaction in < 60s; full two-party demo = 4
   containers (two connectors, two process UIs) and **0 databases**; self-run containers = 1
   headless / 2 with the demo UI / 0 fully hosted; **0 database containers** in the small profile; memory
-  < 150 MB small-party; no inbound HTTPS for `stream` delivery users; full S0–S4 suite in seconds with no
+  comfortable in a 1 GB container; no inbound HTTPS for `stream` delivery users; full S0–S4 suite in seconds with no
   containers.
 - **Nothing is set in stone until implemented, and barely then.** We are in ideation heading for a
   field-tested demo, not production. Prefer the choice that is easier to pivot away from.
