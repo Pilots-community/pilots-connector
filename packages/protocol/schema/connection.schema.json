@@ -126,6 +126,30 @@
         }
       ]
     },
+    "deliveryCursor": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "receiveCursor": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "createdAt": {
       "type": "string",
       "format": "date-time",

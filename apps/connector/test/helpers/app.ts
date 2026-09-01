@@ -38,6 +38,10 @@ export function testConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorC
       NODE_ENV: 'test',
       PILOTS_LOG_LEVEL: 'silent',
       PILOTS_PARTICIPANTS: JSON.stringify([ACME, VANMOER]),
+      // One connector, no peers: these tests are about the HTTP surfaces, and a
+      // connector with nowhere to relay to is exactly the M2 shape they assert.
+      PILOTS_PEER_TRANSPORT: 'none',
+      PILOTS_DELIVERY_INTERVAL_MS: '0',
     }),
     ...overrides,
   }

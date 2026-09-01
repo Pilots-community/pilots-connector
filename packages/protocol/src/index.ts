@@ -62,10 +62,22 @@ export {
 // — crypto —
 export {
   protectedHeaderOf,
+  signCompactJws,
   signDetachedJws,
   verifyDetachedJws,
   type JwsProtectedHeader,
 } from './crypto/jws.js'
+export {
+  PEER_TOKEN_SKEW_SECONDS,
+  PEER_TOKEN_TTL_SECONDS,
+  PEER_TOKEN_TYP,
+  PeerTokenClaims,
+  signPeerToken,
+  verifyPeerToken,
+  type PeerTokenFailure,
+  type PeerTokenRejection,
+  type VerifyPeerTokenOptions,
+} from './crypto/peer-token.js'
 export {
   LocalEd25519Signer,
   buildDidDocument,
@@ -79,6 +91,7 @@ export * from './schemas/definition.js'
 export * from './schemas/instance.js'
 export * from './schemas/event.js'
 export * from './schemas/connection.js'
+export * from './schemas/replication.js'
 export * from './schemas/offering.js'
 export * from './schemas/api-key.js'
 export * from './schemas/audit.js'
@@ -101,6 +114,7 @@ export {
   buildEventHeader,
   filterEvent,
   foldEvents,
+  genesisHash,
   headerHash,
   signEvent,
   verifyChain,

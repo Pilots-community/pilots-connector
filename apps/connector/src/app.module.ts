@@ -14,12 +14,16 @@ import { PeerController } from './api/peer.controller.js'
 import { WellKnownController } from './api/well-known.controller.js'
 import { ADMIN_SESSIONS } from './auth/admin-session.service.js'
 import { API_KEYS } from './auth/api-key.tokens.js'
-import { AdminGuard, ApiKeyGuard, PeerGuard } from './auth/guards.js'
+import { AdminGuard, ApiKeyGuard } from './auth/guards.js'
 import { CONFIG } from './config/config.js'
 import { DEFINITION_REGISTRY } from './definitions/definition-registry.js'
 import { IDENTITY } from './identity/identity.service.js'
 import { INSTANCE_SERVICE } from './instances/instance.tokens.js'
 import { LOG_SERVICE } from './logging/log.service.js'
+import { CONNECTIONS } from './connections/connection.service.js'
+import { NOTIFICATIONS } from './notifications/notification.service.js'
+import { PEER_SERVER } from './peer/peer.server.js'
+import { LOCAL_HUB, PEER_STREAMS, RELAY } from './runtime.tokens.js'
 import { STORE } from './store/store.js'
 import type { Runtime } from './runtime.js'
 
@@ -44,9 +48,14 @@ export class AppModule {
         { provide: API_KEYS, useValue: runtime.apiKeys },
         { provide: ADMIN_SESSIONS, useValue: runtime.adminSessions },
         { provide: INSTANCE_SERVICE, useValue: runtime.instances },
+        { provide: CONNECTIONS, useValue: runtime.connections },
+        { provide: NOTIFICATIONS, useValue: runtime.notifications },
+        { provide: PEER_SERVER, useValue: runtime.peers },
+        { provide: RELAY, useValue: runtime.relay },
+        { provide: LOCAL_HUB, useValue: runtime.hub },
+        { provide: PEER_STREAMS, useValue: runtime.peerStreams },
         ApiKeyGuard,
         AdminGuard,
-        PeerGuard,
       ],
     }
   }

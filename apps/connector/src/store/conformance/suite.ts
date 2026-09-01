@@ -66,6 +66,7 @@ function eventAt(
       at: AT,
       prev: seq === 1 ? null : `sha256:${'0'.repeat(64)}`,
       payloadHash: payload === null ? EMPTY_PAYLOAD_HASH : hashJson(payload as never),
+      genesis: `sha256:${'1'.repeat(64)}`,
       attachments: [],
     },
     payload: payload as never,

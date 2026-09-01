@@ -42,8 +42,13 @@ claims  { "iss": "did:web:acme-shipping.example",
           "iat": 1756032842, "exp": 1756033142, "jti": "…" }
 ```
 
-The receiver resolves `iss`, checks the signature against the key named by `kid`, checks `aud` is
-itself, checks `exp`, and rejects a replayed `jti`. Tokens are short-lived and minted per request or
+The receiver resolves `iss`, checks that `kid` belongs to `iss`, checks the signature, checks `aud` is
+itself, checks `exp` and `iat` against a small skew allowance, refuses a token whose lifetime exceeds
+the ceiling — a year-long "short-lived token" is a password — and rejects a replayed `jti`. The replay
+check is **last**, after the signature has proven the token genuine: burning a `jti` on an unverified
+token would let anyone invalidate a peer's real tokens by forging copies of them. A `jti` is unique
+within its issuer, not globally, so two peers choosing the same random id cannot cancel each other's
+calls. Tokens are short-lived and minted per request or
 per short window — **nothing expires in the middle of a business process**, because the token
 authenticates the call, not the process.
 
@@ -247,8 +252,7 @@ wrong — and would still pass a one-sided demo.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/local/v1/connections` | Our connections and their status. |
-| `POST` | `/api/local/v1/connections` | Initiate an outbound connection request. |
+| `GET` | `/api/local/v1/connections` | Our connections and their status. **Read-only**: connections are operator state, established on the admin surface (§5.1). |
 | `GET` | `/api/local/v1/offerings?peer=<did>` | Browse a peer's offerings. Relayed. |
 | `GET` | `/api/local/v1/definitions/{id}@{version}` | A definition plus its content hash. |
 | `POST` | `/api/local/v1/instances` | Start a quotation or a service instance. Relayed by `hostedBy`. |
@@ -304,7 +308,7 @@ Every `filter` key is optional and they AND together; an absent key matches ever
 
 | Type | Fires when | Why an internal system wants it |
 |---|---|---|
-| `action.required` | The instance entered a state where **at least one transition is available to one of our roles** | "It is our turn." The one an automated backoffice actually needs. |
+| `action.required` | The instance **entered a state** where at least one transition is available to one of our roles | "It is our turn." The one an automated backoffice actually needs. Read this literally: it fires on each state change where something is available, not only on the edge from nothing-available to something-available. Most definitions carry a `cancel` available from `*`, so an edge-triggered version would fire once at creation and never again — and a backoffice would never be told it was time to weigh. A pure data patch does not re-announce a turn that has not moved. |
 | `action.cleared` | We are no longer the party who must act | Lets a work queue drain itself instead of growing forever. |
 | `state.changed` | Any state change on an instance we participate in | Progress tracking, dashboards, ERP status sync. |
 | `event` | Every signed event, state change or not | Mirroring the log. Includes pure data patches. |
@@ -472,6 +476,7 @@ represents a refusal.
     "at":          "2026-08-24T09:14:02.000Z",
     "prev":        "sha256:9f3c…",
     "payloadHash": "sha256:1a7b…",
+    "genesis":     "sha256:c40e…",
     "attachments": [ { "sha256": "…", "mime": "application/pdf", "size": 41022 } ]
   },
   "payload":  { "price": { "value": 320, "currency": "EUR" } },
@@ -489,6 +494,18 @@ represents a refusal.
   it the log could not reconstruct the instance it describes, and a replica could not rebuild anything.
 - `prev` is `sha256` of the canonicalised **header** of event `seq - 1`; `null` for `seq == 1`.
 - `payloadHash` is `sha256` of the canonicalised payload, or of the empty object `{}` when there is none.
+- `genesis` is `sha256` of the canonicalised **instance genesis** — `{ kind, definition, participants,
+  quotationId, offering }`, the fields fixed at creation and never changed afterwards.
+
+  It is on **every** event, not only the first, and its value is identical across an instance's whole
+  log. It exists because `definition` and `participants` are exactly what authority is judged
+  against — step 2 below checks the actor's role, and a role means nothing without the map that
+  assigns it. Those fields do not live in the log, so they travel alongside it, and without `genesis`
+  a replica would have to take the sender's word for them. A home node could then hand over a
+  perfectly signed, perfectly chained history together with a participants map naming somebody who
+  was never in the instance, and "the host cannot lie" would hold for every field except the two that
+  decide who is allowed to do what. Putting it on every event means an incremental delivery binds
+  identity too, rather than only a full replay from `seq` 1.
 - `to` is `null` for a pure data patch — a transition may change state, patch data, or do both.
 - `at` is UTC, always `Z`. A canonical record with local offsets in it is one two implementations can
   disagree about.
@@ -513,18 +530,33 @@ implementation exists.
 On receiving events for an instance, a peer must:
 
 1. Verify `sig` over the canonicalised header, using a key from the resolved DID document of `actor`.
-2. Check `actor` holds a role in the instance permitted by the definition to make `transition`.
-3. Check `prev` equals the hash of the header it already holds at `seq - 1`.
-4. Check `from` matches the state it computed after `seq - 1`.
-5. If the payload is present, check `payloadHash` matches it.
+2. Check `genesis` equals the hash of the instance metadata it was given, and that every event in the
+   log carries the same value. Without this, step 3 checks authority against a map the sender chose.
+3. Check `actor` holds a role in the instance permitted by the definition to make `transition`.
+4. Check `prev` equals the hash of the header it already holds at `seq - 1`.
+5. Check `from` matches the state it computed after `seq - 1`.
+6. If the payload is present, check `payloadHash` matches it.
 
-A failure at step 3 or 4 means the host has rewritten history. It is a hard error: surface it, audit it
+A peer that re-presents an event for a `seq` it has already been given must present it **unchanged**:
+same header, and any payload still hashing to `payloadHash`. Treating a re-sent event as a harmless
+duplicate without checking it is the quietest possible way to miss a rewritten history.
+
+A failure at step 2, 4 or 5 means the host has rewritten history. It is a hard error: surface it, audit it
 as `chain.verify` / `failed`, do not retry, do not silently resync.
+
+**A released field is re-sent, and only then.** Visibility is state-dependent: `grossMass` is withheld
+from the shipper at `WEIGHED` and granted at `PAID`. Within one connector that is only a filter, and
+the same stored event reads differently before and after. **Across connectors it cannot be** — the
+peer was never sent the bytes, and no amount of re-filtering conjures them. So when a state change
+releases a field, the home node sends the now-visible payload alongside the event that released it.
+The receiver accepts it **only** because it hashes to the `payloadHash` its already-verified header
+commits to, so this can complete a redacted event and can never replace one. Header, signature and
+chain are untouched.
 
 **Redacted payloads are not verification failures.** When visibility rules withhold fields, the payload
 arrives partial or absent and the envelope's `redacted` flag is `true`; a verifier then skips step 5 for
-that event. (A payload withheld *entirely* is detectable without the flag: `payload` is `null` while
-`payloadHash` is not the hash of `{}`.) The header still verifies, the chain still verifies, and the
+that event. (A payload withheld *entirely* is `null` rather than `{}`, so it stays detectable without the flag:
+`payload` is `null` while `payloadHash` is not the hash of `{}`.) The header still verifies, the chain still verifies, and the
 **state** the instance folds to is still exact, because state folds from headers alone. Only the withheld
 values are unknown — which is the intent.
 
@@ -561,6 +593,7 @@ conformance suite rather than an ad-hoc data-access layer.
 | `GET` | `/api/peer/v1/definitions/{id}@{version}` | A definition plus its content hash. |
 | `POST` | `/api/peer/v1/connections/requests` | Inbound connection request from a peer. |
 | `POST` | `/api/peer/v1/connections/{id}/accepted` \| `/rejected` | Remote: peer reports the outcome. |
+| `POST` | `/api/peer/v1/deliveries` | A batch of signed events pushed by a home node. The `webhook` channel's endpoint (§3.4). |
 | `POST` | `/api/peer/v1/instances` | Start a quotation or a service instance. |
 | `GET` | `/api/peer/v1/instances` \| `/{id}` | Read, visibility-filtered. `ETag: <seq>`. |
 | `POST` | `/api/peer/v1/instances/{id}/transitions` | **The one mutating call.** |
@@ -568,12 +601,36 @@ conformance suite rather than an ad-hoc data-access layer.
 | `GET` | `/api/peer/v1/stream?since=<cursor>` | SSE across every instance the caller participates in. |
 | `GET` | `/api/peer/v1/attachments/{sha256}` | Content-addressed document bytes. |
 
-### 9.1 `POST /instances`
+### 9.1 Who signs, and what a peer call carries
 
-Identical body on both surfaces. On the local surface it may be relayed (§4.1).
+The **participant that acted signs**, never the home node on its behalf. §7.1 says the protected
+header's `kid` is the actor's DID URL and §7.3 step 1 says the verifying key comes from the actor's
+DID document; a home node cannot produce that signature, and if it could, it could invent the other
+party's moves.
+
+So the two surfaces carry different bodies for the same operation, and only the **local** one is the
+integrator-facing shape:
+
+- On `/api/local/v1`, a client sends `{ transition, patch, attachments }` with `If-Match`. Its own
+  connector evaluates the move, builds the header and signs it.
+- On `/api/peer/v1`, the body is `{ instance, event }` — the instance's identity (§7.1's `genesis`
+  fields plus `id` and `createdAt`) and the complete signed event.
+
+The caller can build that header because **`If-Match` already tells it everything it needs**: it holds
+a verified replica, so `If-Match: 3` means the next event is `seq` 4 and its `prev` is the hash of the
+header it holds at 3. If it guessed wrong the home node answers `409` with the real `seq`. That is why
+`If-Match` is mandatory rather than advisory.
+
+The home node still checks everything — connection, role, `from` state, both schemas, guards, `seq`,
+`prev`, `genesis` and the signature. What it cannot do is forge the caller's half.
+
+Runtime-fired transitions (`auto`, and later `links` and deadlines) have `by: []` and are signed by
+the **home node**, because the runtime that fired them is the home node.
+
+### 9.2 `POST /instances`
 
 ```jsonc
-// request
+// local surface — what an integrator sends. Relayed by hostedBy (§4.1).
 { "definition": "container-transport-quotation@1.0.0",
   "participants": { "shipper": "did:web:acme-shipping.example",
                     "transporter": "did:web:vanmoer.example" },
@@ -581,7 +638,19 @@ Identical body on both surfaces. On the local surface it may be relayed (§4.1).
   "data": { "pickup": { … }, "dropoff": { … }, "window": { … } } }
 
 // 201 Created, Location: …/instances/018f2b…, ETag: "1"
+
+// peer surface — what the relay sends on. The creating event is already signed.
+{ "instance": { "id": "018f2b…", "kind": "quotation", "definition": "…",
+                "participants": { … }, "quotationId": null, "offering": "…",
+                "createdAt": "2026-08-24T09:00:00.000Z" },
+  "event":    { "header": { … }, "payload": { … }, "redacted": false, "sig": "…" } }
+
+// 201 Created — the body is a delivery: the events, as the caller may see them
 ```
+
+A successful peer write answers with the events it accepted, filtered for the caller, in the same
+shape a delivery uses. The caller converges by **replicating its own reply** — through the ordinary
+verifying path, because its own call succeeding is not a reason to skip checking what came back.
 
 Rejected with `422` if the caller's DID is not among `participants`, if the definition forbids the
 caller's role from creating an instance, or if `data` fails the definition's `data` schema.
@@ -590,10 +659,10 @@ If the referenced offering carries a **standing** quotation, the node creates th
 and immediately auto-fires its initial transition, so it is returned already in `AGREED`. Same code
 path as a negotiated quotation — the definition differs, the runtime does not.
 
-### 9.2 `POST /instances/{id}/transitions`
+### 9.3 `POST /instances/{id}/transitions`
 
 ```jsonc
-// request  — If-Match: "3"   Idempotency-Key: <uuid>
+// local surface — If-Match: "3"   Idempotency-Key: <uuid>
 { "transition": "quote",
   "patch": { "price": { "value": 320, "currency": "EUR" } },
   "attachments": [ { "sha256": "…", "mime": "application/pdf", "size": 41022 } ] }
@@ -601,18 +670,21 @@ path as a negotiated quotation — the definition differs, the runtime does not.
 // 200 OK, ETag: "4"  → the resulting signed event and the new instance state
 ```
 
-The home node checks, in order: the connection is `ACTIVE`; the caller holds a role listed in the
-transition's `by`; the instance's current state is in the transition's `from`; the patch validates
-against the transition's `patch` schema and the resulting data document validates against the
-definition's `data` schema; any `guards` hold. Then it assigns `seq`, builds the header, signs, appends
-the event and the materialised instance atomically, writes the audit entry, evaluates `links`, and
-delivers to peers and to local delivery targets.
+`200`, not `201`: a transition advances an instance, it does not create a resource.
+
+The home node checks, in order: the connection is `ACTIVE`; the event's `genesis` matches the instance
+it names; the signature verifies against the actor's published key and the actor is the authenticated
+caller; `seq` and `prev` continue the log it holds; the caller holds a role listed in the transition's
+`by`; the instance's current state is in the transition's `from`; the patch validates against the
+transition's `patch` schema and the resulting data document validates against the definition's `data`
+schema; any `guards` hold. Then it appends the event and the materialised instance atomically, writes
+the audit entry, evaluates `links`, and delivers to peers and to local delivery targets.
 
 Any check that fails produces an audit entry with `outcome: "denied"` and no event.
 
 `patch` is **JSON Merge Patch (RFC 7386)** against the instance's `data` document. `null` deletes a key.
 
-### 9.3 Errors
+### 9.4 Errors
 
 RFC 7807 throughout, on all three surfaces.
 

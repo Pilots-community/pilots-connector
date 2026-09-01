@@ -40,18 +40,23 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 
 ## Where the code is
 
-**M1 and M2 are built.**
+**M1, M2 and M3 are built — two connectors talk.**
 
 | | |
 |---|---|
-| [`packages/protocol`](packages/protocol) | The specification: schemas, JCS, signing and chain verification, the state-machine evaluator, the visibility filter, the definition linter, a JSON Schema export |
-| [`apps/connector`](apps/connector) | The connector: the store (memory + file, one conformance suite), all three API surfaces, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
+| [`packages/protocol`](packages/protocol) | The specification: schemas, JCS, signing and chain verification, peer bearer tokens, the state-machine evaluator, the visibility filter, the definition linter, a JSON Schema export |
+| [`apps/connector`](apps/connector) | The connector: the store (memory + file + Mongo, one conformance suite), all three API surfaces, the connection handshake, the relay, peer replication, local delivery, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
 
-[docs/ROADMAP.md](docs/ROADMAP.md) M3 — two connectors, and the scenario harness — is next.
+`docker compose up` runs **two connectors and zero databases**, with the first relayed transaction
+about six seconds in. The scenarios that actually argue for the design — a party going offline
+mid-process and catching up, and a host caught rewriting history — run as ordinary tests in
+milliseconds, with no containers at all.
+
+[docs/ROADMAP.md](docs/ROADMAP.md) M4 — quotations, links and deadlines — is next.
 
 ```bash
 pnpm install
-pnpm test               # 360 tests, no network, no containers, no real clock
+pnpm test               # 412 tests, ~2.6 s, no network, no containers, no real clock
 pnpm lint:definitions   # check docs/definitions against the schema and the linter
 pnpm build
 

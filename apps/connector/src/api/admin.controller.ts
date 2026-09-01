@@ -26,7 +26,7 @@ import {
 } from '@nestjs/common'
 import type { FastifyReply } from 'fastify'
 
-import { Problem, Scope, verifyAuditChain } from '@pilots/protocol'
+import { Did, PeerDelivery, Problem, Scope, verifyAuditChain } from '@pilots/protocol'
 import { z } from 'zod'
 
 import {
@@ -41,6 +41,10 @@ import { DEFINITION_REGISTRY, type DefinitionRegistry } from '../definitions/def
 import { ProblemException } from '../http/problem.js'
 import { IDENTITY, type Identity } from '../identity/identity.service.js'
 import { LOG_SERVICE, type LogService } from '../logging/log.service.js'
+import { CONNECTIONS, type ConnectionService } from '../connections/connection.service.js'
+import { NOTIFICATIONS, type NotificationService } from '../notifications/notification.service.js'
+import { PEER_STREAMS } from '../runtime.tokens.js'
+import type { PeerStreamClient } from '../delivery/peer-stream-client.js'
 import { STORE, type Store } from '../store/store.js'
 
 const SignInBody = z.strictObject({
@@ -111,6 +115,26 @@ function parse<T extends z.ZodType>(schema: T, body: unknown): z.infer<T> {
 }
 
 /** Sign-in has no session yet, so it sits outside the guarded controller. */
+const ConnectionRequestBody = z.strictObject({
+  peerDid: Did,
+  peerBaseUrl: z.url(),
+  displayName: z.string().max(255).optional(),
+  /** How **we** want to receive this peer's events. */
+  delivery: PeerDelivery.default({ channel: 'stream' }),
+  message: z.string().max(1024).optional(),
+})
+
+const ConnectionDecisionBody = z.strictObject({
+  /** On accept: how we want to receive. Absent means `stream` — no inbound endpoint needed. */
+  delivery: PeerDelivery.optional(),
+  reason: z.string().max(1024).optional(),
+})
+
+const TrustedPeerBody = z.strictObject({
+  did: Did,
+  note: z.string().max(255).optional(),
+})
+
 @Controller('api/admin/v1/sessions')
 export class AdminSessionController {
   constructor(
@@ -169,6 +193,9 @@ export class AdminController {
     @Inject(DEFINITION_REGISTRY) private readonly definitions: DefinitionRegistry,
     @Inject(LOG_SERVICE) private readonly log: LogService,
     @Inject(CONFIG) private readonly config: ConnectorConfig,
+    @Inject(CONNECTIONS) private readonly connections: ConnectionService,
+    @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
+    @Inject(PEER_STREAMS) private readonly streams: PeerStreamClient,
   ) {}
 
   private session(request: AdminRequest): AdminSession {
@@ -466,14 +493,180 @@ export class AdminController {
     return { deleted: true }
   }
 
-  // ── connections (accept / reject arrive with the handshake in M3) ────────
+  // ── the audit log ────────────────────────────────────────────────────────
+
+  // ── connections ──────────────────────────────────────────────────────────
+  //
+  // Accepting a connection is an administrative act because a **human decides
+  // who to trust**. The peer callback that reports the decision lives on the
+  // peer surface; collapsing the two would let a peer accept its own request.
 
   @Get('connections')
   async listConnections(@Query('participantId') participantId?: string) {
-    return { connections: await this.store.connections.find(this.participantId(participantId)) }
+    return { connections: await this.connections.list(this.participantId(participantId)) }
   }
 
-  // ── the audit log ────────────────────────────────────────────────────────
+  @Post('connections')
+  async requestConnection(
+    @Req() request: AdminRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(ConnectionRequestBody, body)
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    const result = await this.connections.request(
+      participant,
+      {
+        peerDid: parsed.peerDid,
+        peerBaseUrl: parsed.peerBaseUrl,
+        displayName: parsed.displayName ?? null,
+        delivery: parsed.delivery,
+        ...(parsed.message === undefined ? {} : { message: parsed.message }),
+      },
+      { kind: 'adminSession', id: this.session(request).id, actorRef: this.session(request).label },
+    )
+    if (!result.ok) throw ProblemException.from(result.errors)
+
+    void reply.status(201)
+    return { connection: result.value }
+  }
+
+  @Post('connections/:id/accept')
+  async acceptConnection(
+    @Req() request: AdminRequest,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(ConnectionDecisionBody, body ?? {})
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    const result = await this.connections.accept(
+      participant,
+      id,
+      parsed.delivery ?? { channel: 'stream' },
+      { kind: 'adminSession', id: this.session(request).id, actorRef: this.session(request).label },
+    )
+    if (!result.ok) throw ProblemException.from(result.errors)
+    // Attach immediately if we just chose to hold a line, rather than waiting
+    // for the next scan.
+    await this.streams.sync()
+    return { connection: result.value }
+  }
+
+  @Post('connections/:id/reject')
+  async rejectConnection(
+    @Req() request: AdminRequest,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(ConnectionDecisionBody, body ?? {})
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    const result = await this.connections.reject(participant, id, parsed.reason, {
+      kind: 'adminSession',
+      id: this.session(request).id,
+      actorRef: this.session(request).label,
+    })
+    if (!result.ok) throw ProblemException.from(result.errors)
+    return { connection: result.value }
+  }
+
+  @Post('connections/:id/revoke')
+  async revokeConnection(
+    @Req() request: AdminRequest,
+    @Param('id') id: string,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    // Revoked, not deleted. Existing instances become read-only rather than
+    // disappearing: history is not deleted, and a process that ran is a fact.
+    const result = await this.connections.revoke(participant, id, {
+      kind: 'adminSession',
+      id: this.session(request).id,
+      actorRef: this.session(request).label,
+    })
+    if (!result.ok) throw ProblemException.from(result.errors)
+    return { connection: result.value }
+  }
+
+  // ── the auto-accept allowlist ────────────────────────────────────────────
+
+  @Get('trusted-peers')
+  async listTrustedPeers(@Query('participantId') participantId?: string) {
+    return { trustedPeers: await this.store.trustedPeers.find(this.participantId(participantId)) }
+  }
+
+  @Post('trusted-peers')
+  async trustPeer(
+    @Req() request: AdminRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(TrustedPeerBody, body)
+    const owner = this.participantId(participantIdQuery)
+
+    // Keyed by DID, so the allowlist cannot hold the same peer twice.
+    await this.store.trustedPeers.upsert({
+      id: parsed.did,
+      participantId: owner,
+      did: parsed.did,
+      addedAt: new Date().toISOString(),
+      note: parsed.note ?? null,
+    })
+    await this.audit(request, 'trustedPeer.add', 'ok', owner, { connection: null })
+    void reply.status(201)
+    return { did: parsed.did }
+  }
+
+  @Delete('trusted-peers/:did')
+  async untrustPeer(
+    @Req() request: AdminRequest,
+    @Param('did') did: string,
+    @Query('participantId') participantId?: string,
+  ) {
+    const owner = this.participantId(participantId)
+    const removed = await this.store.trustedPeers.delete(owner, decodeURIComponent(did))
+    if (!removed) throw ProblemException.notFound(`${did} is not on the allowlist`)
+    await this.audit(request, 'trustedPeer.remove', 'ok', owner)
+    return { removed: true }
+  }
+
+  // ── dead letters ─────────────────────────────────────────────────────────
+
+  @Get('notifications/dead-letters')
+  async deadLetters(@Query('participantId') participantId?: string) {
+    const owner = this.participantId(participantId)
+    return { deadLetters: await this.notifications.deadLetters(owner) }
+  }
+
+  /** Requeue. An operator's decision, never automatic. */
+  @Post('notifications/retry')
+  async retryDeadLetters(
+    @Req() request: AdminRequest,
+    @Query('participantId') participantId?: string,
+    @Query('subscriptionId') subscriptionId?: string,
+  ) {
+    const owner = this.participantId(participantId)
+    const requeued = await this.notifications.retryDeadLetters(owner, subscriptionId)
+    await this.audit(request, 'notification.retry', 'ok', owner, {
+      subscription: subscriptionId ?? null,
+    })
+    return { requeued }
+  }
 
   @Get('audit')
   async auditLog(

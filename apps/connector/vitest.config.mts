@@ -18,6 +18,10 @@ export default defineConfig({
     alias: {
       // Test against the spec's source, not its build output: changing a schema
       // should not need a build step before the connector's tests see it.
+      // More specific entries first: these are prefix matches, so a bare
+      // '@pilots/protocol' alias would rewrite the subpath entries into
+      // `.../src/index.ts/did-web` and fail with ENOTDIR.
+      '@pilots/protocol/did-web': resolve(here, '../../packages/protocol/src/did-web.ts'),
       '@pilots/protocol/testing': resolve(here, '../../packages/protocol/src/testing/index.ts'),
       '@pilots/protocol': resolve(here, '../../packages/protocol/src/index.ts'),
     },

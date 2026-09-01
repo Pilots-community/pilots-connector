@@ -11,9 +11,10 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M2 complete** — [`packages/protocol`](packages/protocol) and
-[`apps/connector`](apps/connector) are built, tested and green. M3 (two connectors: connections,
-delivery, replication, and the scenario harness) is the next milestone.
+Current status: **M3 complete** — two connectors talk. The scenario harness stands whole connectors up
+in one process, and S0, S1, S4a, S4b, S4d and S5 run as tests in ~2.6 s with no containers.
+`docker compose up` gives two connectors, zero databases, and a first relayed transaction ~6 s in.
+M4 (quotations, links, deadlines) is the next milestone.
 
 ## What we're building
 
@@ -126,9 +127,17 @@ pilots-service/
                          visibility filter, definition linter, JSON Schema export. Tests live here.
   packages/client/       Typed local-API client + OpenAPI doc. The integration surface.
   apps/connector/        NestJS (Fastify adapter). Three API surfaces + admin UI.
+    src/peer/            The peer surface as a plain function, the Transport port, the in-process
+                         and HTTP adapters, bearer tokens, and the relay. The Nest controller is a
+                         thin shell over PeerSurface, so scenario tests and containers run the same
+                         authentication, routing and checks.
+    src/connections/     The handshake, its trust checks, and the state that gates process traffic.
+    src/delivery/        Peer delivery: outbound webhook + stream, the stream hub, the stream client.
+    src/replication/     Applying a peer's events. Where "the host cannot lie" is enforced.
+    src/notifications/   Local delivery: subscriptions, envelopes, channels, retry, dead letters.
     src/store/           Repository port, memory/file/mongo adapters, conformance suite.
                          Connector-internal by design — do not promote to a shared package.
-    src/admin-ui/        Minimal admin UI: API keys, trusted connectors, settings, audit log.
+    src/admin-ui/        Minimal admin UI: connections, API keys, offerings, subscriptions, audit log.
   apps/process-ui/       Demo process management. BFF (holds the API key, owns its own users) + SPA.
   tests/e2e/             Playwright. Wiring and UI only, never protocol behaviour.
   docs/                  Design documents.
@@ -165,7 +174,13 @@ pnpm schema:export      # regenerate packages/protocol/schema/*.json from the zo
 pnpm --filter @pilots/connector start        # needs `pnpm build` first
 pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying to :3000
 node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first transaction
-docker compose up                            # one container, no database
+docker compose up                            # two connectors, 0 databases, connection seeded
+
+# the Mongo adapter runs the same conformance suite, but only when pointed at one.
+# It needs a replica set — a standalone mongod cannot do the transactions the port requires.
+docker run -d -p 27018:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec <container> mongosh --eval 'rs.initiate()'
+PILOTS_TEST_MONGO_URI='mongodb://localhost:27018/?directConnection=true' pnpm test
 ```
 
 `pnpm lint:definitions` replaced `tools/lint-definitions.py`, which is deleted. It checks everything the
@@ -176,11 +191,25 @@ transitions from a terminal state; and warnings that do not fail a definition.
 
 ## Measured, not claimed
 
-**In a container** — `docker run --memory=1g`, file store, after S1 has run end to end:
+**The two-party demo** — `docker compose up`, file store, `mem_limit: 1g` on each, S1 run across both:
 
 | | |
 |---|---|
-| Image size | 221 MB |
+| Containers | **2** (0 databases) |
+| Both healthy | ~5.7 s from `up` |
+| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer, against a 60 s target |
+| Cold start, each | ~330 ms |
+| Memory in use, each | **~82–86 MiB — 8% of a 1 GB limit**, after S1 has run across both |
+| Image size | 235 MB |
+
+The limit lives in `docker-compose.yml`, not only in this table, so a connector that outgrows 1 GB
+fails `up` instead of quietly making the number stale. The image grew 14 MB at M3 for the Mongo
+driver, which the small profile never loads — that is the price of one image serving both profiles.
+
+**One container** — `docker run --memory=1g`, file store, after S1 has run end to end:
+
+| | |
+|---|---|
 | Containers | **1** (0 databases) |
 | Cold start | ~220 ms |
 | Memory in use | **~82 MiB — 8% of a 1 GB limit** |
@@ -210,8 +239,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 |---|---|---|
 | **M1** — protocol package ✅ **done** | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` / `DidResolver` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | Met: `pnpm test` green (217 tests, under a second); the five definitions lint clean; a tampered event fails, a redacted event passes |
 | **M2** — connector, single party ✅ **done** | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, admin UI | Met: one container, no database; S1 runs on the local API with `curl` + an API key; the audit log shows every call including refusals, with an intact chain; memory and cold start measured |
-| **M3** — two connectors *(current target)* | **Scenario harness + in-process transport first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, **Mongo adapter + conformance in CI** | **S4a and S4b pass as scenario tests in `pnpm test`**; then two containers, S1 end to end, both replicas verify |
-| **M4** — quotations, links, deadlines | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachments, `GET /offerings` | S2 end to end as a scenario test and across containers |
+| **M3** — two connectors ✅ **done** | Scenario harness + in-process transport **first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, Mongo adapter + conformance | Met: S0, S1, S4a, S4b, S4d, S5 as scenario tests (412 tests, ~2.6 s, no containers); an automated participant runs S1 with no human; Mongo passes the same conformance suite; two containers, 0 databases, S1 end to end, both replicas verify |
+| **M4** — quotations, links, deadlines *(current target)* | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachment bytes, offering discovery | S2 end to end as a scenario test and across containers |
 | **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
 | **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
 | **M7** — publish and deploy *(event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |

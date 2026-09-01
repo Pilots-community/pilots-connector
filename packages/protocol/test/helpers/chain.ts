@@ -1,5 +1,5 @@
 import { EMPTY_PAYLOAD_HASH } from '../../src/canonical.js'
-import { headerHash, signEvent } from '../../src/engine/chain.js'
+import { genesisHash, headerHash, signEvent } from '../../src/engine/chain.js'
 import { LocalEd25519Signer } from '../../src/crypto/local-signer.js'
 import type { JsonObject } from '../../src/json.js'
 import {
@@ -9,6 +9,7 @@ import {
 } from '../../src/ports/did-resolver.js'
 import type { AttachmentRef } from '../../src/schemas/common.js'
 import type { SignedEvent } from '../../src/schemas/event.js'
+import { instanceGenesis, type InstanceGenesis } from '../../src/schemas/instance.js'
 
 export const ACME = 'did:web:acme-shipping.example'
 export const VANMOER = 'did:web:vanmoer.example'
@@ -40,19 +41,34 @@ export interface AppendSpec {
   attachments?: AttachmentRef[]
 }
 
+/**
+ * A default identity for logs whose test does not care about one. Real
+ * verification pins it; these helpers only need every event in a log to agree.
+ */
+export const DEFAULT_GENESIS: InstanceGenesis = instanceGenesis({
+  kind: 'service',
+  definition: 'container-weighing@1.0.0',
+  participants: { shipper: ACME, weigher: VANMOER },
+})
+
 /** Build a signed, chained log the way a home node would. */
 export class ChainBuilder {
   readonly events: SignedEvent[] = []
+  readonly genesis: InstanceGenesis
 
   constructor(
     private readonly parties: TwoParties,
     private readonly instanceId: string,
-  ) {}
+    genesis: InstanceGenesis = DEFAULT_GENESIS,
+  ) {
+    this.genesis = genesis
+  }
 
   async append(spec: AppendSpec): Promise<SignedEvent> {
     const previous = this.events.at(-1)
     const event = await signEvent(this.parties.signer, spec.participantId, {
       instance: this.instanceId,
+      genesis: genesisHash(this.genesis),
       seq: this.events.length + 1,
       transition: spec.transition,
       actor: spec.actor,

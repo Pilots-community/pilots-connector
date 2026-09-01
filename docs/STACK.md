@@ -67,10 +67,10 @@ user-supplied schemas carried inside a definition. `packages/protocol` legitimat
 | Logging | **pino** | Fastify-native, structured JSON to stdout, CloudWatch-shaped. Carries the `audit` flag. |
 | Admin sessions | **built-in bootstrap token → session** (§10.1) | admin surface only. Never accepted on `/api/local/v1` or `/api/peer/v1`. `better-auth` deferred. |
 | API key hashing | **HMAC-SHA256 with a server-side pepper** | see §4.1 |
-| SSE | **hand-rolled** | `text/event-stream`, `id:`, `data:`. We need custom `Last-Event-ID` catch-up anyway. |
+| SSE | **hand-rolled**, both ends | `text/event-stream`, `id:`, `data:`. We need custom `Last-Event-ID` catch-up anyway, and `EventSource` cannot send an `Authorization` header — which a peer stream must. |
 | Store — memory | in-process maps | test default |
 | Store — file | `node:fs` + in-process async mutex + write-temp/fsync/rename | the adapter is *documented* single-writer single-process, so this is sufficient and dependency-free |
-| Store — mongo | **mongodb** driver | unique index on `{instanceId, seq}` and on idempotency keys |
+| Store — mongo | **mongodb** driver | unique indexes on `{participantId, instanceId, seq}` and on idempotency keys; multi-document **transactions** for `appendEvent`, so it requires a replica set and refuses to start without one. Loaded through a dynamic import, so the small profile never pulls it in at runtime. |
 | Mongo in CI | GitHub Actions **service container** | boring; one dependency fewer than testcontainers |
 | Timers | **scan loop over the `timers` collection, driven by `Clock`** | never `setTimeout` — see §4.2 |
 | Static admin UI | **@fastify/static** | the admin UI is built by Vite and served by the connector |

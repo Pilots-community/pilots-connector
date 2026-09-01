@@ -1,11 +1,25 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { EMPTY_PAYLOAD_HASH, hashJson } from '../src/canonical.js'
-import { filterEvent, foldEvents, headerHash, verifyChain } from '../src/engine/chain.js'
+import {
+  filterEvent,
+  foldEvents,
+  genesisHash,
+  headerHash,
+  verifyChain,
+} from '../src/engine/chain.js'
 import { Problem } from '../src/problems.js'
 import type { SignedEvent } from '../src/schemas/event.js'
 import { shipped } from './helpers/definitions.js'
-import { ACME, ChainBuilder, VANMOER, twoParties, type TwoParties } from './helpers/chain.js'
+import { instanceGenesis } from '../src/schemas/instance.js'
+import {
+  ACME,
+  ChainBuilder,
+  DEFAULT_GENESIS,
+  VANMOER,
+  twoParties,
+  type TwoParties,
+} from './helpers/chain.js'
 
 const weighing = shipped('container-weighing.json')
 const INSTANCE = '01J0000000000000000000000A'
@@ -251,7 +265,11 @@ describe('a redacted event is not a verification failure', () => {
     // Exactly what the shipper receives while the instance is still in WEIGHED.
     const asShipper = events.map((event) => filterEvent(weighing, event, ['shipper'], 'WEIGHED'))
     expect(asShipper[2]!.redacted).toBe(true)
-    expect(asShipper[2]!.payload).toEqual({})
+    // Withheld in full, so the payload is `null` rather than an empty object.
+    // docs/PROTOCOL.md §7.3 leans on that: total withholding stays detectable
+    // even by a verifier that ignores `redacted`, because `payloadHash` is then
+    // not the hash of `{}`.
+    expect(asShipper[2]!.payload).toBeNull()
 
     const result = await verifyChain(asShipper, options())
     expect(result.failures).toEqual([])
@@ -401,5 +419,111 @@ describe('a partially redacted payload', () => {
     expect(result.state).toBe('ASSIGNED')
     expect(result.data.vehiclePlate).toBe('1-ABC-123')
     expect(result.data).not.toHaveProperty('driverName')
+  })
+})
+
+describe('every event commits to the instance it belongs to', () => {
+  const THIRD = 'did:web:interloper.example'
+
+  it('accepts a chain whose genesis matches the metadata it was handed', async () => {
+    const verified = await verifyChain(events, {
+      resolver: parties.resolver,
+      definition: weighing,
+      participants,
+      genesis: DEFAULT_GENESIS,
+    })
+    expect(verified.ok).toBe(true)
+  })
+
+  /**
+   * The attack this exists to stop: a home node hands a replica a perfectly
+   * signed, perfectly chained log, together with a participants map naming
+   * somebody who was never in the instance. Before `genesis`, the replica had
+   * nothing to check that map against — authority was judged against whatever
+   * the sender said.
+   */
+  it('refuses a genuine chain presented with a rewritten participants map', async () => {
+    const swapped = await verifyChain(events, {
+      resolver: parties.resolver,
+      definition: weighing,
+      participants: { shipper: THIRD, weigher: VANMOER },
+      genesis: instanceGenesis({
+        kind: 'service',
+        definition: 'container-weighing@1.0.0',
+        participants: { shipper: THIRD, weigher: VANMOER },
+      }),
+    })
+
+    expect(swapped.ok).toBe(false)
+    expect(swapped.failures[0]?.error.type).toBe(Problem.chainBroken)
+    expect(swapped.failures[0]?.error.detail).toMatch(/does not match the genesis/)
+  })
+
+  it('refuses a chain presented as running a different definition', async () => {
+    const relabelled = await verifyChain(events, {
+      resolver: parties.resolver,
+      definition: weighing,
+      participants,
+      genesis: instanceGenesis({
+        kind: 'service',
+        definition: 'container-transport@1.0.0',
+        participants,
+      }),
+    })
+    expect(relabelled.ok).toBe(false)
+    expect(relabelled.failures[0]?.error.type).toBe(Problem.chainBroken)
+  })
+
+  it('catches two instances spliced into one log even with no metadata to compare', async () => {
+    const other = new ChainBuilder(
+      parties,
+      INSTANCE,
+      instanceGenesis({
+        kind: 'service',
+        definition: 'container-weighing@1.0.0',
+        participants: { shipper: THIRD, weigher: VANMOER },
+      }),
+    )
+    await other.append({
+      participantId: 'acme',
+      actor: ACME,
+      transition: 'create',
+      from: null,
+      to: 'ORDERED',
+      at: '2026-08-24T09:00:00.000Z',
+    })
+
+    // Caller supplies no genesis at all: the chain still has to be internally
+    // consistent about which instance it is.
+    const spliced = await verifyChain(
+      [
+        events[0]!,
+        {
+          ...other.events[0]!,
+          header: { ...other.events[0]!.header, seq: 2, prev: headerHash(events[0]!.header) },
+        },
+      ],
+      {
+        resolver: parties.resolver,
+      },
+    )
+    expect(spliced.ok).toBe(false)
+    expect(spliced.failures[0]?.error.detail).toMatch(/genesis changed|signature/)
+  })
+
+  it('hashes genesis independently of key order', () => {
+    expect(
+      genesisHash(
+        instanceGenesis({ kind: 'service', definition: 'container-weighing@1.0.0', participants }),
+      ),
+    ).toBe(
+      genesisHash(
+        instanceGenesis({
+          participants: { weigher: VANMOER, shipper: ACME },
+          definition: 'container-weighing@1.0.0',
+          kind: 'service',
+        }),
+      ),
+    )
   })
 })

@@ -47,6 +47,43 @@ export function participantDids(participants: ParticipantMap): string[] {
   return [...new Set(Object.keys(participants).flatMap((role) => didsFor(participants, role)))]
 }
 
+/**
+ * What is fixed when an instance is created and can never change afterwards.
+ *
+ * This exists because it is what **authority is checked against**: which
+ * definition governs, and who fills which role. Every event header commits to
+ * its hash, so a home node cannot hand a replica a chain that verifies perfectly
+ * while quietly claiming a different definition or a different counterparty.
+ *
+ * Without it, "the host cannot lie" would hold for every field except the two
+ * that decide who is allowed to do what.
+ */
+export const InstanceGenesis = z.strictObject({
+  kind: ProcessKind,
+  definition: DefinitionRef,
+  participants: ParticipantMap,
+  quotationId: z.union([Ulid, z.null()]),
+  offering: z.union([z.string().max(255), z.null()]),
+})
+export type InstanceGenesis = z.infer<typeof InstanceGenesis>
+
+/** The genesis of an instance, however much else the caller is holding. */
+export function instanceGenesis(instance: {
+  kind: string
+  definition: string
+  participants: ParticipantMap
+  quotationId?: string | null
+  offering?: string | null
+}): InstanceGenesis {
+  return InstanceGenesis.parse({
+    kind: instance.kind,
+    definition: instance.definition,
+    participants: instance.participants,
+    quotationId: instance.quotationId ?? null,
+    offering: instance.offering ?? null,
+  })
+}
+
 export const Instance = z.strictObject({
   id: Ulid,
   kind: ProcessKind,

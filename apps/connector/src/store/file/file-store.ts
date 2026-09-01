@@ -46,6 +46,8 @@ const COLLECTIONS = [
   'offerings',
   'subscriptions',
   'instances',
+  'notifications',
+  'trustedPeers',
   'idempotency',
 ] as const
 
@@ -168,6 +170,22 @@ function makeFileJournal(directory: string, queue: WriteQueue): Journal {
           JSON.stringify(event),
         ),
       ),
+    rewriteEvents: (participantId, instanceId, events) =>
+      enqueue(async () => {
+        const path = join(
+          directory,
+          'events',
+          safeName(participantId),
+          `${safeName(instanceId)}.jsonl`,
+        )
+        await mkdir(dirname(path), { recursive: true })
+        // Durable: this is the log, and the log is the record.
+        await writeAtomic(
+          path,
+          `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+          true,
+        )
+      }),
     appendAudit: (entry) =>
       enqueue(() =>
         appendLine(

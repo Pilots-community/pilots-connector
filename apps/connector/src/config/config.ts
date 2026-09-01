@@ -13,7 +13,7 @@
  */
 import { z } from 'zod'
 
-import { Did } from '@pilots/protocol'
+import { Did, PeerDelivery } from '@pilots/protocol'
 
 export const ParticipantConfig = z.strictObject({
   /** Local id, used as `participantId` on every document this participant owns. */
@@ -28,8 +28,33 @@ export type ParticipantConfig = z.infer<typeof ParticipantConfig>
 export const StoreConfig = z.discriminatedUnion('adapter', [
   z.strictObject({ adapter: z.literal('memory') }),
   z.strictObject({ adapter: z.literal('file'), directory: z.string().min(1) }),
+  /** The large-party profile. Needs a replica set; the adapter refuses without one. */
+  z.strictObject({
+    adapter: z.literal('mongo'),
+    uri: z.string().min(1),
+    database: z.string().min(1),
+  }),
 ])
 export type StoreConfig = z.infer<typeof StoreConfig>
+
+/**
+ * A connection seeded from configuration, as the demo may do.
+ *
+ * A shortcut, never a replacement: the handshake must still work when these are
+ * absent, and S0 tests it. Seeding exists so `docker compose up` reaches a first
+ * transaction in under a minute, not so the handshake can be skipped.
+ */
+export const SeededConnection = z.strictObject({
+  participantId: z.string().min(1),
+  peerDid: Did,
+  peerBaseUrl: z.url(),
+  displayName: z.string().max(255).optional(),
+  /** How the **peer** delivers to us. */
+  inbound: PeerDelivery.default({ channel: 'stream' }),
+  /** How **we** deliver to the peer. */
+  outbound: PeerDelivery.default({ channel: 'stream' }),
+})
+export type SeededConnection = z.infer<typeof SeededConnection>
 
 export const ConnectorConfig = z.strictObject({
   port: z.int().min(0).max(65535),
@@ -45,6 +70,25 @@ export const ConnectorConfig = z.strictObject({
   secretsFile: z.string().min(1),
   /** Audit every read, not only mutations and denials. Off by default, or the log drowns in GETs. */
   auditReads: z.boolean(),
+
+  /** `none` disables outbound peer calls entirely; tests supply their own transport. */
+  peerTransport: z.enum(['http', 'none']),
+  /** Connections established at boot instead of by handshake. A demo shortcut. */
+  connections: z.array(SeededConnection),
+  /** Peers whose connection requests are accepted without asking the operator. */
+  autoAccept: z.array(Did),
+  /**
+   * Resolve peer DIDs through their configured base URL instead of through
+   * `did:web`'s own DNS-derived URL.
+   *
+   * **This weakens the domain-binding check to "an operator configured it"**,
+   * which is the one property `did:web` was chosen for. It exists because the
+   * demo runs on the reserved `.example` TLD, where nothing resolves publicly.
+   * `loadConfig` refuses to return a production config with it on.
+   */
+  devDidDirectory: z.boolean(),
+  /** How often the delivery scan loops run. `0` disables them; tests drive the pumps by hand. */
+  deliveryIntervalMs: z.int().min(0),
 })
 export type ConnectorConfig = z.infer<typeof ConnectorConfig>
 
@@ -67,6 +111,15 @@ function bool(value: string | undefined, fallback: boolean): boolean {
  * `PILOTS_PARTICIPANT_*` variables are the one-participant shorthand the demo
  * uses, and they build a single-element list, so there is one code path.
  */
+function readJsonList(value: string | undefined, name: string): unknown {
+  if (value === undefined || value.trim() === '') return []
+  try {
+    return JSON.parse(value)
+  } catch (cause) {
+    throw new ConfigError(`${name} is not valid JSON: ${(cause as Error).message}`)
+  }
+}
+
 function readParticipants(env: NodeJS.ProcessEnv): unknown {
   const list = env['PILOTS_PARTICIPANTS']
   if (list !== undefined && list.trim() !== '') {
@@ -98,11 +151,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     host: env['PILOTS_HOST'] ?? '0.0.0.0',
     environment: env['NODE_ENV'] ?? 'development',
     logLevel: env['PILOTS_LOG_LEVEL'] ?? 'info',
-    store: adapter === 'file' ? { adapter, directory } : { adapter },
+    store:
+      adapter === 'file'
+        ? { adapter, directory }
+        : adapter === 'mongo'
+          ? {
+              adapter,
+              // No default: a connection string is a secret in every deployment
+              // that matters, and a default would invite one into a committed file.
+              uri: env['PILOTS_MONGO_URI'] ?? '',
+              database: env['PILOTS_MONGO_DB'] ?? 'pilots',
+            }
+          : { adapter },
     participants: readParticipants(env),
     definitionsDir: env['PILOTS_DEFINITIONS_DIR'] ?? './definitions',
     secretsFile: env['PILOTS_SECRETS_FILE'] ?? `${directory}/secrets.json`,
     auditReads: bool(env['PILOTS_AUDIT_READS'], false),
+    peerTransport: env['PILOTS_PEER_TRANSPORT'] ?? 'http',
+    connections: readJsonList(env['PILOTS_CONNECTIONS'], 'PILOTS_CONNECTIONS'),
+    autoAccept: (env['PILOTS_AUTO_ACCEPT'] ?? '')
+      .split(',')
+      .map((did) => did.trim())
+      .filter((did) => did !== ''),
+    devDidDirectory: bool(env['PILOTS_DEV_DID_DIRECTORY'], false),
+    deliveryIntervalMs: Number(env['PILOTS_DELIVERY_INTERVAL_MS'] ?? 1000),
   }
 
   const parsed = ConnectorConfig.safeParse(candidate)
@@ -125,6 +197,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     }
     ids.add(participant.id)
     dids.add(participant.did)
+  }
+
+  for (const seeded of config.connections) {
+    if (!ids.has(seeded.participantId)) {
+      throw new ConfigError(
+        `PILOTS_CONNECTIONS names participant ${seeded.participantId}, which is not configured`,
+      )
+    }
+  }
+
+  // The one config combination that is refused rather than warned about. A
+  // deployment that resolves peer identity from its own configuration has given
+  // up the property `did:web` was chosen for, and that must not be reachable by
+  // forgetting to unset a variable.
+  if (config.devDidDirectory && config.environment === 'production') {
+    throw new ConfigError(
+      'PILOTS_DEV_DID_DIRECTORY resolves peer DIDs from configuration instead of did:web, ' +
+        'which defeats the domain-binding check. It cannot be used with NODE_ENV=production.',
+    )
   }
 
   return config

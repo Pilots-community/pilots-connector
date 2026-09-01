@@ -184,46 +184,14 @@ export class AdminGuard implements CanActivate {
   }
 }
 
-/**
- * `/api/peer/v1` — a JWS bearer token, `did:web`-resolved.
+/*
+ * There is no `PeerGuard`.
  *
- * The verification itself arrives in M3 together with the connection handshake.
- * Until then the surface exists and refuses everything, which is the right
- * behaviour for a node with no peers: retrofitting the surface split later would
- * touch every route.
+ * `/api/peer/v1` authenticates inside `PeerSurface`, not in a Nest guard,
+ * because the in-process transport reaches that surface without passing through
+ * Nest at all. A guard here would put the bearer-token check on the HTTP path
+ * and not on the one every scenario test uses — so the hermetic tests would be
+ * proving something weaker than what ships. See `peer/peer.server.ts`.
  */
-@Injectable()
-export class PeerGuard implements CanActivate {
-  constructor(
-    @Inject(LOG_SERVICE) private readonly log: LogService,
-    @Inject(IDENTITY) private readonly identity: Identity,
-  ) {}
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<FastifyRequest>()
-    await this.log.record({
-      level: 'warn',
-      message: 'peer request refused: node-to-node auth is not enabled',
-      audit: {
-        participantId: this.identity.all[0]?.id ?? 'unknown',
-        category: 'peer',
-        action: 'auth.peer',
-        actor: {
-          kind: 'peer',
-          id: header(request, 'authorization') === undefined ? 'anonymous' : 'presented',
-          actorRef: null,
-        },
-        outcome: 'denied',
-        problem: Problem.credentialInvalid,
-        detail: 'peer authentication is not enabled on this connector',
-        request: auditRequest(request),
-      },
-    })
-    throw ProblemException.of(
-      Problem.credentialInvalid,
-      'this connector has no peer connections enabled',
-    )
-  }
-}
 
 export { auditRequest, header }

@@ -128,6 +128,25 @@ export interface Subscription {
   status: string
 }
 
+export interface Connection {
+  id: string
+  peerDid: string
+  peerBaseUrl: string
+  peerDisplayName: string | null
+  status: 'PENDING_INBOUND' | 'PENDING_OUTBOUND' | 'ACTIVE' | 'DEGRADED' | 'REJECTED' | 'REVOKED'
+  inbound: { channel: string; url?: string }
+  outbound: { channel: string; url?: string }
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface TrustedPeer {
+  did: string
+  addedAt: string
+  note: string | null
+}
+
 export interface DefinitionSummary {
   ref: string
   title: string
@@ -164,6 +183,50 @@ export const api = {
     ),
   revokeApiKey: (session: string, id: string, participantId: string) =>
     request(`/apikeys/${id}?participantId=${participantId}`, { method: 'DELETE' }, session),
+
+  connections: (session: string, participantId: string) =>
+    request<{ connections: Connection[] }>(
+      `/connections?participantId=${participantId}`,
+      {},
+      session,
+    ),
+  requestConnection: (session: string, participantId: string, body: Record<string, unknown>) =>
+    request<{ connection: Connection }>(
+      `/connections?participantId=${participantId}`,
+      { method: 'POST', body: JSON.stringify(body) },
+      session,
+    ),
+  decideConnection: (
+    session: string,
+    participantId: string,
+    id: string,
+    decision: 'accept' | 'reject' | 'revoke',
+    body: Record<string, unknown> = {},
+  ) =>
+    request<{ connection: Connection }>(
+      `/connections/${id}/${decision}?participantId=${participantId}`,
+      { method: 'POST', body: JSON.stringify(body) },
+      session,
+    ),
+
+  trustedPeers: (session: string, participantId: string) =>
+    request<{ trustedPeers: TrustedPeer[] }>(
+      `/trusted-peers?participantId=${participantId}`,
+      {},
+      session,
+    ),
+  trustPeer: (session: string, participantId: string, body: { did: string; note?: string }) =>
+    request(
+      `/trusted-peers?participantId=${participantId}`,
+      { method: 'POST', body: JSON.stringify(body) },
+      session,
+    ),
+  untrustPeer: (session: string, participantId: string, did: string) =>
+    request(
+      `/trusted-peers/${encodeURIComponent(did)}?participantId=${participantId}`,
+      { method: 'DELETE' },
+      session,
+    ),
 
   audit: (session: string, participantId: string, since = 0) =>
     request<{ entries: AuditEntry[]; total: number }>(

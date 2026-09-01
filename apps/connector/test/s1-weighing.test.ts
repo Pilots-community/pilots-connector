@@ -53,7 +53,9 @@ describe('S1 step 2 — the standing quotation is born agreed', () => {
     // Creation is seq 1 and `agree` is seq 2: the log alone rebuilds the instance.
     expect(created.instance.seq).toBe(2)
     expect(created.events.map((e) => e.header.transition)).toEqual(['create', 'agree'])
-    expect(created.events[1]?.header.actor).toBe(ACME.did)
+    // The runtime fired it, and the runtime is the **home node** — Van Moer
+    // hosts this definition. Acme could not have signed it: it did not act.
+    expect(created.events[1]?.header.actor).toBe(VANMOER.did)
   })
 
   it('leaves a negotiated quotation waiting, because its definition says so', async () => {
@@ -212,7 +214,8 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
     const beforePayment = await core.instances.events(core.caller('acme'), id)
     const weighEvent = beforePayment?.find((e) => e.header.transition === 'weigh')
     expect(weighEvent?.redacted).toBe(true)
-    expect(weighEvent?.payload).toEqual({})
+    // Withheld in full, so `null` rather than `{}` — see docs/PROTOCOL.md §7.3.
+    expect(weighEvent?.payload).toBeNull()
 
     unwrap(
       await core.instances.applyTransition(

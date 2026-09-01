@@ -206,7 +206,10 @@ describe('filterPayload — the same rule applied to an event', () => {
 
   it('withholds a field the reader could not have read from the instance', () => {
     const filtered = filterPayload(weighing, weighPayload, ['shipper'], 'WEIGHED')
-    expect(filtered.value).toEqual({})
+    // Withheld in full, so `null` rather than `{}`. That is what keeps total
+    // withholding detectable from the header alone: `payloadHash` is not the
+    // hash of the empty object. See docs/PROTOCOL.md §7.3.
+    expect(filtered.value).toBeNull()
     expect(filtered.redacted).toBe(true)
   })
 

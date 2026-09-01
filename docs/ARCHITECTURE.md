@@ -307,12 +307,21 @@ quotation reaches `AGREED`.
               "from": "REQUESTED", "to": "OFFERED",
               "at": "2026-08-24T09:14:02Z",
               "prev": "sha256:9f3c…",
-              "payloadHash": "sha256:1a7b…" },
+              "payloadHash": "sha256:1a7b…",
+              "genesis": "sha256:c40e…" },
   "payload": { "price": { "value": 320, "currency": "EUR" } },
   "sig": "<JWS over the canonicalised header>" }
 ```
 
 - The **signature covers the header only**, and the header commits to the payload by hash.
+- `genesis` commits to the instance's fixed identity — its definition, kind and participants map.
+  Those fields are what authority is judged against and they do not live in the log, so they travel
+  beside it; without this a replica would have to believe the sender about who the counterparty is.
+  It is on every event, so an incremental delivery binds identity as well as a full replay does.
+- The participant that **acted** signs, never the home node on its behalf. A caller knows `seq` and
+  `prev` from its own verified replica — that is what `If-Match` is for — so it builds and signs the
+  whole header and the home node either appends it or refuses. The home node still checks every rule;
+  what it cannot do is invent the other party's moves.
 - The chain (`prev`) links headers, so a peer can verify the complete, unbroken history of an instance
   **even for events whose payload it was never allowed to see**. This is not an optimisation; it is
   the thing that makes field-level visibility and tamper evidence coexist.
@@ -469,6 +478,16 @@ using a payment processor: the provider holds the key, and the answer is provide
 than architecture. `Signer` stays a plugin interface so a remote signer remains possible, but nothing
 is blocked on it.
 
+**The demo does not resolve DIDs over DNS**, and that is worth stating rather than glossing. Every DID
+in this repository is on the reserved `.example` TLD precisely so nothing here points at a real host,
+and `.example` resolves nowhere. So `docker compose up` sets `PILOTS_DEV_DID_DIRECTORY`, which
+resolves a peer's DID through the base URL an operator configured for it instead of through the URL
+the DID itself implies. That **reduces the domain-binding check to "our operator wrote this address
+down"** — the one property `did:web` was chosen for. Signatures, chains and every other check are
+unaffected. `loadConfig` refuses the flag under `NODE_ENV=production`, so the weakening cannot survive
+a deployment by being forgotten; a real deployment publishes a real `did.json` on a real domain and
+the check means what it says.
+
 ## 9. Connections
 
 Two participants connect **before** any process runs. This replaces per-request callback URLs, and it
@@ -537,15 +556,34 @@ infrastructure at all.
 
 These are acceptance criteria. Measure them; do not assert them.
 
-### 12.1 Measured at M2
+### 12.1 Measured at M3
 
-Two ways, because they answer different questions.
+Three ways, because they answer different questions.
 
-**In a container**, `docker run --memory=1g` with the file store, after S1 has run end to end:
+**The two-party demo**, `docker compose up` with the file store, `mem_limit: 1g` on each connector,
+S1 run end to end across both:
 
 | | |
 |---|---|
-| Image size | 221 MB |
+| Containers | **2** (0 databases) |
+| Both healthy | ~5.7 s from `up` |
+| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer, against a 60 s target |
+| Cold start, each | ~330 ms |
+| Memory in use, each | **~82–86 MiB — 8 % of a 1 GB limit**, after S1 has run across both |
+| Image size | 235 MB |
+
+The limit is written into `docker-compose.yml` rather than only into this table, so a connector that
+stops fitting in a 1 GB container fails `up` instead of quietly making this number stale.
+
+The image grew 14 MB at M3 for the Mongo driver, which the small profile never loads — it is behind a
+dynamic import. That is the cost of **one image for both profiles**: a terminal operator runs the same
+bytes as a one-truck haulier with different configuration, which is the deployment claim this whole
+design rests on.
+
+**One container**, `docker run --memory=1g` with the file store, after S1 has run end to end:
+
+| | |
+|---|---|
 | Containers | **1** (0 databases) |
 | Cold start | ~220 ms |
 | Memory in use | **~82 MiB — 8 % of a 1 GB limit** |
@@ -570,4 +608,4 @@ is the record, and it is paid deliberately: the event log and the audit log are 
 materialised instance is not, because §5.2 already says it is a cache the log rebuilds. Reopening
 reconciles any instance found behind its own log.
 
-The remaining topologies (S4c: 0, 1, 2 and 4 containers) are measured at M6, when the process UI exists.
+The remaining topologies (0 and 4 containers) are measured at M6, when the process UI exists.

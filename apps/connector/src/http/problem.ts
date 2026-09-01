@@ -26,31 +26,8 @@ export interface ProblemDocument {
   [key: string]: unknown
 }
 
-const TITLES: Record<string, string> = {
-  [Problem.unknownTransition]: 'Unknown transition',
-  [Problem.roleNotPermitted]: 'Role not permitted',
-  [Problem.illegalState]: 'Illegal state',
-  [Problem.instanceTerminal]: 'Instance is terminal',
-  [Problem.schemaInvalid]: 'Schema validation failed',
-  [Problem.guardFailed]: 'Guard failed',
-  [Problem.attachmentsInvalid]: 'Attachments invalid',
-  [Problem.notAParticipant]: 'Not a participant',
-  [Problem.definitionInvalid]: 'Definition invalid',
-  [Problem.seqConflict]: 'Sequence conflict',
-  [Problem.preconditionRequired]: 'Precondition required',
-  [Problem.credentialInvalid]: 'Invalid credential',
-  [Problem.scopeMissing]: 'Missing scope',
-  [Problem.connectionNotActive]: 'Connection not active',
-  [Problem.chainBroken]: 'Chain broken',
-  [Problem.signatureInvalid]: 'Signature invalid',
-  [Problem.payloadHashMismatch]: 'Payload hash mismatch',
-  [Problem.peerUnreachable]: 'Peer unreachable',
-  [Problem.peerResponseInvalid]: 'Peer response invalid',
-}
-
-export function titleFor(type: string): string {
-  return TITLES[type] ?? 'Request failed'
-}
+export { titleFor } from './problem-titles.js'
+import { titleFor } from './problem-titles.js'
 
 /**
  * An HTTP failure carrying a problem document.

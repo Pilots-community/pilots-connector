@@ -92,10 +92,11 @@ baseline RSS over plain Fastify ([STACK.md §5.3](STACK.md#53-measure-memory-at-
 swapping the framework would still be cheap; finding out at M6 would be finding out too late.
 *Measured at M2: ~82 MiB in a 1 GB container, so the framework stays.*
 
-## M3 — Two connectors: connections, delivery, replication, and the scenario harness
+## M3 — Two connectors: connections, delivery, replication, and the scenario harness ✅ done
 
-The milestone where it becomes a *shared* process. The harness comes **first**, because it is what makes
-the rest of the milestone testable.
+The milestone where it becomes a *shared* process. The harness came **first**, because it is what made
+the rest of the milestone testable — and it paid for itself immediately: S4a, S4b and S5 were caught,
+written and proven before a second container existed.
 
 - **The in-process `Transport` and the scenario harness**: two connector instances in one process, fake
   clock, memory store. S0–S2 become hermetic tests before a container demo exists.
@@ -119,12 +120,29 @@ the rest of the milestone testable.
   assumption would first bite, and the port is still cheap to change.
 - Admin UI gains connection accept / reject and the trusted-peer allowlist.
 
-**Exit:** **S4a, S4b and S5 pass as scenario tests, in milliseconds, in `pnpm test`** — those are the
-milestone's real acceptance tests, not the happy path. **S5 matters disproportionately here**: it is the
-only thing that catches a per-definition hosting shortcut, which the one-directional demo would happily
-hide. Plus: **S1 runs with an automated participant** — a test fixture that subscribes to
-`action.required` and posts back the transition it names, with no UI and no human in the loop. Then, separately: two containers, `docker compose up`, S1 runs end to end
-across both, and each side's replica verifies against the other's.
+**Exit — met.** S0, S1, S4a, S4b, S4d and S5 run as scenario tests in `pnpm test`: 24 files, 412 tests,
+about 2.6 seconds, no containers and no network. S1 also runs with an **automated participant** — a
+fixture that subscribes to `action.required` and posts back the transition the envelope names, with no
+UI, no human, no copy of the definition and no state machine of its own. The Mongo adapter passes the
+same 111-case conformance suite as memory and file, against a real replica set.
+
+Then, across containers: `docker compose up` brings up **two connectors and zero databases**, both
+healthy in ~5.7 s, first relayed transaction at ~6.0 s against a 60 s target, ~82–86 MiB each against a
+1 GB limit. S1 runs end to end across both — including `grossMass` withheld before payment and
+released after — and Acme's replica verifies independently against Van Moer's published key. S4a was
+run against the containers too: Acme stopped mid-process, Van Moer advanced two steps, Acme restarted
+and converged with no operator action.
+
+**Two things changed in the spec while building this**, both recorded in
+[PROTOCOL.md](PROTOCOL.md#7-events):
+
+- **`genesis` on every event header.** Authority is judged against the definition and the participants
+  map, and neither lived in the log — so a replica had to take the sender's word for them. A home node
+  could have handed over a perfectly signed, perfectly chained history with a participants map naming
+  somebody who was never in the instance.
+- **The actor signs, not the home node.** §7.1 and §7.3 both say the verifying key is the *actor's*;
+  §9's prose said "the home node signs", which cannot be both. The relay now signs before it forwards,
+  using the `seq` and `prev` `If-Match` already implies.
 
 ## M4 — Quotations, links, deadlines
 

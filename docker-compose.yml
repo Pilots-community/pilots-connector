@@ -1,9 +1,19 @@
-# `docker compose up` → a running connector with an admin UI, and no database.
+# `docker compose up` → two connectors, connected, and **zero databases**.
 #
-# One service, one volume. The second connector, and with it the two-party demo,
-# arrives in M3 when there is a peer transport to connect them.
+# This is the M3 demo: Acme (the shipper) and Van Moer (the weigher), each its
+# own process with its own store, its own generated signing key and its own audit
+# log. They share nothing but a network.
+#
+# Two containers here means two application processes and nothing else. Neither
+# side needs a database — the file store is one mounted volume — which is the
+# claim the container count is making.
+#
+# Note what is seeded and what is not. `PILOTS_CONNECTIONS` establishes the
+# connection at boot so that `up` reaches a first transaction in under a minute.
+# The handshake still works without it, and S0 in the test suite is what proves
+# that; seeding is a shortcut, never a replacement.
 services:
-  connector:
+  acme:
     build:
       context: .
       dockerfile: apps/connector/Dockerfile
@@ -13,12 +23,84 @@ services:
       PILOTS_PARTICIPANT_ID: acme
       PILOTS_PARTICIPANT_DID: did:web:acme-shipping.example
       PILOTS_PARTICIPANT_NAME: Acme Shipping
-      PILOTS_BASE_URL: http://localhost:3000
+      PILOTS_BASE_URL: http://acme:3000
       PILOTS_LOG_LEVEL: info
+      # This demo *is* development, and has to say so. The image defaults to
+      # NODE_ENV=production, and the connector refuses to start with
+      # PILOTS_DEV_DID_DIRECTORY under it — which is the point of that guard.
+      NODE_ENV: development
+      # Acme dials out and holds the line: `stream` inbound. It needs no route
+      # in, no DNS entry and no certificate — the profile a one-truck haulier
+      # runs. Van Moer is delivered to the same way for symmetry.
+      PILOTS_CONNECTIONS: >-
+        [{"participantId":"acme",
+          "peerDid":"did:web:vanmoer.example",
+          "peerBaseUrl":"http://vanmoer:3000",
+          "displayName":"Van Moer",
+          "inbound":{"channel":"stream"},
+          "outbound":{"channel":"stream"}}]
+      # Development only, and the connector refuses it under NODE_ENV=production.
+      # The demo's DIDs do not resolve over DNS, so peer identity is resolved
+      # through the configured base URL instead — which reduces the
+      # domain-binding check to "an operator configured this". See
+      # docs/ARCHITECTURE.md §8.
+      PILOTS_DEV_DID_DIRECTORY: 'true'
       # No secret has a value here. The signing key, the API-key pepper and the
       # admin token are generated on first boot into the volume below.
     volumes:
-      - connector-data:/data
+      - acme-data:/data
+    # The claim, enforced rather than asserted: if a connector stops fitting in a
+    # 1 GB container, `docker compose up` fails instead of the number quietly
+    # going stale in a document.
+    mem_limit: 1g
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  vanmoer:
+    build:
+      context: .
+      dockerfile: apps/connector/Dockerfile
+    ports:
+      - '3001:3000'
+    environment:
+      PILOTS_PARTICIPANT_ID: vanmoer
+      PILOTS_PARTICIPANT_DID: did:web:vanmoer.example
+      PILOTS_PARTICIPANT_NAME: Van Moer
+      PILOTS_BASE_URL: http://vanmoer:3000
+      PILOTS_LOG_LEVEL: info
+      NODE_ENV: development
+      PILOTS_CONNECTIONS: >-
+        [{"participantId":"vanmoer",
+          "peerDid":"did:web:acme-shipping.example",
+          "peerBaseUrl":"http://acme:3000",
+          "displayName":"Acme Shipping",
+          "inbound":{"channel":"stream"},
+          "outbound":{"channel":"stream"}}]
+      PILOTS_DEV_DID_DIRECTORY: 'true'
+    volumes:
+      - vanmoer-data:/data
+    mem_limit: 1g
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
 volumes:
-  connector-data:
+  acme-data:
+  vanmoer-data:

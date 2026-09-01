@@ -171,7 +171,15 @@ export function filterPayload(
   currentState: string,
 ): Filtered<JsonObject | null> {
   if (payload === null) return { value: null, redacted: false }
-  return filterData(definition, payload, roles, currentState)
+  const filtered = filterData(definition, payload, roles, currentState)
+  // A payload withheld *in full* is `null`, not `{}`. docs/PROTOCOL.md §7.3
+  // relies on that: it is what makes total withholding detectable even by a
+  // verifier that ignores the `redacted` flag, because `payloadHash` is then not
+  // the hash of the empty object.
+  if (filtered.redacted && Object.keys(filtered.value).length === 0) {
+    return { value: null, redacted: true }
+  }
+  return filtered
 }
 
 export type { JsonValue }

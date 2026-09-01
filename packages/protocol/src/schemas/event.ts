@@ -43,6 +43,17 @@ export const EventHeader = z.strictObject({
   prev: z.union([Sha256, z.null()]),
   /** `sha256` of the canonicalised payload, or of `{}` when there is none. */
   payloadHash: Sha256,
+  /**
+   * `sha256` of the canonicalised `InstanceGenesis` — the definition, the kind,
+   * and the participants map.
+   *
+   * On **every** event, not only the first. It is what binds an event to the
+   * instance identity that authority is judged against, so a peer verifying an
+   * incremental batch never has to take the sender's word for who the
+   * counterparty is. The value is identical across an instance's whole log,
+   * because none of what it covers can change.
+   */
+  genesis: Sha256,
   attachments: z.array(AttachmentRef),
 })
 export type EventHeader = z.infer<typeof EventHeader>

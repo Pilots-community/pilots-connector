@@ -19,15 +19,18 @@ import {
   type AuditEntry,
   type DefinitionSummary,
   type Offering,
+  type Connection,
   type Participant,
   type Status,
   type Subscription,
+  type TrustedPeer,
 } from './api.js'
 
-type Tab = 'overview' | 'keys' | 'audit' | 'subscriptions' | 'offerings'
+type Tab = 'overview' | 'connections' | 'keys' | 'audit' | 'subscriptions' | 'offerings'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'connections', label: 'Connections' },
   { id: 'keys', label: 'API keys' },
   { id: 'audit', label: 'Audit log' },
   { id: 'subscriptions', label: 'Notifications' },
@@ -212,6 +215,7 @@ export function App() {
 
       <main className="mx-auto flex max-w-5xl flex-col gap-4 p-6">
         {tab === 'overview' && <Overview session={session} participants={participants} />}
+        {tab === 'connections' && <Connections session={session} participantId={participantId} />}
         {tab === 'keys' && <Keys session={session} participantId={participantId} />}
         {tab === 'audit' && <Audit session={session} participantId={participantId} />}
         {tab === 'subscriptions' && (
@@ -576,6 +580,241 @@ function Subscriptions({ session, participantId }: { session: string; participan
         </ul>
       </Card>
     </>
+  )
+}
+
+/**
+ * Connections — the only screen where a human makes a trust decision.
+ *
+ * Accepting is an administrative act for exactly that reason. The peer callback
+ * that reports the decision lives on the peer surface, so a peer can never
+ * accept its own request.
+ */
+function Connections({ session, participantId }: { session: string; participantId: string }) {
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [trusted, setTrusted] = useState<TrustedPeer[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState({ peerDid: '', peerBaseUrl: '', channel: 'stream' })
+  const [allow, setAllow] = useState('')
+
+  const reload = useCallback(() => {
+    if (!participantId) return
+    void api
+      .connections(session, participantId)
+      .then(({ connections: list }) => setConnections(list))
+    void api
+      .trustedPeers(session, participantId)
+      .then(({ trustedPeers }) => setTrusted(trustedPeers))
+  }, [session, participantId])
+
+  useEffect(reload, [reload])
+
+  const run = (work: Promise<unknown>) => {
+    setError(null)
+    void work.then(reload).catch((cause: unknown) => {
+      setError(cause instanceof ApiError ? cause.message : String(cause))
+    })
+  }
+
+  return (
+    <>
+      <Card title="Request a connection">
+        <p className="mb-3 text-xs text-slate-500">
+          Two participants connect once, and everything afterwards flows over that one relationship
+          — in both directions and for either side&rsquo;s offerings. There is no callback URL per
+          request and no separate supplier connection. Choose <code>stream</code> to receive events
+          over a line this connector holds open: no inbound endpoint, no DNS entry, no certificate.
+        </p>
+        <div className="flex flex-col gap-3">
+          <Field label="Peer DID">
+            <input
+              className={inputClass}
+              placeholder="did:web:vanmoer.example"
+              value={form.peerDid}
+              onChange={(e) => setForm({ ...form, peerDid: e.target.value })}
+            />
+          </Field>
+          <Field label="Peer base URL">
+            <input
+              className={inputClass}
+              placeholder="https://vanmoer.example"
+              value={form.peerBaseUrl}
+              onChange={(e) => setForm({ ...form, peerBaseUrl: e.target.value })}
+            />
+          </Field>
+          <Field label="How we want to receive their events">
+            <select
+              className={inputClass}
+              value={form.channel}
+              onChange={(e) => setForm({ ...form, channel: e.target.value })}
+            >
+              <option value="stream">stream — we hold the line open</option>
+              <option value="webhook">webhook — they POST to us</option>
+            </select>
+          </Field>
+          <div>
+            <Button
+              onClick={() =>
+                run(
+                  api.requestConnection(session, participantId, {
+                    peerDid: form.peerDid,
+                    peerBaseUrl: form.peerBaseUrl,
+                    delivery:
+                      form.channel === 'stream'
+                        ? { channel: 'stream' }
+                        : {
+                            channel: 'webhook',
+                            url: `${window.location.origin}/api/peer/v1/deliveries`,
+                          },
+                  }),
+                )
+              }
+              disabled={form.peerDid === '' || form.peerBaseUrl === ''}
+            >
+              Send request
+            </Button>
+          </div>
+          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+        </div>
+      </Card>
+
+      <Card title="Connections">
+        {connections.length === 0 ? (
+          <p className="text-sm text-slate-500">No connections yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {connections.map((connection) => (
+              <li
+                key={connection.id}
+                className="rounded-md border border-slate-200 p-3 dark:border-slate-700"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {connection.peerDisplayName ?? connection.peerDid}
+                    </p>
+                    <p className="truncate font-mono text-xs text-slate-500">
+                      {connection.peerDid}
+                    </p>
+                  </div>
+                  <ConnectionStatus status={connection.status} />
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  we receive by <code>{connection.inbound.channel}</code>, we deliver by{' '}
+                  <code>{connection.outbound.channel}</code>
+                </p>
+                {connection.lastError && (
+                  <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {connection.lastError}
+                  </p>
+                )}
+                <div className="mt-3 flex gap-2">
+                  {connection.status === 'PENDING_INBOUND' && (
+                    <>
+                      <Button
+                        onClick={() =>
+                          run(
+                            api.decideConnection(session, participantId, connection.id, 'accept', {
+                              delivery: { channel: 'stream' },
+                            }),
+                          )
+                        }
+                      >
+                        Accept
+                      </Button>
+                      <Button
+                        variant="danger"
+                        onClick={() =>
+                          run(
+                            api.decideConnection(
+                              session,
+                              participantId,
+                              connection.id,
+                              'reject',
+                              {},
+                            ),
+                          )
+                        }
+                      >
+                        Reject
+                      </Button>
+                    </>
+                  )}
+                  {(connection.status === 'ACTIVE' || connection.status === 'DEGRADED') && (
+                    <Button
+                      variant="danger"
+                      onClick={() =>
+                        run(api.decideConnection(session, participantId, connection.id, 'revoke'))
+                      }
+                    >
+                      Revoke
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card title="Auto-accept allowlist">
+        <p className="mb-3 text-xs text-slate-500">
+          A peer on this list has its connection requests accepted without asking you. The trust
+          checks still run — the DID is resolved and its document&rsquo;s host must match the base
+          URL the caller claims — so this decides <em>who you skip the prompt for</em>, not what is
+          verified.
+        </p>
+        <div className="flex gap-2">
+          <input
+            className={inputClass}
+            placeholder="did:web:vanmoer.example"
+            value={allow}
+            onChange={(e) => setAllow(e.target.value)}
+          />
+          <Button
+            onClick={() => {
+              run(api.trustPeer(session, participantId, { did: allow }))
+              setAllow('')
+            }}
+            disabled={allow === ''}
+          >
+            Add
+          </Button>
+        </div>
+        <ul className="mt-3 flex flex-col gap-2">
+          {trusted.map((peer) => (
+            <li key={peer.did} className="flex items-center justify-between gap-3">
+              <span className="truncate font-mono text-xs">{peer.did}</span>
+              <Button
+                variant="ghost"
+                onClick={() => run(api.untrustPeer(session, participantId, peer.did))}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </>
+  )
+}
+
+function ConnectionStatus({ status }: { status: Connection['status'] }) {
+  const styles: Record<string, string> = {
+    ACTIVE: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+    // Not an error: peer delivery is failing, the business process is not.
+    DEGRADED: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    PENDING_INBOUND: 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300',
+    PENDING_OUTBOUND: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    REJECTED: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+    REVOKED: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  }
+  return (
+    <span
+      className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${styles[status] ?? styles['REVOKED']}`}
+    >
+      {status}
+    </span>
   )
 }
 

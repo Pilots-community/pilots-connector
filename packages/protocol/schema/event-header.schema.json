@@ -67,6 +67,10 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "genesis": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "attachments": {
       "type": "array",
       "items": {
@@ -109,6 +113,7 @@
     "at",
     "prev",
     "payloadHash",
+    "genesis",
     "attachments"
   ],
   "additionalProperties": false

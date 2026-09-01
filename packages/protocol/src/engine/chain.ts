@@ -30,11 +30,13 @@ import {
   type ProcessDefinition,
 } from '../schemas/definition.js'
 import { EventHeader, type SignedEvent } from '../schemas/event.js'
-import { rolesOf, type ParticipantMap } from '../schemas/instance.js'
+import { rolesOf, type InstanceGenesis, type ParticipantMap } from '../schemas/instance.js'
 import { filterPayload } from './visibility.js'
 
 export interface EventDraft {
   instance: string
+  /** `sha256` of the instance's genesis — see `genesisHash`. */
+  genesis: Sha256
   seq: number
   transition: string
   actor: string
@@ -54,6 +56,7 @@ export function buildEventHeader(draft: EventDraft): EventHeader {
   const payload = draft.payload ?? null
   return EventHeader.parse({
     instance: draft.instance,
+    genesis: draft.genesis,
     seq: draft.seq,
     transition: draft.transition,
     actor: draft.actor,
@@ -64,6 +67,17 @@ export function buildEventHeader(draft: EventDraft): EventHeader {
     payloadHash: payload === null ? EMPTY_PAYLOAD_HASH : hashJson(payload),
     attachments: [...(draft.attachments ?? [])],
   })
+}
+
+/**
+ * `sha256` of the canonicalised instance genesis — what every header commits to.
+ *
+ * A replica computes this from the instance metadata the peer sent it and
+ * compares. A mismatch means the metadata does not belong to this log, which is
+ * a broken chain and not a recoverable disagreement.
+ */
+export function genesisHash(genesis: InstanceGenesis): Sha256 {
+  return hashJson(genesis)
 }
 
 /** `sha256` of the canonicalised header — what the next event's `prev` points at. */
@@ -149,6 +163,12 @@ export interface VerifyChainOptions {
   participants?: ParticipantMap
   /** Supplying it asserts every event belongs to this instance. */
   instanceId?: string
+  /**
+   * Supplying it asserts every event was written against **this** instance
+   * identity. This is what turns `definition` and `participants` above from
+   * things the caller was told into things the log proves.
+   */
+  genesis?: InstanceGenesis
 }
 
 export interface ChainFailure {
@@ -177,6 +197,10 @@ export async function verifyChain(
   let redacted = false
   let seq = 0
   let previousHash: Sha256 | null = null
+  // Pinned by the caller when it knows the identity, otherwise adopted from the
+  // first event so a log that changes identity halfway is still caught.
+  let expectedGenesis: Sha256 | undefined =
+    options.genesis === undefined ? undefined : genesisHash(options.genesis)
 
   for (const [index, event] of events.entries()) {
     const header = event.header
@@ -204,6 +228,19 @@ export async function verifyChain(
       )
       break
     }
+
+    if (expectedGenesis !== undefined && header.genesis !== expectedGenesis) {
+      fail(
+        protocolError(
+          Problem.chainBroken,
+          index === 0 && options.genesis !== undefined
+            ? 'the instance metadata does not match the genesis this log commits to'
+            : `genesis changed at seq ${header.seq}: these events are not one instance`,
+        ),
+      )
+      break
+    }
+    expectedGenesis ??= header.genesis
 
     if (header.prev !== previousHash) {
       fail(

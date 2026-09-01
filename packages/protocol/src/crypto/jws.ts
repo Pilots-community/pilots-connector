@@ -16,12 +16,14 @@
 import { compactVerify, importJWK } from 'jose'
 
 import { canonicalise } from '../canonical.js'
+import type { JsonObject } from '../json.js'
 import type { PublicKeyJwk } from '../ports/did-resolver.js'
 import type { Signer } from '../ports/signer.js'
 
 export type JwsProtectedHeader = {
   alg: 'EdDSA'
   kid: string
+  typ?: string
 }
 
 const utf8 = new TextEncoder()
@@ -56,6 +58,29 @@ export async function signDetachedJws(
   const payloadB64 = base64url(payload)
   const signature = await signer.sign(participantId, signingInput(protectedB64, payloadB64))
   return `${protectedB64}..${base64url(signature)}`
+}
+
+/**
+ * Sign `payload`, returning an ordinary attached compact JWS
+ * `<protected>.<payload>.<signature>`.
+ *
+ * Peer bearer tokens use this form rather than the detached one, because a
+ * bearer token *is* its claims — there is no second copy for the payload to
+ * disagree with, and a receiver must be able to read `iss` before it can decide
+ * whose key to resolve.
+ */
+export async function signCompactJws(
+  signer: Signer,
+  participantId: string,
+  payload: Uint8Array,
+  typ?: string,
+): Promise<string> {
+  const kid = await signer.keyId(participantId)
+  const header: JsonObject = typ === undefined ? { alg: 'EdDSA', kid } : { alg: 'EdDSA', kid, typ }
+  const protectedB64 = base64url(utf8.encode(canonicalise(header)))
+  const payloadB64 = base64url(payload)
+  const signature = await signer.sign(participantId, signingInput(protectedB64, payloadB64))
+  return `${protectedB64}.${payloadB64}.${base64url(signature)}`
 }
 
 /** Read the protected header of a compact JWS without verifying it. */

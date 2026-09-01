@@ -122,14 +122,14 @@ describe('the auth boundary is visible in the URL', () => {
     expect(response.statusCode).toBe(401)
   })
 
-  it('refuses the peer surface, which has no connections enabled', async () => {
+  it('refuses the peer surface without a verifiable bearer token', async () => {
     const response = await testApp.app.inject({
       method: 'GET',
       url: '/api/peer/v1/instances',
       headers: { authorization: 'Bearer whatever' },
     })
     expect(response.statusCode).toBe(401)
-    expect(response.json().detail).toMatch(/no peer connections/)
+    expect(response.json<{ detail: string }>().detail).toMatch(/addressed elsewhere|did not verify/)
   })
 
   it('refuses a key that lacks the scope for the call', async () => {
@@ -180,7 +180,7 @@ describe('S1 over the local API', () => {
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
     )
-    expect(announced.statusCode).toBe(201)
+    expect(announced.statusCode).toBe(200)
     expect(announced.headers['etag']).toBe('"2"')
 
     const weighed = await transition(
@@ -192,7 +192,7 @@ describe('S1 over the local API', () => {
       },
       2,
     )
-    expect(weighed.statusCode).toBe(201)
+    expect(weighed.statusCode).toBe(200)
 
     // Step 6 — the shipper reads and the mass is withheld.
     const asShipper = await testApp.app.inject({
@@ -230,7 +230,7 @@ describe('S1 over the local API', () => {
       },
       4,
     )
-    expect(issued.statusCode).toBe(201)
+    expect(issued.statusCode).toBe(200)
     expect(issued.json().instance.state).toBe('VGM_ISSUED')
   })
 
@@ -306,8 +306,8 @@ describe('concurrency and idempotency are separate mechanisms', () => {
       { 'idempotency-key': key },
     )
 
-    expect(first.statusCode).toBe(201)
-    expect(second.statusCode).toBe(201)
+    expect(first.statusCode).toBe(200)
+    expect(second.statusCode).toBe(200)
     expect(second.json()).toEqual(first.json())
 
     // …and the transition was applied exactly once.
@@ -342,7 +342,7 @@ describe('concurrency and idempotency are separate mechanisms', () => {
       1,
       { 'idempotency-key': key },
     )
-    expect(retried.statusCode).toBe(201)
+    expect(retried.statusCode).toBe(200)
   })
 })
 

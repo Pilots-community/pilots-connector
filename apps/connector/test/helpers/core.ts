@@ -64,6 +64,7 @@ export async function buildCore(
     documents[participant.did] = await identity.didDocument(participant.id)
   }
 
+  const resolver = staticDidResolver(documents)
   const instances = new InstanceService(
     store,
     registry,
@@ -71,6 +72,7 @@ export async function buildCore(
     () => clock.instant(),
     () => ids.next(),
     () => participants,
+    resolver,
   )
 
   return {
@@ -79,7 +81,7 @@ export async function buildCore(
     registry,
     instances,
     clock,
-    resolver: staticDidResolver(documents),
+    resolver,
     participants,
     caller(participantId, actorRef = `someone@${participantId}.example`) {
       const participant = participants.find((p) => p.id === participantId)

@@ -68,6 +68,14 @@ rather than appearing at the end.
 Two connector instances, in one process, wired by the in-process transport, with a fake clock and the
 memory store. This is where the scenarios in [SCENARIOS.md](SCENARIOS.md) are proven.
 
+**Built at M3, and it earned its keep on the first day.** Each node in the harness is a *whole*
+connector: its own store, its own generated keys, its own audit log, its own peer surface. Only the
+four ports are doubled. Nothing about authentication, connection state, signing, verification or
+visibility is stubbed — the in-process transport calls the same `PeerSurface.handle` the HTTP
+controller calls, so a scenario test and a container run differ only in the bytes between them. If any
+check lived in the HTTP layer instead, this tier would be proving something weaker than what ships,
+and S4d — which is entirely about refusals — would be theatre.
+
 The three that matter most stop being manual demo steps:
 
 | Scenario | As a scenario test |
@@ -75,6 +83,7 @@ The three that matter most stop being manual demo steps:
 | **S4a** offline catch-up | drop the transport, advance the instance on the host, reattach, assert convergence and a verified chain |
 | **S4b** tamper detection | mutate a stored event, assert a hard failure at the `prev` hash or the `from` state, assert the audit entry, assert **no silent resync** |
 | **S5** role symmetry | three participants, one definition, two instances with *different* home nodes; assert one connector is authoritative for one and a replica of the other, and that `action.required` fires for both of its roles |
+| **S0** the handshake | request, domain-binding check, admin accept, peer callback; plus a peer that claims a base URL its DID is not bound to, and one whose body names a different sender than its token |
 | **deadlines** | advance the fake clock past `PT24H`, assert `expire` fired with `by: []` |
 
 **S5 is the clearest case for this tier existing at all.** The demo runs one direction, so a

@@ -81,12 +81,21 @@ hosts both instances** and Acme holds verified replicas.
 | 5 | Van Moer *(UI or backoffice)* | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
 | 6 | Acme UI | local | reads the instance | `grossMass` is **absent** — no grant matches `shipper` in `WEIGHED`. The event header still verifies; only the value is withheld. |
 | 7 | Van Moer *(UI or backoffice)* | local | `recordPayment` `{ paymentReference }` | **`PAID`** |
-| 8 | Acme UI | local | reads the instance | `grossMass` is **now present** — the `whenState: ["PAID","VGM_ISSUED"]` grant matches. Nothing was re-sent; the same stored event is filtered differently. |
+| 8 | Acme UI | local | reads the instance | `grossMass` is **now present** — the `whenState: ["PAID","VGM_ISSUED"]` grant matches. |
 | 9 | Van Moer *(UI or backoffice)* | local | `issueVgm` with a PDF attachment `{ sha256, mime, size }` | **`VGM_ISSUED`** (terminal) |
 | 10 | Acme UI | local | `GET /api/local/v1/attachments/{sha256}` | certificate bytes, hash checked against the event header |
 
 Step 6→8 is the point of the scenario. The withheld field is a genuine commercial rule, and it is
 enforced in one place in the runtime rather than by whoever assembled the message.
+
+**One connector and two differ here, and the difference is worth stating.** Within a single connector
+nothing is re-sent: the same stored event is simply filtered differently before and after payment.
+Across connectors that is impossible — Acme was never sent the bytes, and no amount of re-filtering
+conjures them. Enforcing visibility *on the way out* is the right call (a replica must not hold what it
+may not read), so entitlement beginning is what puts the value on the wire: the home node sends the
+released payload alongside the event that released it, and Acme accepts it only because it hashes to
+the `payloadHash` its already-verified header commits to. Header, signature and chain are untouched.
+See [PROTOCOL.md §7.3](PROTOCOL.md#73-verification).
 
 Two things the surface column makes visible. Van Moer's backoffice and Acme's UI use **the same API**,
 authenticated the same way — one is a person clicking and one is a machine reacting, and the connector

@@ -55,6 +55,46 @@ export interface Collection<T extends StoredDocument> {
   count(participantId: string, query?: Query<T>): Promise<number>
 }
 
+/**
+ * A notification, queued for local delivery and kept as the replay log.
+ *
+ * One record does both jobs on purpose. `GET /notifications?since=<cursor>` is
+ * specified as *authoritative* recovery, so the notification has to be stored
+ * anyway; a separate delivery queue beside it would be a second copy that could
+ * disagree about what was sent.
+ *
+ * The cursor **is** the `id`: monotonic ULIDs sort lexicographically, so
+ * "everything after this cursor" is an ordinary range read rather than a second
+ * ordering to keep consistent.
+ */
+export interface NotificationDocument extends StoredDocument {
+  subscriptionId: string
+  notification: string
+  instanceId: string
+  createdAt: string
+  /** The envelope exactly as it will be delivered, already visibility-filtered. */
+  envelope: unknown
+  status: 'pending' | 'delivered' | 'dead'
+  attempts: number
+  /** When the next attempt becomes due. Compared against `Clock`, never a timer. */
+  nextAttemptAt: string | null
+  lastError: string | null
+}
+
+/**
+ * A peer whose connection requests are accepted without asking the operator.
+ *
+ * Operator state, and deliberately not configuration: a demo that seeds trust
+ * from a file and a production connector that curates it in the admin UI should
+ * be the same code path with different data.
+ */
+export interface TrustedPeerDocument extends StoredDocument {
+  /** The peer's DID. Also the document id, so the allowlist cannot hold duplicates. */
+  did: string
+  addedAt: string
+  note: string | null
+}
+
 export class DuplicateKeyError extends Error {
   constructor(
     readonly collection: string,

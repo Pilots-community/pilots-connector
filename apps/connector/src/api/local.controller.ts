@@ -34,6 +34,11 @@ import { ProblemException } from '../http/problem.js'
 import { INSTANCE_SERVICE } from '../instances/instance.tokens.js'
 import type { CallerContext, InstanceService, WriteOutcome } from '../instances/instance.service.js'
 import { LOG_SERVICE, type LogService } from '../logging/log.service.js'
+import { NOTIFICATIONS, type NotificationService } from '../notifications/notification.service.js'
+import { LOCAL_HUB, RELAY } from '../runtime.tokens.js'
+import type { Relay } from '../peer/relay.js'
+import { toSseFrame } from '../peer/http-transport.js'
+import { StreamHub } from '../delivery/stream-hub.js'
 import { STORE, type Store } from '../store/store.js'
 
 const CreateInstanceBody = z.strictObject({
@@ -88,6 +93,15 @@ function requireIfMatch(value: string | undefined): number {
   return seq
 }
 
+/** Every local subscriber listens on one stream; the subscription filters it. */
+const LOCAL_STREAM = 'local'
+
+function clampLimit(value: string | undefined): number {
+  const parsed = Number(value ?? 200)
+  if (!Number.isInteger(parsed) || parsed < 1) return 200
+  return Math.min(parsed, 500)
+}
+
 function caller(request: LocalRequest): CallerContext {
   if (!request.caller) throw ProblemException.of(Problem.credentialInvalid, 'unauthenticated')
   return request.caller
@@ -101,6 +115,9 @@ export class LocalController {
     @Inject(DEFINITION_REGISTRY) private readonly definitions: DefinitionRegistry,
     @Inject(STORE) private readonly store: Store,
     @Inject(LOG_SERVICE) private readonly log: LogService,
+    @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
+    @Inject(RELAY) private readonly relay: Relay,
+    @Inject(LOCAL_HUB) private readonly hub: StreamHub,
   ) {}
 
   // ── definitions and offerings ────────────────────────────────────────────
@@ -129,16 +146,19 @@ export class LocalController {
   @Get('offerings')
   @RequireScope('offerings.read')
   async listOfferings(@Req() request: LocalRequest, @Query('peer') peer?: string) {
+    const context = caller(request)
     if (peer !== undefined) {
-      // Browsing a *peer's* offerings is a relayed read, and there is no peer
-      // transport before M3. A network fault is not a business error, so it gets
-      // its own problem type rather than a rewritten 404.
-      throw ProblemException.of(
-        Problem.peerUnreachable,
-        `no peer transport is configured, so ${peer}'s offerings cannot be browsed`,
-      )
+      // A relayed read. The integrator addresses its own connector and names a
+      // peer; it never learns where the answer came from.
+      const browsed = await this.relay.browseOfferings(context.participant, peer)
+      if (!browsed.ok) {
+        throw ProblemException.from(browsed.errors, {
+          ...(browsed.status === undefined ? {} : { status: browsed.status }),
+        })
+      }
+      return browsed.value
     }
-    const offerings = await this.store.offerings.find(caller(request).participant.id, {
+    const offerings = await this.store.offerings.find(context.participant.id, {
       where: { status: 'PUBLISHED' },
     })
     return { offerings }
@@ -149,6 +169,102 @@ export class LocalController {
   async listConnections(@Req() request: LocalRequest) {
     // Read-only to an integrator by design: connections are operator state.
     return { connections: await this.store.connections.find(caller(request).participant.id) }
+  }
+
+  // ── local delivery ───────────────────────────────────────────────────────
+
+  /**
+   * `GET /notifications?since=<cursor>` — the authoritative replay.
+   *
+   * A backoffice that was down catches up here without operator involvement and
+   * without anyone deciding whether a delivery "really" happened. It returns
+   * everything, delivered or not: the recipient deduplicates on the cursor,
+   * which it must be able to do anyway because delivery is at-least-once.
+   */
+  @Get('notifications')
+  @RequireScope('events.subscribe')
+  async listNotifications(
+    @Req() request: LocalRequest,
+    @Query('since') since?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const context = caller(request)
+    const notifications = await this.notifications.replay(
+      context.participant.id,
+      since === undefined || since === '' ? undefined : since,
+      clampLimit(limit),
+    )
+    return {
+      notifications: notifications.map((notification) => notification.envelope),
+      cursor: notifications.at(-1)?.id ?? since ?? null,
+    }
+  }
+
+  /**
+   * `GET /events?since=<cursor>` — the SSE half of local delivery.
+   *
+   * For an internal system that cannot accept inbound connections either. It is
+   * the same subscription model as a webhook target; only the direction of the
+   * connection differs.
+   */
+  @Get('events')
+  @RequireScope('events.subscribe')
+  async streamEvents(
+    @Req() request: LocalRequest,
+    @Res() reply: FastifyReply,
+    @Query('since') since?: string,
+  ): Promise<void> {
+    const context = caller(request)
+    const raw = reply.raw
+    let open = true
+
+    const attachment = await this.hub.attach({
+      participantId: context.participant.id,
+      // Local subscribers share one audience: they are all "our own systems",
+      // and what each is entitled to is decided by the filter, not the stream.
+      audience: LOCAL_STREAM,
+      since: since === undefined || since === '' ? null : since,
+      handlers: {
+        onMessage: (message) => {
+          if (open) raw.write(toSseFrame(message))
+        },
+        onClose: () => {
+          if (open) {
+            open = false
+            raw.end()
+          }
+        },
+      },
+      pull: async (cursor) => {
+        const batch = await this.notifications.replay(
+          context.participant.id,
+          cursor ?? undefined,
+          64,
+        )
+        return batch.map((notification) => ({
+          id: notification.id,
+          event: notification.notification,
+          data: notification.envelope,
+        }))
+      },
+    })
+
+    reply.hijack()
+    raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    })
+    raw.write(': attached\n\n')
+
+    const shutdown = (): void => {
+      if (!open) return
+      open = false
+      attachment.close()
+    }
+    raw.on('close', shutdown)
+    raw.on('error', shutdown)
   }
 
   // ── instances ────────────────────────────────────────────────────────────
@@ -259,6 +375,11 @@ export class LocalController {
     const parsed = parse(TransitionBody, body)
     const expectedSeq = requireIfMatch(ifMatch)
 
+    // Set before the idempotency wrapper, so a *replayed* response is identical
+    // to the original — including its status. A retry that came back 201 where
+    // the first call was 200 would be a difference a client can see.
+    void reply.status(200)
+
     return this.idempotent(context, idempotencyKey, 'transition.apply', async () => {
       const result = await this.instances.applyTransition(
         context,
@@ -277,6 +398,8 @@ export class LocalController {
       }
 
       await this.audit(request, context, 'transition.apply', 'ok', null, id)
+      // 200, not Nest's default 201 for a POST: a transition advances an
+      // instance, it does not create a resource. docs/PROTOCOL.md §9.2.
       void reply.header('ETag', `"${result.value.instance.seq}"`)
       return await this.present(context, result.value)
     })

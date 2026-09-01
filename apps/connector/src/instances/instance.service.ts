@@ -22,14 +22,19 @@ import {
   evaluateTransition,
   filterEvent,
   filterInstance,
+  genesisHash,
+  verifyChain,
   headerHash,
   homeParticipant,
+  instanceGenesis,
   protocolError,
   rolesOf,
   signEvent,
   type AttachmentRef,
   type AvailableAction,
+  type DidResolver,
   type Instance,
+  type InstanceIdentity,
   type JsonObject,
   type ParticipantMap,
   type ProtocolError,
@@ -86,21 +91,73 @@ export interface WriteOutcome {
 }
 
 export type ServiceResult<T> =
-  { ok: true; value: T } | { ok: false; errors: ProtocolError[]; conflict?: { actualSeq: number } }
+  | { ok: true; value: T }
+  | {
+      ok: false
+      errors: ProtocolError[]
+      conflict?: { actualSeq: number }
+      /**
+       * A status the caller must not recompute.
+       *
+       * Set only by the relay, so a home node's `409` stays a `409` on its way
+       * through us. Deriving it from the problem type again would quietly turn
+       * a peer's answer into our opinion of it.
+       */
+      status?: number
+    }
 
 /**
  * How a call reaches an instance whose home node is somebody else.
  *
- * A port from the first write, with no implementation until M3. Writing the
- * relay into the service later is exactly how "decide local-vs-remote per
- * definition" gets introduced by accident.
+ * One method, because there is one thing to do: hand the home node an event we
+ * have already signed, and adopt whatever it accepted. Anything richer would be
+ * a second write path, and a second write path is how "decide local-vs-remote
+ * per definition" gets introduced by accident.
+ *
+ * **We sign before we relay.** The signature must come from the participant that
+ * acted — docs/PROTOCOL.md §7.1 and §7.3 both say the verifying key is the
+ * *actor's* — so the home node cannot produce it on our behalf. It can do
+ * everything else: assign nothing (we already know `seq` and `prev` from our own
+ * verified replica, which is what `If-Match` is for), but check every rule and
+ * refuse us.
  */
 export interface PeerRelay {
   available(): boolean
+  forward(input: RelayRequest): Promise<ServiceResult<WriteOutcome>>
 }
 
-/** The default until M3: there is no transport, and it says so precisely. */
-export const NO_RELAY: PeerRelay = { available: () => false }
+export interface RelayRequest {
+  caller: CallerContext
+  /** The participant that hosts this instance. Resolved per instance, never per definition. */
+  homeDid: string
+  identity: InstanceIdentity
+  event: StoredEvent
+  /** True when this event creates the instance, so the home node has nothing yet. */
+  creating: boolean
+}
+
+/** The default before any transport is configured: there is nowhere to forward to. */
+export const NO_RELAY: PeerRelay = {
+  available: () => false,
+  forward: async ({ homeDid }) =>
+    fail(
+      Problem.peerUnreachable,
+      `${homeDid} hosts this instance and no peer transport is configured`,
+    ),
+}
+
+/**
+ * Something that reacts to a committed write: peer delivery, local
+ * notifications, and anything later that needs to know a process moved.
+ */
+export interface WriteObserver {
+  onWrite(notice: {
+    definition: RegisteredDefinition
+    before: StoredInstance | null
+    after: StoredInstance
+    events: readonly StoredEvent[]
+  }): Promise<void>
+}
 
 /** A `links`-driven or deadline-driven chain must terminate. */
 const MAX_AUTO_CHAIN = 16
@@ -113,21 +170,58 @@ export class InstanceService {
     private readonly now: () => string,
     private readonly nextId: () => string,
     private readonly localParticipants: () => readonly ParticipantConfig[],
+    private readonly resolver: DidResolver,
     private readonly relay: PeerRelay = NO_RELAY,
+    /**
+     * Told about every committed write, so peer delivery and local
+     * notifications fan out from **one** place. A second call site would be a
+     * second chance to forget one.
+     */
+    private readonly observers: readonly WriteObserver[] = [],
   ) {}
+
+  /** Fan a committed write out to everything that reacts to writes. */
+  private async announce(
+    definition: RegisteredDefinition,
+    before: StoredInstance | null,
+    after: StoredInstance,
+    events: readonly StoredEvent[],
+  ): Promise<void> {
+    if (events.length === 0) return
+    for (const observer of this.observers) {
+      await observer.onWrite({ definition, before, after, events })
+    }
+  }
 
   // ── reads ────────────────────────────────────────────────────────────────
 
   async read(caller: CallerContext, instanceId: string): Promise<InstanceView | undefined> {
     const stored = await this.store.instances.get(caller.participant.id, instanceId)
-    return stored ? this.view(caller, stored) : undefined
+    return stored ? this.viewAs(caller.participant.did, stored) : undefined
+  }
+
+  /**
+   * The same read, filtered for a **peer** rather than for ourselves.
+   *
+   * The peer surface answers from here rather than from the home node's own
+   * copy, so a peer can never see through our eyes. One filter, one code path,
+   * whichever side of the connector is asking.
+   */
+  async readForPeer(
+    holder: ParticipantConfig,
+    viewerDid: string,
+    instanceId: string,
+  ): Promise<InstanceView | undefined> {
+    const stored = await this.store.instances.get(holder.id, instanceId)
+    if (!stored || rolesOf(stored.participants, viewerDid).length === 0) return undefined
+    return this.viewAs(viewerDid, stored)
   }
 
   async list(caller: CallerContext): Promise<InstanceView[]> {
     const stored = await this.store.instances.find(caller.participant.id, {
       sort: { field: 'createdAt', direction: 'desc' },
     })
-    return stored.map((instance) => this.view(caller, instance))
+    return stored.map((instance) => this.viewAs(caller.participant.did, instance))
   }
 
   /** The event log as this participant may see it, visibility-filtered. */
@@ -157,9 +251,9 @@ export class InstanceService {
     })
   }
 
-  private view(caller: CallerContext, stored: InstanceDocument): InstanceView {
+  private viewAs(viewerDid: string, stored: InstanceDocument): InstanceView {
     const registered = this.definitions.get(stored.definition)
-    const roles = rolesOf(stored.participants, caller.participant.did)
+    const roles = rolesOf(stored.participants, viewerDid)
     const instance = stripLocalFields(stored)
 
     if (!registered) {
@@ -176,6 +270,15 @@ export class InstanceService {
 
   // ── writes ───────────────────────────────────────────────────────────────
 
+  /**
+   * Start an instance.
+   *
+   * Note the order: evaluate, **sign**, and only then ask whether we are the
+   * home node. The event is identical either way — the same header, the same
+   * signature, the same everything — and the only difference is whether it is
+   * appended here or forwarded. That is what makes "hostedBy is an
+   * implementation detail of the connector" true rather than aspirational.
+   */
   async create(
     caller: CallerContext,
     request: CreateInstanceRequest,
@@ -189,9 +292,6 @@ export class InstanceService {
       )
     }
 
-    const home = this.resolveHome(registered, request.participants)
-    if (!home.participant) return this.notHomeNode(home.did)
-
     const evaluated = evaluateCreate(registered.definition, {
       id: this.nextId(),
       participants: request.participants,
@@ -204,8 +304,18 @@ export class InstanceService {
     if (!evaluated.ok) return { ok: false, errors: evaluated.error }
 
     const instance = evaluated.value
+    const home = this.resolveHome(registered, request.participants)
+    if (home.did === '') {
+      return fail(
+        Problem.definitionInvalid,
+        `no participant fills ${registered.definition.hostedBy}, so this instance has no home node`,
+        '/participants',
+      )
+    }
+
     const event = await this.sign(caller, {
       instance: instance.id,
+      genesis: genesisHash(instanceGenesis(instance)),
       seq: 1,
       transition: CREATE_TRANSITION,
       from: null,
@@ -215,9 +325,17 @@ export class InstanceService {
       attachments: [],
     })
 
-    const appended = await this.store.appendEvent(
-      this.writesFor(registered, instance, event, 0, home.did),
-    )
+    if (!home.participant) {
+      return this.relay.forward({
+        caller,
+        homeDid: home.did,
+        identity: identityOf(instance),
+        event,
+        creating: true,
+      })
+    }
+
+    const appended = await this.store.appendEvent(this.writesFor(instance, event, 0, home.did))
     if (!appended.ok) {
       return {
         ok: false,
@@ -227,7 +345,8 @@ export class InstanceService {
     }
 
     const stored = await this.requireStored(caller, instance.id)
-    const followed = await this.runAutoTransitions(caller, registered, stored, home.did)
+    const followed = await this.runAutoTransitions(home.participant, registered, stored, home.did)
+    await this.announce(registered, null, followed.instance, [event, ...followed.events])
     return { ok: true, value: { instance: followed.instance, events: [event, ...followed.events] } }
   }
 
@@ -248,9 +367,6 @@ export class InstanceService {
         `instance ${instanceId} pins ${stored.definition}, which this connector does not hold`,
       )
     }
-
-    const home = this.resolveHome(registered, stored.participants)
-    if (!home.participant) return this.notHomeNode(home.did)
 
     if (stored.seq !== ifMatch) {
       return {
@@ -282,33 +398,229 @@ export class InstanceService {
     })
     if (!evaluated.ok) return { ok: false, errors: evaluated.error }
 
-    const written = await this.write(caller, registered, stored, evaluated.value, home.did)
+    const home = this.resolveHome(registered, stored.participants)
+    const move = evaluated.value
+
+    /*
+     * `seq` and `prev` come from our own verified replica, not from the home
+     * node.
+     *
+     * That is exactly what `If-Match` is for, and it is why it is mandatory: a
+     * caller that knows the instance is at seq 3 knows the next event is seq 4
+     * and what its `prev` must be, so it can build and sign the complete header
+     * itself. If it guessed wrong, the home node answers 409 with the real seq.
+     */
+    const previous = await this.store.events.head(
+      this.ownerIdFor(home.did) ?? caller.participant.id,
+      stored.id,
+    )
+    const event = await this.sign(caller, {
+      instance: stored.id,
+      genesis: genesisHash(instanceGenesis(stored)),
+      seq: stored.seq + 1,
+      transition: move.transition.id,
+      from: move.from,
+      to: move.to,
+      prev: previous ? headerHash(previous.header) : null,
+      payload: move.payload,
+      attachments: [...move.attachments],
+    })
+
+    if (!home.participant) {
+      return this.relay.forward({
+        caller,
+        homeDid: home.did,
+        identity: identityOf(stored),
+        event,
+        creating: false,
+      })
+    }
+
+    const written = await this.commit(caller, move.instance, event, stored.seq, home.did)
     if (!written.ok) return written
 
     const followed = await this.runAutoTransitions(
-      caller,
+      home.participant,
       registered,
       written.value.instance,
       home.did,
     )
-    return {
-      ok: true,
-      value: {
-        instance: followed.instance,
-        events: [...written.value.events, ...followed.events],
-      },
-    }
+    const events = [...written.value.events, ...followed.events]
+    await this.announce(registered, stored, followed.instance, events)
+    return { ok: true, value: { instance: followed.instance, events } }
   }
 
   /**
-   * Fire every `auto` transition the new state enables, until none remain.
+   * The home node accepting an event a **peer** signed and sent us.
    *
-   * This is the whole of a standing quotation: a definition whose first
-   * transition auto-fires, so the instance is born `AGREED`. No separate code
-   * path for a fixed price.
+   * Every rule is enforced here that would be enforced locally — that is the
+   * point of the home node existing. What it cannot do is produce the
+   * signature: it belongs to the participant that acted, so the peer built and
+   * signed the whole header before sending it, and all we do is refuse or
+   * append.
    */
+  async applySigned(input: {
+    home: ParticipantConfig
+    actorDid: string
+    identity: InstanceIdentity
+    event: SignedEvent
+    creating: boolean
+  }): Promise<ServiceResult<WriteOutcome>> {
+    const { identity, event } = input
+    const registered = this.definitions.get(identity.definition)
+    if (!registered) {
+      return fail(Problem.definitionInvalid, `this connector does not hold ${identity.definition}`)
+    }
+
+    if (homeParticipant(registered.definition, identity.participants) !== input.home.did) {
+      return fail(
+        Problem.notAParticipant,
+        `${input.home.did} does not host this instance and will not write to it`,
+      )
+    }
+    if (event.header.actor !== input.actorDid) {
+      // A peer may act for itself. Forwarding somebody else's signed event is a
+      // different feature with a different threat model; it is not this one.
+      return fail(
+        Problem.credentialInvalid,
+        `this call was authenticated as ${input.actorDid} but the event was signed by ${event.header.actor}`,
+      )
+    }
+    if (event.header.genesis !== genesisHash(instanceGenesis(identity))) {
+      return fail(Problem.chainBroken, 'the event does not belong to the instance described')
+    }
+    if (event.header.instance !== identity.id) {
+      return fail(Problem.chainBroken, 'the event names a different instance')
+    }
+
+    const stored = input.creating
+      ? undefined
+      : await this.store.instances.get(input.home.id, identity.id)
+    if (!input.creating && !stored) {
+      return fail(Problem.notAParticipant, `no instance ${identity.id}`)
+    }
+    if (input.creating && (await this.store.instances.get(input.home.id, identity.id))) {
+      return fail(Problem.seqConflict, `instance ${identity.id} already exists`)
+    }
+
+    const existing = input.creating
+      ? []
+      : (await this.store.events.read(input.home.id, identity.id, 0)).map(toSigned)
+
+    if (event.header.seq !== existing.length + 1) {
+      return {
+        ok: false,
+        conflict: { actualSeq: existing.length },
+        errors: [
+          protocolError(
+            Problem.seqConflict,
+            `the event is seq ${event.header.seq} but the instance is at ${existing.length}`,
+          ),
+        ],
+      }
+    }
+
+    /*
+     * Signature, `prev`, `from` and the actor's authority, all through the same
+     * verifier a replica uses. Deliberately not a second, home-node-flavoured
+     * copy of those checks: the moment there are two, they disagree, and the one
+     * that matters is whichever is weaker.
+     */
+    const verified = await verifyChain([...existing, event], {
+      resolver: this.resolver,
+      definition: registered.definition,
+      participants: identity.participants,
+      instanceId: identity.id,
+      genesis: instanceGenesis(identity),
+    })
+    if (!verified.ok) {
+      const failure = verified.failures[0]
+      return {
+        ok: false,
+        errors: [failure?.error ?? protocolError(Problem.chainBroken, 'the event did not verify')],
+      }
+    }
+
+    // What the signature cannot cover: the definition's own JSON Schemas and its
+    // guards, which are evaluated against data the peer may only partly see.
+    const roles = rolesOf(identity.participants, event.header.actor)
+    if (input.creating) {
+      const evaluated = evaluateCreate(registered.definition, {
+        id: identity.id,
+        participants: identity.participants,
+        data: event.payload ?? {},
+        quotationId: identity.quotationId,
+        offering: identity.offering,
+        actorDid: event.header.actor,
+        at: event.header.at,
+      })
+      if (!evaluated.ok) return { ok: false, errors: evaluated.error }
+
+      const instance = evaluated.value
+      const appended = await this.store.appendEvent(
+        this.writesFor(
+          instance,
+          { ...event, participantId: input.home.id, actorRef: null, recordedAt: this.now() },
+          0,
+          input.home.did,
+        ),
+      )
+      if (!appended.ok) {
+        return {
+          ok: false,
+          conflict: { actualSeq: appended.conflict.actualSeq },
+          errors: [protocolError(Problem.seqConflict, 'that instance id already exists')],
+        }
+      }
+
+      const created = await this.store.instances.get(input.home.id, identity.id)
+      if (!created) throw new Error(`instance ${identity.id} vanished mid-write`)
+      const followed = await this.runAutoTransitions(
+        input.home,
+        registered,
+        created,
+        input.home.did,
+      )
+      const events = [
+        { ...event, participantId: input.home.id, actorRef: null, recordedAt: this.now() },
+        ...followed.events,
+      ]
+      await this.announce(registered, null, followed.instance, events)
+      return { ok: true, value: { instance: followed.instance, events } }
+    }
+
+    const evaluated = evaluateTransition(registered.definition, stripLocalFields(stored!), {
+      transition: event.header.transition,
+      patch: event.payload,
+      attachments: [...event.header.attachments],
+      actor: { roles },
+      at: event.header.at,
+    })
+    if (!evaluated.ok) return { ok: false, errors: evaluated.error }
+
+    const caller: CallerContext = { participant: input.home, actorRef: null }
+    const written = await this.commit(
+      caller,
+      evaluated.value.instance,
+      { ...event, participantId: input.home.id, actorRef: null, recordedAt: this.now() },
+      stored!.seq,
+      input.home.did,
+    )
+    if (!written.ok) return written
+
+    const followed = await this.runAutoTransitions(
+      input.home,
+      registered,
+      written.value.instance,
+      input.home.did,
+    )
+    const events = [...written.value.events, ...followed.events]
+    await this.announce(registered, stored!, followed.instance, events)
+    return { ok: true, value: { instance: followed.instance, events } }
+  }
+
   private async runAutoTransitions(
-    caller: CallerContext,
+    home: ParticipantConfig,
     registered: RegisteredDefinition,
     from: StoredInstance,
     homeDid: string,
@@ -330,7 +642,29 @@ export class InstanceService {
       })
       if (!evaluated.ok) break
 
-      const written = await this.write(caller, registered, instance, evaluated.value, homeDid)
+      // The runtime that fires an `auto` transition *is* the home node, so the
+      // home node is the actor and the signer. `by: []` is the normal case.
+      const event = await this.sign(
+        { participant: home, actorRef: null },
+        {
+          instance: instance.id,
+          genesis: genesisHash(instanceGenesis(instance)),
+          seq: instance.seq + 1,
+          transition: next.id,
+          from: evaluated.value.from,
+          to: evaluated.value.to,
+          prev: await this.previousHash(homeDid, home, instance.id),
+          payload: evaluated.value.payload,
+          attachments: [...evaluated.value.attachments],
+        },
+      )
+      const written = await this.commit(
+        { participant: home, actorRef: null },
+        evaluated.value.instance,
+        event,
+        instance.seq,
+        homeDid,
+      )
       if (!written.ok) break
 
       instance = written.value.instance
@@ -340,38 +674,26 @@ export class InstanceService {
     return { instance, events }
   }
 
-  private async write(
+  /** The hash the next event's `prev` must carry, taken from the authoritative log. */
+  private async previousHash(
+    homeDid: string,
+    caller: ParticipantConfig,
+    instanceId: string,
+  ): Promise<string | null> {
+    const previous = await this.store.events.head(this.ownerIdFor(homeDid) ?? caller.id, instanceId)
+    return previous ? headerHash(previous.header) : null
+  }
+
+  /** Append one already-signed event, atomically across every local copy. */
+  private async commit(
     caller: CallerContext,
-    registered: RegisteredDefinition,
-    before: StoredInstance,
-    move: {
-      from: string
-      to: string | null
-      transition: { id: string }
-      instance: Instance
-      payload: JsonObject | null
-      attachments: readonly AttachmentRef[]
-    },
+    instance: Instance,
+    event: StoredEvent,
+    expectedSeq: number,
     homeDid: string,
   ): Promise<ServiceResult<WriteOutcome>> {
-    // The chain is the home node's, so `prev` comes from the authoritative copy.
-    const previous = await this.store.events.head(
-      this.ownerIdFor(homeDid) ?? caller.participant.id,
-      before.id,
-    )
-    const event = await this.sign(caller, {
-      instance: before.id,
-      seq: before.seq + 1,
-      transition: move.transition.id,
-      from: move.from,
-      to: move.to,
-      prev: previous ? headerHash(previous.header) : null,
-      payload: move.payload,
-      attachments: [...move.attachments],
-    })
-
     const appended = await this.store.appendEvent(
-      this.writesFor(registered, move.instance, event, before.seq, homeDid),
+      this.writesFor(instance, event, expectedSeq, homeDid),
     )
     if (!appended.ok) {
       return {
@@ -388,7 +710,7 @@ export class InstanceService {
 
     return {
       ok: true,
-      value: { instance: await this.requireStored(caller, before.id), events: [event] },
+      value: { instance: await this.requireStored(caller, instance.id), events: [event] },
     }
   }
 
@@ -400,7 +722,6 @@ export class InstanceService {
    * it is two, and the replica is a real replica rather than a shared row.
    */
   private writesFor(
-    registered: RegisteredDefinition,
     instance: Instance,
     event: StoredEvent,
     expectedSeq: number,
@@ -422,6 +743,7 @@ export class InstanceService {
     caller: CallerContext,
     draft: {
       instance: string
+      genesis: string
       seq: number
       transition: string
       from: string | null
@@ -485,6 +807,23 @@ export class InstanceService {
 
 function fail(type: ProtocolError['type'], detail: string, pointer?: string): ServiceResult<never> {
   return { ok: false, errors: [protocolError(type, detail, pointer)] }
+}
+
+/** An instance's fixed identity, as it travels to a peer alongside its events. */
+export function identityOf(instance: Instance): InstanceIdentity {
+  return {
+    id: instance.id,
+    kind: instance.kind,
+    definition: instance.definition,
+    participants: instance.participants,
+    quotationId: instance.quotationId,
+    offering: instance.offering,
+    createdAt: instance.createdAt,
+  }
+}
+
+function toSigned(event: StoredEvent): SignedEvent {
+  return { header: event.header, payload: event.payload, redacted: event.redacted, sig: event.sig }
 }
 
 /** The wire shape: the stored document without this connector's own bookkeeping. */

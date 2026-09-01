@@ -30,6 +30,28 @@ async function main(): Promise<void> {
   const adminUi = await serveAdminUi(app, runtime.log)
   await app.listen(config.port, config.host)
 
+  /*
+   * The delivery scan loop.
+   *
+   * One interval drives every pump, and each pump compares a stored timestamp
+   * against `Clock`. That is the difference the design insists on: there is no
+   * `setTimeout` per retry, per deadline or per subscription, so nothing is lost
+   * on restart, nothing is unschedulable in the file store, and a test advances
+   * a ten-minute backoff with a function call.
+   */
+  const ticker =
+    config.deliveryIntervalMs > 0
+      ? setInterval(() => {
+          void runtime.tick().catch((error: unknown) => {
+            runtime.log.error({ err: String(error) }, 'delivery tick failed')
+          })
+        }, config.deliveryIntervalMs)
+      : undefined
+  ticker?.unref()
+
+  // Attach to every peer we hold a line to, before announcing we are ready.
+  await runtime.peerStreams.sync()
+
   const ready = Number(process.hrtime.bigint() - startedAt) / 1e6
 
   runtime.log.info(
@@ -39,6 +61,8 @@ async function main(): Promise<void> {
       participants: runtime.identity.all.map((p) => p.did),
       definitions: runtime.registry.size,
       adminUi: adminUi ? '/admin/' : 'not built',
+      peerStreams: runtime.peerStreams.attached,
+      peerTransport: config.peerTransport,
       coldStartMs: Math.round(ready),
       rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
     },
@@ -61,8 +85,16 @@ async function main(): Promise<void> {
     )
   }
 
+  if (config.devDidDirectory) {
+    runtime.log.warn(
+      {},
+      'PILOTS_DEV_DID_DIRECTORY is on: peer DIDs are resolved through their configured base URL instead of did:web, which reduces the domain-binding check to "an operator configured it". Development only.',
+    )
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     runtime.log.info({ signal }, 'shutting down')
+    if (ticker) clearInterval(ticker)
     await app.close()
     await runtime.close()
     process.exit(0)

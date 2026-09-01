@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterAll } from 'vitest'
+import { afterAll, describe, it } from 'vitest'
 
 import { runStoreConformance } from '../src/store/conformance/suite.js'
 import { FileStore } from '../src/store/file/file-store.js'
@@ -42,3 +42,40 @@ runStoreConformance('file', {
     return FileStore.open(directory)
   },
 })
+
+/**
+ * The Mongo adapter, against the **same** suite.
+ *
+ * Memory and file are both in-process and single-writer, so on their own they
+ * cannot fail the two contracts that shape the port — an `appendEvent` with a
+ * stale `expectedSeq` and an `Idempotency-Key` claimed twice at once. This
+ * adapter can. That is the entire reason it exists at M3 rather than at the end,
+ * while the port is still cheap to change.
+ *
+ * Skipped without `PILOTS_TEST_MONGO_URI`, because `pnpm test` must stay
+ * container-free and fast enough to run on save. CI sets it.
+ */
+const mongoUri = process.env['PILOTS_TEST_MONGO_URI']
+
+if (mongoUri === undefined || mongoUri === '') {
+  describe.skip('mongo store conformance (set PILOTS_TEST_MONGO_URI to run)', () => {
+    it('is skipped', () => undefined)
+  })
+} else {
+  let database = 0
+  runStoreConformance('mongo', {
+    persistent: true,
+    create: async () => {
+      const { MongoStore } = await import('../src/store/mongo/mongo-store.js')
+      // A fresh database per case: the suite asserts on empty stores, and a
+      // shared one would make the tests order-dependent.
+      return MongoStore.open(mongoUri, `pilots_conformance_${(database += 1)}`)
+    },
+    reopen: async (store: Store) => {
+      const { MongoStore } = await import('../src/store/mongo/mongo-store.js')
+      const name = (store as { databaseName?: string }).databaseName
+      await store.close()
+      return MongoStore.open(mongoUri, name ?? `pilots_conformance_${database}`)
+    },
+  })
+}

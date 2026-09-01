@@ -3,24 +3,46 @@
  *
  * Built imperatively rather than through Nest's async providers, so the whole
  * runtime can be constructed in a test without an HTTP server, and so the order
- * in which secrets, the store and the registry come up is written down in one
- * readable place instead of inferred from a dependency graph.
+ * in which secrets, the store, identity and the peer layer come up is written
+ * down in one readable place instead of inferred from a dependency graph.
+ *
+ * That matters more at M3 than it did at M2: two connectors now stand up inside
+ * a single test process, wired to each other by an in-process transport, and
+ * that is only cheap because assembly is a function call with an overridable
+ * transport rather than a framework lifecycle.
  */
 import {
+  cachingDidResolver,
   systemClock,
   toInstant,
   ulidGenerator,
   type Clock,
+  type DidDocument,
+  type DidResolver,
   type IdGenerator,
 } from '@pilots/protocol'
 
 import { AdminSessionService } from './auth/admin-session.service.js'
 import { ApiKeyService } from './auth/api-key.service.js'
 import type { ConnectorConfig } from './config/config.js'
+import { ConnectionService } from './connections/connection.service.js'
 import { DefinitionRegistry } from './definitions/definition-registry.js'
+import { PeerDeliveryService } from './delivery/peer-delivery.service.js'
+import { PeerStreamClient } from './delivery/peer-stream-client.js'
+import { StreamHub } from './delivery/stream-hub.js'
+import { devDirectoryResolver, firstOf, localDidResolver } from './identity/did-directory.js'
 import { Identity } from './identity/identity.service.js'
-import { InstanceService } from './instances/instance.service.js'
+import { InstanceService, type WriteObserver } from './instances/instance.service.js'
 import { LogService } from './logging/log.service.js'
+import { SseChannel, WebhookChannel, type NotificationChannel } from './notifications/channel.js'
+import { NotificationService, type WriteNotice } from './notifications/notification.service.js'
+import { HttpTransport } from './peer/http-transport.js'
+import { PeerClient } from './peer/peer-client.js'
+import { PeerSurface } from './peer/peer.server.js'
+import { Relay } from './peer/relay.js'
+import { PeerReplayCache } from './peer/replay-cache.js'
+import { NO_TRANSPORT, type PeerTransport } from './peer/transport.js'
+import { ReplicationService } from './replication/replication.service.js'
 import { FileSecretStore, MemorySecretStore, type SecretStore } from './secrets/secret-store.js'
 import { FileStore } from './store/file/file-store.js'
 import { MemoryStore } from './store/memory/memory-store.js'
@@ -35,9 +57,28 @@ export interface Runtime {
   apiKeys: ApiKeyService
   adminSessions: AdminSessionService
   instances: InstanceService
+  connections: ConnectionService
+  replication: ReplicationService
+  notifications: NotificationService
+  peerDelivery: PeerDeliveryService
+  peerStreams: PeerStreamClient
+  relay: Relay
+  peers: PeerSurface
+  transport: PeerTransport
+  resolver: DidResolver
+  hub: StreamHub
   clock: Clock
   /** Present only on the boot that generated it. Logged once, never stored. */
   adminToken?: string
+  /**
+   * Run every delivery scan loop once.
+   *
+   * Exposed rather than hidden behind a timer because that is what makes
+   * delivery testable: a scenario test advances the fake clock and calls this,
+   * where a `setInterval` would need a real one. `main.ts` calls it on a plain
+   * interval, and that is the only place a wall clock is involved.
+   */
+  tick(): Promise<void>
   close(): Promise<void>
 }
 
@@ -47,14 +88,25 @@ export interface RuntimeOverrides {
   clock?: Clock
   ids?: IdGenerator
   registry?: DefinitionRegistry
+  /** The in-process transport in a scenario test; HTTP in a container. */
+  transport?: PeerTransport
+  /** A static resolver in tests; `did:web` over HTTPS in production. */
+  resolver?: DidResolver
+  /** Extra local-delivery channels — the in-memory collector a scenario test uses. */
+  channels?: Record<string, NotificationChannel>
   /** Where the application log goes. Tests capture it; production is stdout. */
   logDestination?: NodeJS.WritableStream
 }
 
 async function openStore(config: ConnectorConfig): Promise<Store> {
-  return config.store.adapter === 'file'
-    ? FileStore.open(config.store.directory)
-    : new MemoryStore()
+  if (config.store.adapter === 'file') return FileStore.open(config.store.directory)
+  if (config.store.adapter === 'mongo') {
+    // Imported lazily so the small profile never loads a driver it will not use;
+    // the whole point of the file store is zero infrastructure.
+    const { MongoStore } = await import('./store/mongo/mongo-store.js')
+    return MongoStore.open(config.store.uri, config.store.database)
+  }
+  return new MemoryStore()
 }
 
 export async function createRuntime(
@@ -71,6 +123,7 @@ export async function createRuntime(
   const clock = overrides.clock ?? systemClock
   const now = (): string => toInstant(clock.now())
   const ids = overrides.ids ?? ulidGenerator(clock)
+  const participants = (): readonly ConnectorConfig['participants'][number][] => config.participants
 
   // ── secrets: load what exists, generate the rest, persist what is new ──
   // The signer writes its half; the admin token is decided afterwards, because
@@ -98,14 +151,136 @@ export async function createRuntime(
   })
 
   const apiKeys = new ApiKeyService(store, identity.pepper, now, () => ids.next())
+
+  // ── identity resolution ──
+  const resolver = overrides.resolver ?? (await buildResolver(config, identity, store))
+
+  // ── the peer layer ──
+  const transport =
+    overrides.transport ?? (config.peerTransport === 'http' ? new HttpTransport() : NO_TRANSPORT)
+  const client = new PeerClient(transport, identity.asSigner(), clock, () => ids.next())
+  const replay = new PeerReplayCache(clock)
+  const hub = new StreamHub()
+
+  const connections = new ConnectionService(store, client, resolver, log, now, () => ids.next())
+
+  // ── delivery, both kinds ──
+  // Two independent notions with one trigger. Peer delivery moves signed events
+  // between connectors; local delivery tells our own systems something needs
+  // doing. Conflating them is the single most common way this design gets
+  // misread, so they are separate services that share nothing but a hook.
+  const channels = new Map<string, NotificationChannel>([
+    ['webhook', new WebhookChannel()],
+    [
+      'sse',
+      new SseChannel((subscription, envelope) => {
+        void hub.wake(subscription.participantId, subscription.id)
+        void envelope
+      }),
+    ],
+  ])
+  for (const [name, channel] of Object.entries(overrides.channels ?? {})) {
+    channels.set(name, channel)
+  }
+
+  const notifications = new NotificationService(
+    store,
+    registry,
+    channels,
+    log,
+    clock,
+    now,
+    () => ids.next(),
+    participants,
+  )
+  const peerDelivery = new PeerDeliveryService(
+    store,
+    connections,
+    client,
+    registry,
+    hub,
+    log,
+    clock,
+    participants,
+  )
+
+  const observers: WriteObserver[] = [
+    { onWrite: (notice: WriteNotice) => notifications.onWrite(notice) },
+    { onWrite: (notice: WriteNotice) => peerDelivery.onWrite(notice) },
+  ]
+
+  const replication = new ReplicationService(
+    store,
+    registry,
+    resolver,
+    log,
+    now,
+    participants,
+    async (notice) => {
+      for (const observer of observers) await observer.onWrite(notice)
+    },
+  )
+
+  const peerStreams = new PeerStreamClient(
+    store,
+    connections,
+    client,
+    replication,
+    log,
+    participants,
+  )
+
+  const relay = new Relay(
+    store,
+    connections,
+    client,
+    replication,
+    log,
+    () => transport !== NO_TRANSPORT,
+  )
+
   const instances = new InstanceService(
     store,
     registry,
     identity.asSigner(),
     now,
     () => ids.next(),
-    () => config.participants,
+    participants,
+    resolver,
+    relay,
+    observers,
   )
+
+  const peers = new PeerSurface({
+    store,
+    instances,
+    connections,
+    replication,
+    delivery: peerDelivery,
+    definitions: registry,
+    resolver,
+    replay,
+    log,
+    clock,
+    participants,
+    autoAccept: async (participantId, peerDid) => {
+      if (config.autoAccept.includes(peerDid)) return true
+      return (await store.trustedPeers.get(participantId, peerDid)) !== undefined
+    },
+  })
+
+  // ── seeded connections: a demo shortcut, never a replacement ──
+  for (const seeded of config.connections) {
+    const participant = config.participants.find((one) => one.id === seeded.participantId)
+    if (!participant) continue
+    await connections.seed(participant, {
+      peerDid: seeded.peerDid,
+      peerBaseUrl: seeded.peerBaseUrl,
+      displayName: seeded.displayName ?? null,
+      inbound: seeded.inbound,
+      outbound: seeded.outbound,
+    })
+  }
 
   return {
     config,
@@ -116,10 +291,78 @@ export async function createRuntime(
     apiKeys,
     adminSessions: admin.service,
     instances,
+    connections,
+    replication,
+    notifications,
+    peerDelivery,
+    peerStreams,
+    relay,
+    peers,
+    transport,
+    resolver,
+    hub,
     clock,
     ...(admin.service.bootstrap.token === undefined
       ? {}
       : { adminToken: admin.service.bootstrap.token }),
-    close: () => store.close(),
+    tick: async () => {
+      // Attach first: a line that dropped since the last tick should be back up
+      // before we decide anything is undelivered.
+      await peerStreams.sync()
+      await peerDelivery.pump()
+      await notifications.pump()
+      await peerStreams.quiesce()
+    },
+    close: async () => {
+      peerStreams.closeAll()
+      hub.closeAll()
+      await store.close()
+    },
   }
+}
+
+/**
+ * Our own documents first, then whatever the deployment is configured to trust.
+ *
+ * Ours are served locally because they are documents we publish ourselves; a
+ * connector should not fail to check its own signature because DNS is down.
+ */
+async function buildResolver(
+  config: ConnectorConfig,
+  identity: Identity,
+  store: Store,
+): Promise<DidResolver> {
+  const local = localDidResolver(async () => {
+    const documents: Record<string, DidDocument> = {}
+    for (const participant of config.participants) {
+      documents[participant.did] = await identity.didDocument(participant.id)
+    }
+    return documents
+  })
+
+  if (config.devDidDirectory) {
+    // Configuration-derived identity. `loadConfig` has already refused this
+    // combination under production config; see identity/did-directory.ts for
+    // exactly what it gives up.
+    return firstOf(
+      local,
+      devDirectoryResolver(async () => {
+        const directory = new Map<string, string>()
+        for (const seeded of config.connections) directory.set(seeded.peerDid, seeded.peerBaseUrl)
+        for (const participant of config.participants) {
+          for (const connection of await store.connections.find(participant.id)) {
+            directory.set(connection.peerDid, connection.peerBaseUrl)
+          }
+        }
+        return directory
+      }),
+    )
+  }
+
+  if (config.peerTransport === 'none') return local
+
+  // Imported lazily so that a connector with no peers never pulls an HTTP
+  // resolver stack in behind it, and so no test can reach one by accident.
+  const { webDidResolver } = await import('@pilots/protocol/did-web')
+  return cachingDidResolver(firstOf(local, webDidResolver({ cache: false })))
 }

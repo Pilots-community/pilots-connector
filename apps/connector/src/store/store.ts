@@ -16,6 +16,7 @@
 import type {
   ApiKeyRecord,
   Connection,
+  JsonObject,
   NotificationSubscription,
   Offering,
   StoredInstance,
@@ -28,7 +29,9 @@ import type {
   EventLog,
   EventWrite,
   IdempotencyStore,
+  NotificationDocument,
   StoredDocument,
+  TrustedPeerDocument,
 } from './types.js'
 
 /** A participant this connector holds a key for and acts on behalf of. */
@@ -53,6 +56,8 @@ export interface Store {
   readonly offerings: Collection<OfferingDocument>
   readonly subscriptions: Collection<SubscriptionDocument>
   readonly instances: Collection<InstanceDocument>
+  readonly notifications: Collection<NotificationDocument>
+  readonly trustedPeers: Collection<TrustedPeerDocument>
   readonly events: EventLog
   readonly idempotency: IdempotencyStore
   readonly audit: AuditLog
@@ -63,6 +68,28 @@ export interface Store {
    * the two must never diverge, for any participant in the batch.
    */
   appendEvent(writes: readonly EventWrite[]): Promise<AppendEventResult>
+
+  /**
+   * Fill in a payload we were not entitled to see when the event arrived.
+   *
+   * Visibility is state-dependent, so a field withheld at `WEIGHED` may be
+   * released at `PAID`. A replica cannot re-filter its way to a value it was
+   * never sent, so the home node sends it when entitlement begins and this is
+   * where it lands.
+   *
+   * **Completion, never replacement.** The header and signature are untouched
+   * and the caller has already checked the new payload against the header's
+   * `payloadHash`, so the only thing that can change is a redacted payload
+   * becoming the genuine full one. Atomic with the instance it re-folds to, for
+   * the same reason `appendEvent` is.
+   */
+  completeEvent(write: {
+    participantId: string
+    instanceId: string
+    seq: number
+    payload: JsonObject
+    instanceAfter: StoredInstance
+  }): Promise<boolean>
 
   /**
    * Look an API key up by its public id **across participants**.

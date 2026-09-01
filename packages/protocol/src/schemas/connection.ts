@@ -53,6 +53,25 @@ export const Connection = z.strictObject({
   inbound: PeerDelivery,
   /** Set when the connection last failed; cleared on recovery. */
   lastError: z.union([z.string().max(1024), z.null()]).default(null),
+  /**
+   * How far our **webhook** deliveries to this peer have got.
+   *
+   * Durable, and on the connection rather than in a queue, because "what has
+   * this peer been sent" is a property of the relationship and has to survive a
+   * restart. A `stream` peer needs no equivalent: it holds the cursor itself and
+   * replays with `Last-Event-ID`, which is the same recovery shape from the
+   * other end.
+   */
+  deliveryCursor: z.union([z.string().max(128), z.null()]).default(null),
+  /**
+   * How far we have consumed the peer's `stream`, echoed back as
+   * `Last-Event-ID` when we reattach.
+   *
+   * Opaque to us — it is the peer's cursor, and its only meaning is "resume
+   * after this". Persisted so a restart resumes rather than replaying an entire
+   * history the replica already holds.
+   */
+  receiveCursor: z.union([z.string().max(128), z.null()]).default(null),
   createdAt: Instant,
   updatedAt: Instant,
 })

@@ -6,7 +6,14 @@
  * is the honest way to get it. Durability, where an adapter wants it, happens
  * *after* the critical section through the `Journal` hook.
  */
-import { chainAuditEntry, foldEvents, type AuditEntry, type StoredEvent } from '@pilots/protocol'
+import {
+  chainAuditEntry,
+  foldEvents,
+  type AuditEntry,
+  type JsonObject,
+  type StoredEvent,
+  type StoredInstance,
+} from '@pilots/protocol'
 
 import type {
   ApiKeyDocument,
@@ -28,8 +35,10 @@ import {
   type EventWrite,
   type IdempotencyRecord,
   type IdempotencyStore,
+  type NotificationDocument,
   type Query,
   type StoredDocument,
+  type TrustedPeerDocument,
 } from '../types.js'
 
 /**
@@ -42,6 +51,20 @@ export interface Journal {
   writeDocument(collection: string, document: StoredDocument): Promise<void>
   deleteDocument(collection: string, participantId: string, id: string): Promise<void>
   appendEvent(event: StoredEvent): Promise<void>
+  /**
+   * Rewrite one instance's whole log.
+   *
+   * Only `completeEvent` uses it, and only to fill in a payload that was
+   * withheld when the event arrived. An append-only file cannot express "the
+   * same event, now with the part we are finally allowed to see", so the file is
+   * replaced rather than extended — the headers and signatures in it are
+   * byte-identical either way.
+   */
+  rewriteEvents(
+    participantId: string,
+    instanceId: string,
+    events: readonly StoredEvent[],
+  ): Promise<void>
   appendAudit(entry: AuditEntry): Promise<void>
 }
 
@@ -336,6 +359,8 @@ export class MemoryStore implements Store {
   readonly offerings: Collection<OfferingDocument>
   readonly subscriptions: Collection<SubscriptionDocument>
   readonly instances: Collection<InstanceDocument>
+  readonly notifications: Collection<NotificationDocument>
+  readonly trustedPeers: Collection<TrustedPeerDocument>
   readonly events: EventLog
   readonly idempotency: IdempotencyStore
   readonly audit: AuditLog
@@ -350,6 +375,8 @@ export class MemoryStore implements Store {
     this.offerings = new MapCollection('offerings', state, journal)
     this.subscriptions = new MapCollection('subscriptions', state, journal)
     this.instances = new MapCollection('instances', state, journal)
+    this.notifications = new MapCollection('notifications', state, journal)
+    this.trustedPeers = new MapCollection('trustedPeers', state, journal)
     this.events = new MemoryEventLog(state)
     this.idempotency = new MemoryIdempotency(state, journal)
     this.audit = new MemoryAuditLog(state, journal)
@@ -394,6 +421,39 @@ export class MemoryStore implements Store {
     }
 
     return { ok: true }
+  }
+
+  async completeEvent(write: {
+    participantId: string
+    instanceId: string
+    seq: number
+    payload: JsonObject
+    instanceAfter: StoredInstance
+  }): Promise<boolean> {
+    const events = this.state.events.get(write.participantId) ?? []
+    const index = events.findIndex(
+      (event) => event.header.instance === write.instanceId && event.header.seq === write.seq,
+    )
+    if (index === -1) return false
+
+    const existing = events[index]!
+    // Completion, never replacement. The caller has checked the payload against
+    // the header's `payloadHash`; this refuses to touch anything else.
+    if (!existing.redacted && existing.payload !== null) return false
+
+    // ── critical section ──
+    events[index] = { ...existing, payload: clone(write.payload), redacted: false }
+    this.state.collections
+      .get('instances')!
+      .set(key(write.participantId, write.instanceId), clone(write.instanceAfter))
+    // ── end critical section ──
+
+    if (this.journal) {
+      const forInstance = events.filter((event) => event.header.instance === write.instanceId)
+      await this.journal.rewriteEvents(write.participantId, write.instanceId, forInstance)
+      await this.journal.writeDocument('instances', write.instanceAfter)
+    }
+    return true
   }
 
   async findApiKeyById(id: string): Promise<ApiKeyDocument | undefined> {
