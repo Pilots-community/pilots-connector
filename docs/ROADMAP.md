@@ -182,8 +182,15 @@ from one command.
 
 ## M7 — Publish and deploy
 
-Only once the whole thing runs locally. Nothing here changes the application; it packages and ships what
-M1–M6 built.
+Nothing here changes the application; it packages and ships what M1–M6 built.
+
+**Triggered by an event, not by a milestone.** M7 starts when collaboration with other participants
+begins — the same event that moves origin to GitHub (§"The GitHub cutover"). At that point AWS
+verification becomes critical, because participants need to run against something real rather than
+against a laptop. Until then it is **not a blocker of any kind, and everything stays local**.
+
+**Finishing M6 is not a green light.** The human supervisor says when to release. Do not begin M7 work —
+Dockerfiles for publication, CI configs, Terraform — on the strength of the roadmap alone.
 
 ### Two CI systems, split by audience — not by job
 
