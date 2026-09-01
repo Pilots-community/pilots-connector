@@ -1,0 +1,24 @@
+# `docker compose up` → a running connector with an admin UI, and no database.
+#
+# One service, one volume. The second connector, and with it the two-party demo,
+# arrives in M3 when there is a peer transport to connect them.
+services:
+  connector:
+    build:
+      context: .
+      dockerfile: apps/connector/Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      PILOTS_PARTICIPANT_ID: acme
+      PILOTS_PARTICIPANT_DID: did:web:acme-shipping.example
+      PILOTS_PARTICIPANT_NAME: Acme Shipping
+      PILOTS_BASE_URL: http://localhost:3000
+      PILOTS_LOG_LEVEL: info
+      # No secret has a value here. The signing key, the API-key pepper and the
+      # admin token are generated on first boot into the volume below.
+    volumes:
+      - connector-data:/data
+
+volumes:
+  connector-data:

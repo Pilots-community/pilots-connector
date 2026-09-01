@@ -40,16 +40,36 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 
 ## Where the code is
 
-**M1 is built**: [`packages/protocol`](packages/protocol) — the specification, as schemas and tested
-functions. Schemas, JCS canonicalisation, signing and chain verification, the state machine evaluator,
-the visibility filter, the definition linter, and a JSON Schema export for non-TypeScript
-implementations. [docs/ROADMAP.md](docs/ROADMAP.md) M2 (the connector) is next.
+**M1 and M2 are built.**
+
+| | |
+|---|---|
+| [`packages/protocol`](packages/protocol) | The specification: schemas, JCS, signing and chain verification, the state-machine evaluator, the visibility filter, the definition linter, a JSON Schema export |
+| [`apps/connector`](apps/connector) | The connector: the store (memory + file, one conformance suite), all three API surfaces, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
+
+[docs/ROADMAP.md](docs/ROADMAP.md) M3 — two connectors, and the scenario harness — is next.
 
 ```bash
 pnpm install
-pnpm test               # unit tier: no network, no containers, no real clock
+pnpm test               # 360 tests, no network, no containers, no real clock
 pnpm lint:definitions   # check docs/definitions against the schema and the linter
-pnpm typecheck
-pnpm lint
 pnpm build
+
+docker compose up       # one container, no database, admin UI on /admin/
+node apps/connector/scripts/bench.mjs   # the numbers below, measured
 ```
+
+## Measured, not claimed
+
+One container, zero databases. From `apps/connector/scripts/bench.mjs` on a development laptop:
+
+| | file store | memory store |
+|---|---|---|
+| Cold start | ~450 ms | ~440 ms |
+| Time to first transaction, from cold | ~110 ms | ~26 ms |
+| Resident memory (target < 150 MB) | ~130–145 MB | ~133 MB |
+| Mean write latency | ~35 ms | ~0.9 ms |
+
+Memory is inside the target but without much headroom — that is Node plus NestJS, and
+[STACK.md §5.3](docs/STACK.md#53-measure-memory-at-m2-not-m6) said to find that out at M2 rather than at
+M6. The file store's write latency is one `fsync` per event: the honest price of "the log is the record".

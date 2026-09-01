@@ -2,6 +2,12 @@ packages:
   - 'packages/*'
   - 'apps/*'
 
-# esbuild ships a prebuilt platform binary and its install script only verifies it.
+# Both ship a prebuilt platform binary; their install scripts only verify it.
+# esbuild backs Vitest; @swc/core is the transform that emits decorator metadata.
 allowBuilds:
   esbuild: true
+  '@swc/core': true
+
+# `pnpm deploy` (used by the connector's Dockerfile) needs workspace packages
+# injected rather than symlinked, so the runtime image carries real files.
+injectWorkspacePackages: true

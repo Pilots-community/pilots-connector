@@ -65,7 +65,7 @@ user-supplied schemas carried inside a definition. `packages/protocol` legitimat
 |---|---|---|
 | HTTP framework | **NestJS 11** + **Fastify adapter** | DI for the six ports; guards map one-to-one onto the three auth surfaces |
 | Logging | **pino** | Fastify-native, structured JSON to stdout, CloudWatch-shaped. Carries the `audit` flag. |
-| Admin sessions | **better-auth** | admin surface only. Never accepted on `/api/local/v1` or `/api/peer/v1`. |
+| Admin sessions | **built-in bootstrap token → session** (§10.1) | admin surface only. Never accepted on `/api/local/v1` or `/api/peer/v1`. `better-auth` deferred. |
 | API key hashing | **HMAC-SHA256 with a server-side pepper** | see §4.1 |
 | SSE | **hand-rolled** | `text/event-stream`, `id:`, `data:`. We need custom `Last-Event-ID` catch-up anyway. |
 | Store — memory | in-process maps | test default |
@@ -237,3 +237,41 @@ scenarios and definitions are publishable as they stand — keep it that way.
 Pin exact versions in `package.json`; no `^` ranges in the pilot. Renovate or manual bumps, deliberately,
 with the test suite as the gate. We are heading for a field-tested demo, and a transitive surprise during
 a demo costs more than a stale minor version.
+
+---
+
+## 10. Amendment, M2 — what implementation changed
+
+Four deviations from the table above, recorded rather than absorbed. Each is reversible.
+
+### 10.1 `better-auth` deferred; admin sessions are a bootstrap token
+
+§4 named `better-auth` for admin sessions. It wants to own a user table and a database adapter, and this
+connector's store is document-oriented behind a port with no SQL anywhere; wiring the two together buys
+nothing M2 needs, because the admin is **one operator per connector**.
+
+So admin auth has the same shape as an API key: a 256-bit token generated on first boot, printed once,
+stored only as `HMAC-SHA256(pepper, token)`, exchanged for a session. No password exists, so there is
+nothing for an operator to choose badly, and §4.1's argument against a password KDF applies unchanged.
+
+`better-auth` — with real user accounts, passwords and MFA — drops in behind the same interface when
+there is a reason to want it. That reason is a *second operator*, and the pilot does not have one.
+
+### 10.2 `ajv-formats` added
+
+`format: "date-time"` appears in four of the five shipped definitions. Without `ajv-formats`, Ajv ignores
+`format` entirely, so those constraints would be decorative. One small dependency, and the alternative is
+a definition schema that silently does not mean what it says.
+
+### 10.3 TypeScript pinned to 5.9.3, not 7.x
+
+TypeScript 7 is current, but `tsup`'s declaration bundler crashes under it today, and M2 needed NestJS
+decorator metadata to keep working. §9's version policy — pin exact, prefer a stale minor over a
+transitive surprise — points at 5.9. Revisit when the toolchain has caught up.
+
+### 10.4 The admin UI is Tailwind without shadcn/ui
+
+§6 named shadcn/ui. The admin UI has five screens and about a dozen controls; shadcn's generator,
+`components.json` and Radix dependencies would be more scaffolding than component. The markup follows the
+same idiom, so adding shadcn later is additive rather than a rewrite. **The process UI at M5 is where
+shadcn earns its place** — it is the one a third party reads as "this is how you integrate".

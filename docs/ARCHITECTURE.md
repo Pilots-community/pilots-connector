@@ -536,3 +536,26 @@ infrastructure at all.
 | Full scenario suite (S0–S4) wall-clock | seconds, no containers |
 
 These are acceptance criteria. Measure them; do not assert them.
+
+### 12.1 Measured at M2
+
+`node apps/connector/scripts/bench.mjs`, on a development laptop, one connector with two participants:
+
+| | file store | memory store |
+|---|---|---|
+| Containers | **1** (0 databases) | 1 |
+| Cold start | ~450 ms | ~440 ms |
+| Time to first transaction, from cold | ~110 ms | ~26 ms |
+| Resident memory | **~130–145 MB** | ~133 MB |
+| Mean write latency | ~35 ms | ~0.9 ms |
+
+Two honest notes. **Memory is inside the < 150 MB target but without much headroom** — Node plus NestJS
+plus `reflect-metadata` — which is exactly why [STACK.md §5.3](STACK.md#53-measure-memory-at-m2-not-m6)
+moved this measurement into M2, while swapping the framework would still be cheap.
+
+**The file store's write latency is one `fsync` per event.** That is the price of §7's claim that the log
+is the record, and it is paid deliberately: the event log and the audit log are fsynced, while the
+materialised instance is not, because §5.2 already says it is a cache the log rebuilds. Reopening
+reconciles any instance found behind its own log.
+
+The remaining topologies (S4c: 0, 1, 2 and 4 containers) are measured at M6, when the process UI exists.

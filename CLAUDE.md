@@ -11,8 +11,9 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M1 complete** — [`packages/protocol`](packages/protocol) is built, tested and green.
-M2 (the connector) is the next milestone.
+Current status: **M2 complete** — [`packages/protocol`](packages/protocol) and
+[`apps/connector`](apps/connector) are built, tested and green. M3 (two connectors: connections,
+delivery, replication, and the scenario harness) is the next milestone.
 
 ## What we're building
 
@@ -152,13 +153,19 @@ STACK.md §4.1). Timers are a **scan loop driven by `Clock`, never `setTimeout`*
 
 ```bash
 pnpm install
-pnpm test               # unit tier — no network, no containers, no real clock
-pnpm typecheck
+pnpm test               # unit + contract tiers — no network, no containers, no real clock
+pnpm typecheck          # builds packages/protocol first, then checks every project
 pnpm lint               # ESLint, including the import-boundary rule
 pnpm format             # Prettier. Markdown and .claude/ are excluded on purpose.
-pnpm build              # tsup, dual ESM + CJS
+pnpm build              # protocol (tsup, dual ESM+CJS), admin UI (vite), connector (nest)
 pnpm lint:definitions   # lint docs/definitions against the schema and the linter
 pnpm schema:export      # regenerate packages/protocol/schema/*.json from the zod schemas
+
+# the connector
+pnpm --filter @pilots/connector start        # needs `pnpm build` first
+pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying to :3000
+node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first transaction
+docker compose up                            # one container, no database
 ```
 
 `pnpm lint:definitions` replaced `tools/lint-definitions.py`, which is deleted. It checks everything the
@@ -167,6 +174,24 @@ references, unreachable states, states with no path to a terminal state — plus
 `data`, `patch` and `guards`; deadline coherence; the reserved `create` transition id; outgoing
 transitions from a terminal state; and warnings that do not fail a definition.
 
+## Measured, not claimed
+
+From `node apps/connector/scripts/bench.mjs`, on a development laptop:
+
+| | file store | memory store |
+|---|---|---|
+| Containers | **1** (0 databases) | 1 |
+| Cold start | ~450 ms | ~440 ms |
+| Time to first transaction (cold) | ~110 ms | ~26 ms |
+| Resident memory | **~130–145 MB** (target < 150 MB) | ~133 MB |
+| Mean write latency | ~35 ms | ~0.9 ms |
+
+Two things to keep an eye on. **Memory is within target but with little headroom**, exactly as
+[STACK.md §5.3](docs/STACK.md#53-measure-memory-at-m2-not-m6) predicted — that is Node plus NestJS plus
+`reflect-metadata`, and M2 was the moment to find out. **The file store's write latency is one `fsync`
+per event**, which is the honest price of "the log is the record"; the materialised instance is a cache
+the log rebuilds, so it is not fsynced.
+
 ## Roadmap milestones
 
 Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -174,8 +199,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | Milestone | Scope | Exit |
 |---|---|---|
 | **M1** — protocol package ✅ **done** | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` / `DidResolver` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | Met: `pnpm test` green (217 tests, under a second); the five definitions lint clean; a tampered event fails, a redacted event passes |
-| **M2** — connector, single party *(current target)* | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, **admin UI starts** | One container, **no database**. S1 runs on the local API with `curl` + an API key; audit log shows every call including a refusal |
-| **M3** — two connectors | **Scenario harness + in-process transport first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, **Mongo adapter + conformance in CI** | **S4a and S4b pass as scenario tests in `pnpm test`**; then two containers, S1 end to end, both replicas verify |
+| **M2** — connector, single party ✅ **done** | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, admin UI | Met: one container, no database; S1 runs on the local API with `curl` + an API key; the audit log shows every call including refusals, with an intact chain; memory and cold start measured |
+| **M3** — two connectors *(current target)* | **Scenario harness + in-process transport first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, **Mongo adapter + conformance in CI** | **S4a and S4b pass as scenario tests in `pnpm test`**; then two containers, S1 end to end, both replicas verify |
 | **M4** — quotations, links, deadlines | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachments, `GET /offerings` | S2 end to end as a scenario test and across containers |
 | **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
 | **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
