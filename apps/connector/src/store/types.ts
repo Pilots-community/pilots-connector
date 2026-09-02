@@ -217,6 +217,36 @@ export interface IdempotencyStore {
 }
 
 /**
+ * Content-addressed document bytes.
+ *
+ * Separate from `Collection` because the key is a **hash of the content**, not
+ * an id somebody assigned — which is what makes documents deduplicated and
+ * tamper-evident, and what keeps base64 out of the event stream. The event
+ * header lists `{ sha256, mime, size }`; the bytes live here.
+ *
+ * Scoped by participant like everything else. Two participants on one connector
+ * that happen to hold the same document hold it twice: cheap, and it keeps the
+ * "no cross-participant read" rule intact rather than making an exception for
+ * the one collection where content is identical by definition.
+ */
+export interface AttachmentStore {
+  put(participantId: string, attachment: StoredAttachment): Promise<void>
+  get(participantId: string, sha256: string): Promise<StoredAttachment | undefined>
+  has(participantId: string, sha256: string): Promise<boolean>
+  /** Metadata only — what a listing needs without reading the bytes. */
+  list(participantId: string): Promise<Omit<StoredAttachment, 'bytes'>[]>
+}
+
+export interface StoredAttachment {
+  /** `sha256:<hex>` of `bytes`. The store never assigns this; the caller proves it. */
+  sha256: string
+  mime: string
+  size: number
+  bytes: Uint8Array
+  receivedAt: string
+}
+
+/**
  * The audit log, append-only and locally hash-chained.
  *
  * `append` assigns `seq` and `prev` itself, because a caller that read the head

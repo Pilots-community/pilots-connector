@@ -40,7 +40,7 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 
 ## Where the code is
 
-**M1, M2 and M3 are built — two connectors talk.**
+**M1 through M4 are built — two connectors run a negotiated process end to end.**
 
 | | |
 |---|---|
@@ -52,11 +52,16 @@ about six seconds in. The scenarios that actually argue for the design — a par
 mid-process and catching up, and a host caught rewriting history — run as ordinary tests in
 milliseconds, with no containers at all.
 
-[docs/ROADMAP.md](docs/ROADMAP.md) M4 — quotations, links and deadlines — is next.
+A negotiated quotation runs alongside the transport it authorises: the service instance exists from the
+start, waiting, and a `link` advances it the moment the price is agreed. Deadlines fire from a scan loop
+over stored state, so an offer expiring after a day is a test that advances a clock rather than one that
+sleeps.
+
+[docs/ROADMAP.md](docs/ROADMAP.md) M5 — the process UI and the typed integration client — is next.
 
 ```bash
 pnpm install
-pnpm test               # 412 tests, ~2.6 s, no network, no containers, no real clock
+pnpm test               # 427 tests, ~2.9 s, no network, no containers, no real clock
 pnpm lint:definitions   # check docs/definitions against the schema and the linter
 pnpm build
 

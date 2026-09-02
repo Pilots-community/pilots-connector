@@ -29,6 +29,7 @@ import {
 } from '@pilots/protocol'
 
 import type { ParticipantConfig } from '../config/config.js'
+import type { AttachmentService } from '../attachments/attachment.service.js'
 import type { ConnectionService } from '../connections/connection.service.js'
 import type { PeerDeliveryService } from '../delivery/peer-delivery.service.js'
 import type { DefinitionRegistry } from '../definitions/definition-registry.js'
@@ -63,6 +64,7 @@ export interface PeerServerDeps {
   connections: ConnectionService
   replication: ReplicationService
   delivery: PeerDeliveryService
+  attachments: AttachmentService
   definitions: DefinitionRegistry
   resolver: DidResolver
   replay: PeerReplayCache
@@ -253,6 +255,9 @@ export class PeerSurface implements PeerServer {
       return this.deliveries(caller, request.body)
     }
     if (head === 'offerings' && request.method === 'GET') return this.offerings(caller)
+    if (head === 'attachments' && request.method === 'GET' && second !== undefined) {
+      return this.attachment(caller, decodeURIComponent(second))
+    }
     if (head === 'definitions' && request.method === 'GET' && second !== undefined) {
       return this.definition(decodeURIComponent(second))
     }
@@ -348,6 +353,7 @@ export class PeerSurface implements PeerServer {
       creating: true,
     })
     if (!result.ok) return this.writeFailed(caller, result)
+    await this.collectAttachments(caller, parsed.data.event.header.attachments)
 
     return {
       status: 201,
@@ -381,6 +387,7 @@ export class PeerSurface implements PeerServer {
       creating: false,
     })
     if (!result.ok) return this.writeFailed(caller, result)
+    await this.collectAttachments(caller, parsed.data.event.header.attachments)
 
     return {
       status: 200,
@@ -436,6 +443,25 @@ export class PeerSurface implements PeerServer {
     return problem(status, result.errors, result.conflict)
   }
 
+  /**
+   * Bytes follow the reference to the home node.
+   *
+   * The actor uploaded to its own connector and named the hash here; we pull
+   * what we do not hold from the participant that signed the event. After this
+   * the home node holds the documents for the process it hosts, and every other
+   * participant fetches from one place.
+   *
+   * A failure is not fatal to the write: the reference is in the log and the
+   * bytes are still on the peer, so the next attempt costs nothing.
+   */
+  private async collectAttachments(
+    caller: PeerCaller,
+    refs: readonly { sha256: string; mime: string; size: number }[],
+  ): Promise<void> {
+    if (refs.length === 0) return
+    await this.deps.attachments.pull(caller.participant, caller.peerDid, refs)
+  }
+
   private async deliveries(caller: PeerCaller, body: unknown): Promise<PeerResponse> {
     const result = await this.deps.replication.applyBatch(caller.participant, caller.peerDid, body)
     if (!result.ok) return problem(statusFor(result.errors), result.errors)
@@ -483,6 +509,30 @@ export class PeerSurface implements PeerServer {
       return problem(404, [{ type: Problem.notAParticipant, detail: 'no such instance' }])
     }
     return json(200, { deliveries: [batch], cursor: null })
+  }
+
+  /**
+   * Content-addressed document bytes, subject to the same visibility rules as a
+   * read — which is to say, derived from them rather than declared again.
+   *
+   * Base64 in a JSON body because the transport carries parsed JSON either way,
+   * and a peer stream and a peer fetch should not need two different framings
+   * for the same document. The receiver re-hashes it, so nothing rests on the
+   * encoding being honest.
+   */
+  private async attachment(caller: PeerCaller, sha256: string): Promise<PeerResponse> {
+    const found = await this.deps.attachments.read(caller.participant, caller.peerDid, sha256)
+    if (!found) {
+      return problem(404, [
+        { type: Problem.notAParticipant, detail: 'no such attachment, or not one you may read' },
+      ])
+    }
+    return json(200, {
+      sha256: found.sha256,
+      mime: found.mime,
+      size: found.size,
+      bytes: Buffer.from(found.bytes).toString('base64'),
+    })
   }
 
   private async offerings(caller: PeerCaller): Promise<PeerResponse> {

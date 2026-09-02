@@ -632,46 +632,125 @@ export class InstanceService {
       const next = autoTransitions(registered.definition, instance)[0]
       if (!next) break
 
-      const evaluated = evaluateTransition(registered.definition, stripLocalFields(instance), {
-        transition: next.id,
-        patch: null,
-        attachments: [],
-        // The runtime fires it, not a participant. `by: []` is the normal case.
-        actor: { runtime: true },
-        at: this.now(),
-      })
-      if (!evaluated.ok) break
+      const written = await this.runtimeFire(home, registered, instance, homeDid, next.id, null)
+      if (!written) break
 
-      // The runtime that fires an `auto` transition *is* the home node, so the
-      // home node is the actor and the signer. `by: []` is the normal case.
-      const event = await this.sign(
-        { participant: home, actorRef: null },
-        {
-          instance: instance.id,
-          genesis: genesisHash(instanceGenesis(instance)),
-          seq: instance.seq + 1,
-          transition: next.id,
-          from: evaluated.value.from,
-          to: evaluated.value.to,
-          prev: await this.previousHash(homeDid, home, instance.id),
-          payload: evaluated.value.payload,
-          attachments: [...evaluated.value.attachments],
-        },
-      )
-      const written = await this.commit(
-        { participant: home, actorRef: null },
-        evaluated.value.instance,
-        event,
-        instance.seq,
-        homeDid,
-      )
-      if (!written.ok) break
-
-      instance = written.value.instance
-      events.push(...written.value.events)
+      instance = written.instance
+      events.push(...written.events)
     }
 
     return { instance, events }
+  }
+
+  /**
+   * Fire a transition **the runtime owns** — `auto`, a `link`, or a `deadline`.
+   *
+   * The three differ only in what triggered them, so they share one path. The
+   * home node is the actor and the signer, because the runtime that fired it
+   * *is* the home node; a `by: []` transition is precisely one no participant
+   * may invoke by hand.
+   *
+   * `cause` is the signed event that justified it, and it goes in the header
+   * rather than only in our audit log. Without it a runtime transition is
+   * something a host asserts; with it, a counterparty can find the causing event
+   * in the instance it belongs to and check the claim.
+   */
+  private async runtimeFire(
+    home: ParticipantConfig,
+    registered: RegisteredDefinition,
+    instance: StoredInstance,
+    homeDid: string,
+    transition: string,
+    cause: string | null,
+  ): Promise<{ instance: StoredInstance; events: StoredEvent[] } | undefined> {
+    const evaluated = evaluateTransition(registered.definition, stripLocalFields(instance), {
+      transition,
+      patch: null,
+      attachments: [],
+      actor: { runtime: true },
+      at: this.now(),
+    })
+    if (!evaluated.ok) return undefined
+
+    const event = await this.sign(
+      { participant: home, actorRef: null },
+      {
+        instance: instance.id,
+        genesis: genesisHash(instanceGenesis(instance)),
+        seq: instance.seq + 1,
+        transition,
+        from: evaluated.value.from,
+        to: evaluated.value.to,
+        prev: await this.previousHash(homeDid, home, instance.id),
+        cause,
+        payload: evaluated.value.payload,
+        attachments: [...evaluated.value.attachments],
+      },
+    )
+    const written = await this.commit(
+      { participant: home, actorRef: null },
+      evaluated.value.instance,
+      event,
+      instance.seq,
+      homeDid,
+    )
+    if (!written.ok) return undefined
+    return { instance: written.value.instance, events: written.value.events }
+  }
+
+  /**
+   * Fire a runtime-owned transition from outside — the link evaluator and the
+   * deadline scanner both arrive here.
+   *
+   * Refuses unless we are the home node for *this instance*, resolved the same
+   * way every other write resolves it. A replica firing its own runtime
+   * transitions would fork the chain, and the fork would be signed.
+   */
+  async fireRuntime(input: {
+    instanceId: string
+    transition: string
+    cause?: string | null
+    /** Which local participant's copy to read. Defaults to the home one. */
+    participantId?: string
+  }): Promise<ServiceResult<WriteOutcome>> {
+    for (const local of this.localParticipants()) {
+      if (input.participantId !== undefined && local.id !== input.participantId) continue
+
+      const stored = await this.store.instances.get(local.id, input.instanceId)
+      if (!stored || !stored.home) continue
+
+      const registered = this.definitions.get(stored.definition)
+      if (!registered) {
+        return fail(Problem.definitionInvalid, `this connector does not hold ${stored.definition}`)
+      }
+      const homeDid = homeParticipant(registered.definition, stored.participants) ?? ''
+      if (homeDid !== local.did) continue
+
+      const written = await this.runtimeFire(
+        local,
+        registered,
+        stored,
+        homeDid,
+        input.transition,
+        input.cause ?? null,
+      )
+      if (!written) {
+        return fail(
+          Problem.illegalState,
+          `${input.transition} is not available on ${input.instanceId} right now`,
+        )
+      }
+
+      const followed = await this.runAutoTransitions(local, registered, written.instance, homeDid)
+      const events = [...written.events, ...followed.events]
+      await this.announce(registered, stored, followed.instance, events)
+      return { ok: true, value: { instance: followed.instance, events } }
+    }
+
+    return fail(
+      Problem.notAParticipant,
+      `this connector is not the home node for ${input.instanceId}`,
+    )
   }
 
   /** The hash the next event's `prev` must carry, taken from the authoritative log. */
@@ -749,6 +828,7 @@ export class InstanceService {
       from: string | null
       to: string | null
       prev: string | null
+      cause?: string | null
       payload: JsonObject | null
       attachments: AttachmentRef[]
     },

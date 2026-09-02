@@ -24,6 +24,7 @@ import type {
 
 import type {
   AppendEventResult,
+  AttachmentStore,
   AuditLog,
   Collection,
   EventLog,
@@ -59,6 +60,7 @@ export interface Store {
   readonly notifications: Collection<NotificationDocument>
   readonly trustedPeers: Collection<TrustedPeerDocument>
   readonly events: EventLog
+  readonly attachments: AttachmentStore
   readonly idempotency: IdempotencyStore
   readonly audit: AuditLog
 

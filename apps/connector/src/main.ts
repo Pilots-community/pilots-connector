@@ -12,6 +12,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 
 import { AppModule } from './app.module.js'
 import { serveAdminUi } from './http/admin-ui.js'
+import { acceptRawBodies } from './http/raw-body.js'
 import { ProblemFilter } from './http/problem.filter.js'
 import { loadConfig } from './config/config.js'
 import { createRuntime } from './runtime.js'
@@ -23,9 +24,13 @@ async function main(): Promise<void> {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRuntime(runtime),
-    new FastifyAdapter({ bodyLimit: 2 * 1024 * 1024 }),
+    // The body limit is the attachment limit plus room for the JSON around it,
+    // so the two cannot drift into a state where an accepted upload is refused
+    // by the transport.
+    new FastifyAdapter({ bodyLimit: config.maxAttachmentBytes + 1024 * 1024 }),
     { logger: false },
   )
+  acceptRawBodies(app.getHttpAdapter().getInstance())
   app.useGlobalFilters(new ProblemFilter(runtime.log))
   const adminUi = await serveAdminUi(app, runtime.log)
   await app.listen(config.port, config.host)

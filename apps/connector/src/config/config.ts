@@ -89,6 +89,14 @@ export const ConnectorConfig = z.strictObject({
   devDidDirectory: z.boolean(),
   /** How often the delivery scan loops run. `0` disables them; tests drive the pumps by hand. */
   deliveryIntervalMs: z.int().min(0),
+  /**
+   * The largest attachment this connector will accept.
+   *
+   * A ceiling, not a target. It also bounds the HTTP body limit, and the Mongo
+   * adapter stores attachment bytes inline — raising this past ~15 MB means
+   * moving that adapter to GridFS, which is why the number lives in one place.
+   */
+  maxAttachmentBytes: z.int().min(1),
 })
 export type ConnectorConfig = z.infer<typeof ConnectorConfig>
 
@@ -175,6 +183,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
       .filter((did) => did !== ''),
     devDidDirectory: bool(env['PILOTS_DEV_DID_DIRECTORY'], false),
     deliveryIntervalMs: Number(env['PILOTS_DELIVERY_INTERVAL_MS'] ?? 1000),
+    maxAttachmentBytes: Number(env['PILOTS_MAX_ATTACHMENT_BYTES'] ?? 8 * 1024 * 1024),
   }
 
   const parsed = ConnectorConfig.safeParse(candidate)

@@ -20,6 +20,7 @@ import { DEFINITION_REGISTRY } from './definitions/definition-registry.js'
 import { IDENTITY } from './identity/identity.service.js'
 import { INSTANCE_SERVICE } from './instances/instance.tokens.js'
 import { LOG_SERVICE } from './logging/log.service.js'
+import { ATTACHMENTS } from './attachments/attachment.service.js'
 import { CONNECTIONS } from './connections/connection.service.js'
 import { NOTIFICATIONS } from './notifications/notification.service.js'
 import { PEER_SERVER } from './peer/peer.server.js'
@@ -54,6 +55,7 @@ export class AppModule {
         { provide: RELAY, useValue: runtime.relay },
         { provide: LOCAL_HUB, useValue: runtime.hub },
         { provide: PEER_STREAMS, useValue: runtime.peerStreams },
+        { provide: ATTACHMENTS, useValue: runtime.attachments },
         ApiKeyGuard,
         AdminGuard,
       ],

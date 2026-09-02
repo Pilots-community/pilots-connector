@@ -182,4 +182,46 @@ export function filterPayload(
   return filtered
 }
 
+/**
+ * May this viewer fetch the bytes of an attachment?
+ *
+ * Attachment references live in the event **header**, which is never redacted —
+ * so every participant can already see that a document exists and what it hashes
+ * to. The question here is only whether they may read it, and the answer follows
+ * the field that describes it:
+ *
+ * - If the hash appears in the viewer's **filtered** data, they may read the
+ *   thing that references it, so they may read the bytes. This is what makes S1
+ *   step 10 work: the shipper fetches the VGM certificate only once
+ *   `certificate` becomes visible at `VGM_ISSUED`.
+ * - If the hash appears nowhere in the data at all, nothing describes it and
+ *   there is nothing to withhold — the header reference is visible to every
+ *   participant anyway, so the bytes are too.
+ * - Otherwise the data does reference it, but not in a part this viewer may
+ *   read. Refuse.
+ *
+ * The rule is deliberately derived from `visibility` rather than declared
+ * separately: a second place to say who may read a document is a second place
+ * for the two to disagree.
+ */
+export function canReadAttachment(
+  definition: ProcessDefinition,
+  data: JsonObject,
+  sha256: string,
+  roles: readonly string[],
+  state: string,
+): boolean {
+  const visible = filterData(definition, data, roles, state)
+  if (mentions(visible.value, sha256)) return true
+  return !mentions(data, sha256)
+}
+
+/** Does this document reference the hash anywhere, at any depth? */
+function mentions(value: JsonValue, sha256: string): boolean {
+  if (typeof value === 'string') return value === sha256
+  if (Array.isArray(value)) return value.some((entry) => mentions(entry, sha256))
+  if (isJsonObject(value)) return Object.values(value).some((entry) => mentions(entry, sha256))
+  return false
+}
+
 export type { JsonValue }

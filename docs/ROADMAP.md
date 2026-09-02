@@ -144,7 +144,7 @@ and converged with no operator action.
   §9's prose said "the home node signs", which cannot be both. The relay now signs before it forwards,
   using the `seq` and `prev` `If-Match` already implies.
 
-## M4 — Quotations, links, deadlines
+## M4 — Quotations, links, deadlines ✅ done
 
 - `POST /instances` accepting a `quotationId`; quotation and service instances side by side.
 - `links` evaluation: subscribe to a related instance's events, fire the named transition on a match,
@@ -155,9 +155,27 @@ and converged with no operator action.
   surfaces.
 - Standing quotations surfaced through offerings (the offering itself landed in M2).
 
-**Exit:** **S2 runs end to end as a scenario test and across two containers**, including the
-counter-offer loop, the auto-started service instance, the `409` on a stale `If-Match`, and an offer
-expiring on its deadline.
+**Exit — met.** S2 runs as a scenario test and across two containers: the service instance created up
+front and provably unable to advance, the counter-offer loop, the link firing `startExecution` when the
+quotation reaches `AGREED`, `driverName` withheld at `ASSIGNED` and released at `PICKED_UP`, a `409` on
+a stale `If-Match` passed through the relay unchanged, and an offer expiring on its `PT24H` deadline —
+by advancing a fake clock, not by shortening the duration. 427 tests, ~2.9 s, no containers.
+
+Attachments landed with it: content-addressed upload, cross-connector pull, and read permission
+**derived from `visibility`** rather than declared again. The store port's conformance suite now covers
+document bytes too, and Mongo passes all 123 cases against a real replica set.
+
+**One spec change**, recorded in [PROTOCOL.md §7.1](PROTOCOL.md#71-format): **`cause` on the event
+header.** A transition with `by: []` is one no participant may invoke by hand, so it was the single
+place a host could have invented history unchallenged. `cause` names the signed event that justified it,
+and a counterparty can find that event in the instance it already holds and check the claim. Verified
+across containers: the `startExecution` the transporter's connector wrote points at exactly the
+`accept` event the shipper independently holds.
+
+**One correction.** The zod schema said a `deadline` is "measured from entry into the `from` state".
+The linter, [DEFINITIONS.md](DEFINITIONS.md) and every shipped definition say it arms on entry into the
+transition's **`to`** state — and only that reading can ever fire, since `offer` leads to `OFFERED` and
+`expire` applies in `OFFERED`. The comment was the outlier and is now fixed.
 
 ## M5 — The process UI and the integration surface
 

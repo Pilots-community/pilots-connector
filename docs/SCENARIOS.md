@@ -133,7 +133,8 @@ Definitions: [`container-transport-quotation`](definitions/container-transport-q
 | 10 | Van Moer *(UI or backoffice)* | local | `pickup` `{ actualPickupAt, containerNumber }` | | **`PICKED_UP`**, `driverName` now visible |
 | 11 | Van Moer *(UI or backoffice)* | local | `deliver` `{ deliveredAt, proofOfDelivery }` + PDF | | **`DELIVERED`** (terminal) |
 
-Three things to demonstrate explicitly alongside the happy path:
+All of this runs as a scenario test and across two containers as of M4. Three things demonstrated
+explicitly alongside the happy path:
 
 - **The service instance exists from step 2**, sitting in `PENDING_CONTRACT` while the quotation is
   still being negotiated. This is IDEA.md's "the quotation process does not block execution", made

@@ -30,7 +30,10 @@ import { DefinitionRegistry } from './definitions/definition-registry.js'
 import { PeerDeliveryService } from './delivery/peer-delivery.service.js'
 import { PeerStreamClient } from './delivery/peer-stream-client.js'
 import { StreamHub } from './delivery/stream-hub.js'
+import { AttachmentService } from './attachments/attachment.service.js'
+import { DeadlineService } from './deadlines/deadline.service.js'
 import { devDirectoryResolver, firstOf, localDidResolver } from './identity/did-directory.js'
+import { LinkService } from './links/link.service.js'
 import { Identity } from './identity/identity.service.js'
 import { InstanceService, type WriteObserver } from './instances/instance.service.js'
 import { LogService } from './logging/log.service.js'
@@ -62,6 +65,9 @@ export interface Runtime {
   notifications: NotificationService
   peerDelivery: PeerDeliveryService
   peerStreams: PeerStreamClient
+  links: LinkService
+  deadlines: DeadlineService
+  attachments: AttachmentService
   relay: Relay
   peers: PeerSurface
   transport: PeerTransport
@@ -204,9 +210,17 @@ export async function createRuntime(
     participants,
   )
 
+  /*
+   * Assembled before `instances` because the service takes them, and `links`
+   * needs `instances` back — so the observer holds a late-bound reference rather
+   * than the service itself. One knot, tied here where it is visible, instead of
+   * a lazy provider graph nobody can read.
+   */
+  const links: { service?: LinkService } = {}
   const observers: WriteObserver[] = [
     { onWrite: (notice: WriteNotice) => notifications.onWrite(notice) },
     { onWrite: (notice: WriteNotice) => peerDelivery.onWrite(notice) },
+    { onWrite: async (notice: WriteNotice) => links.service?.onWrite(notice) },
   ]
 
   const replication = new ReplicationService(
@@ -251,12 +265,26 @@ export async function createRuntime(
     observers,
   )
 
+  const attachments = new AttachmentService(
+    store,
+    registry,
+    connections,
+    client,
+    log,
+    now,
+    config.maxAttachmentBytes,
+  )
+
+  links.service = new LinkService(store, registry, instances, log, participants)
+  const deadlines = new DeadlineService(store, registry, instances, log, clock, participants)
+
   const peers = new PeerSurface({
     store,
     instances,
     connections,
     replication,
     delivery: peerDelivery,
+    attachments,
     definitions: registry,
     resolver,
     replay,
@@ -296,6 +324,9 @@ export async function createRuntime(
     notifications,
     peerDelivery,
     peerStreams,
+    links: links.service,
+    deadlines,
+    attachments,
     relay,
     peers,
     transport,
@@ -309,6 +340,9 @@ export async function createRuntime(
       // Attach first: a line that dropped since the last tick should be back up
       // before we decide anything is undelivered.
       await peerStreams.sync()
+      // Deadlines before delivery, so an expiry produced this tick goes out in
+      // the same tick rather than waiting for the next one.
+      await deadlines.pump()
       await peerDelivery.pump()
       await notifications.pump()
       await peerStreams.quiesce()

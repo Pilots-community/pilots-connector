@@ -67,6 +67,7 @@ function eventAt(
       prev: seq === 1 ? null : `sha256:${'0'.repeat(64)}`,
       payloadHash: payload === null ? EMPTY_PAYLOAD_HASH : hashJson(payload as never),
       genesis: `sha256:${'1'.repeat(64)}`,
+      cause: null,
       attachments: [],
     },
     payload: payload as never,
@@ -545,6 +546,61 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
     })
 
     // ─────────────────────────────────────────────────────────────────────────
+    describe('attachments — addressed by content', () => {
+      const BYTES = new TextEncoder().encode('%PDF-1.7 a certificate')
+      const DIGEST = `sha256:${'c'.repeat(64)}`
+
+      const attachment = (bytes = BYTES, sha256 = DIGEST) => ({
+        sha256,
+        mime: 'application/pdf',
+        size: bytes.byteLength,
+        bytes,
+        receivedAt: AT,
+      })
+
+      it('stores and returns the exact bytes', async () => {
+        await store.attachments.put(ACME, attachment())
+
+        const found = await store.attachments.get(ACME, DIGEST)
+        expect(found?.mime).toBe('application/pdf')
+        expect(found?.size).toBe(BYTES.byteLength)
+        // Byte-for-byte, not "something that decodes to the same string". An
+        // adapter that round-trips a PDF through a string is an adapter that
+        // corrupts one.
+        expect(Array.from(found?.bytes ?? [])).toEqual(Array.from(BYTES))
+      })
+
+      it('treats a repeat put of the same address as a no-op', async () => {
+        await store.attachments.put(ACME, attachment())
+        await store.attachments.put(ACME, attachment(new TextEncoder().encode('different')))
+
+        // Content-addressed: the address is the content, so the first write wins
+        // and a second cannot quietly change what a hash refers to.
+        const found = await store.attachments.get(ACME, DIGEST)
+        expect(Array.from(found?.bytes ?? [])).toEqual(Array.from(BYTES))
+        expect(await store.attachments.list(ACME)).toHaveLength(1)
+      })
+
+      it('scopes attachments by participant like everything else', async () => {
+        await store.attachments.put(ACME, attachment())
+
+        expect(await store.attachments.has(ACME, DIGEST)).toBe(true)
+        expect(await store.attachments.has(VANMOER, DIGEST)).toBe(false)
+        expect(await store.attachments.get(VANMOER, DIGEST)).toBeUndefined()
+        expect(await store.attachments.list(VANMOER)).toEqual([])
+      })
+
+      it('lists metadata without the bytes', async () => {
+        await store.attachments.put(ACME, attachment())
+
+        const listed = await store.attachments.list(ACME)
+        expect(listed).toHaveLength(1)
+        expect(listed[0]?.sha256).toBe(DIGEST)
+        expect(listed[0]).not.toHaveProperty('bytes')
+      })
+    })
+
+    // ─────────────────────────────────────────────────────────────────────────
     describe('durability across a reopen', () => {
       it(
         context.persistent
@@ -556,6 +612,13 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
             expectedSeq: 0,
             event: eventAt(1, 'ORDERED', null, { containerNumber: 'MSCU1234567' }),
             instanceAfter: instanceAt(1, 'ORDERED'),
+          })
+          await store.attachments.put(ACME, {
+            sha256: `sha256:${'d'.repeat(64)}`,
+            mime: 'application/pdf',
+            size: 3,
+            bytes: new Uint8Array([1, 2, 3]),
+            receivedAt: AT,
           })
           await store.audit.append({
             at: AT,
@@ -587,6 +650,11 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
               expect(events).toEqual([])
               return
             }
+
+            // Document bytes survive too. An attachment that vanished on
+            // restart would leave a log referencing a document nobody holds.
+            const document = await reopened.attachments.get(ACME, `sha256:${'d'.repeat(64)}`)
+            expect(Array.from(document?.bytes ?? [])).toEqual([1, 2, 3])
 
             expect(instance?.state).toBe('ORDERED')
             expect(instance?.seq).toBe(1)

@@ -11,10 +11,10 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M3 complete** — two connectors talk. The scenario harness stands whole connectors up
-in one process, and S0, S1, S4a, S4b, S4d and S5 run as tests in ~2.6 s with no containers.
-`docker compose up` gives two connectors, zero databases, and a first relayed transaction ~6 s in.
-M4 (quotations, links, deadlines) is the next milestone.
+Current status: **M4 complete** — negotiated quotations, links, deadlines and attachments.
+S0, S1, S2, S4a, S4b, S4d and S5 run as tests in ~2.9 s with no containers; `docker compose up` gives
+two connectors, zero databases, and a first relayed transaction ~6 s in.
+M5 (the process UI and `packages/client`) is the next milestone.
 
 ## What we're building
 
@@ -135,6 +135,11 @@ pilots-service/
     src/delivery/        Peer delivery: outbound webhook + stream, the stream hub, the stream client.
     src/replication/     Applying a peer's events. Where "the host cannot lie" is enforced.
     src/notifications/   Local delivery: subscriptions, envelopes, channels, retry, dead letters.
+    src/links/           `links` evaluation. Advances one instance from a signed event in another,
+                         and records which event in the resulting header's `cause`.
+    src/deadlines/       The deadline scan loop. Driven by Clock, never setTimeout.
+    src/attachments/     Content-addressed documents: upload, cross-connector pull, and read
+                         permission derived from `visibility` rather than declared again.
     src/store/           Repository port, memory/file/mongo adapters, conformance suite.
                          Connector-internal by design — do not promote to a shared package.
     src/admin-ui/        Minimal admin UI: connections, API keys, offerings, subscriptions, audit log.
@@ -240,8 +245,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M1** — protocol package ✅ **done** | Schemas (incl. API key, audit entry), JCS, chain verification with redacted payloads, `Signer` / `Clock` / `IdGenerator` / `DidResolver` ports, evaluator, merge patch, visibility filter, linter, JSON Schema export | Met: `pnpm test` green (217 tests, under a second); the five definitions lint clean; a tampered event fails, a redacted event passes |
 | **M2** — connector, single party ✅ **done** | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, admin UI | Met: one container, no database; S1 runs on the local API with `curl` + an API key; the audit log shows every call including refusals, with an intact chain; memory and cold start measured |
 | **M3** — two connectors ✅ **done** | Scenario harness + in-process transport **first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, Mongo adapter + conformance | Met: S0, S1, S4a, S4b, S4d, S5 as scenario tests (412 tests, ~2.6 s, no containers); an automated participant runs S1 with no human; Mongo passes the same conformance suite; two containers, 0 databases, S1 end to end, both replicas verify |
-| **M4** — quotations, links, deadlines *(current target)* | `quotationId`, `links` evaluation, deadline scheduling (fake-clock tested), attachment bytes, offering discovery | S2 end to end as a scenario test and across containers |
-| **M5** — process UI + integration surface | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
+| **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
+| **M5** — process UI + integration surface *(current target)* | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
 | **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
 | **M7** — publish and deploy *(event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 

@@ -76,11 +76,16 @@ function safeName(value: string): string {
  * costs a reconcile on the next boot, which `reconcile()` already does — so it
  * is not. That single distinction is most of this adapter's write throughput.
  */
-async function writeAtomic(path: string, contents: string, durable = true): Promise<void> {
+async function writeAtomic(
+  path: string,
+  contents: string | Uint8Array,
+  durable = true,
+): Promise<void> {
   const temporary = `${path}.tmp`
   const handle = await open(temporary, 'w')
   try {
-    await handle.writeFile(contents, 'utf8')
+    if (typeof contents === 'string') await handle.writeFile(contents, 'utf8')
+    else await handle.writeFile(contents)
     if (durable) await handle.sync()
   } finally {
     await handle.close()
@@ -186,6 +191,26 @@ function makeFileJournal(directory: string, queue: WriteQueue): Journal {
           true,
         )
       }),
+    writeAttachment: (participantId, attachment) =>
+      enqueue(async () => {
+        // Real files, not base64 in a document. The bytes are the point, and a
+        // PDF that has to be decoded before it can be served is a PDF nobody can
+        // inspect with `open`.
+        const dir = join(directory, 'attachments', safeName(participantId))
+        await mkdir(dir, { recursive: true })
+        const name = safeName(attachment.sha256)
+        await writeAtomic(join(dir, `${name}.bin`), Buffer.from(attachment.bytes), true)
+        await writeAtomic(
+          join(dir, `${name}.json`),
+          `${JSON.stringify({
+            sha256: attachment.sha256,
+            mime: attachment.mime,
+            size: attachment.size,
+            receivedAt: attachment.receivedAt,
+          })}\n`,
+          true,
+        )
+      }),
     appendAudit: (entry) =>
       enqueue(() =>
         appendLine(
@@ -228,6 +253,7 @@ export class FileStore extends MemoryStore implements Store {
     }
 
     await loadEvents(directory, state)
+    await loadAttachments(directory, state)
     await loadAudit(directory, state)
     reconcile(state)
 
@@ -274,6 +300,28 @@ async function loadEvents(directory: string, state: MemoryState): Promise<void> 
         : a.recordedAt.localeCompare(b.recordedAt),
     )
     state.events.set(events[0]!.participantId, events)
+  }
+}
+
+async function loadAttachments(directory: string, state: MemoryState): Promise<void> {
+  const root = join(directory, 'attachments')
+  if (!existsSync(root)) return
+  for (const participantDir of await readdir(root)) {
+    const path = join(root, participantDir)
+    for (const file of await readdir(path)) {
+      if (!file.endsWith('.json')) continue
+      const meta = JSON.parse(await readFile(join(path, file), 'utf8')) as {
+        sha256: string
+        mime: string
+        size: number
+        receivedAt: string
+      }
+      const bytes = await readFile(join(path, file.replace(/\.json$/, '.bin')))
+      state.attachments.set(documentKey(participantDir, meta.sha256), {
+        ...meta,
+        bytes: new Uint8Array(bytes),
+      })
+    }
   }
 }
 

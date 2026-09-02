@@ -34,8 +34,10 @@ import {
   type EventLog,
   type EventWrite,
   type IdempotencyRecord,
+  type AttachmentStore,
   type IdempotencyStore,
   type NotificationDocument,
+  type StoredAttachment,
   type Query,
   type StoredDocument,
   type TrustedPeerDocument,
@@ -51,6 +53,7 @@ export interface Journal {
   writeDocument(collection: string, document: StoredDocument): Promise<void>
   deleteDocument(collection: string, participantId: string, id: string): Promise<void>
   appendEvent(event: StoredEvent): Promise<void>
+  writeAttachment(participantId: string, attachment: StoredAttachment): Promise<void>
   /**
    * Rewrite one instance's whole log.
    *
@@ -74,6 +77,8 @@ export interface MemoryState {
   events: Map<string, StoredEvent[]>
   audit: Map<string, AuditEntry[]>
   idempotency: Map<string, IdempotencyRecord>
+  /** Keyed by `(participantId, sha256)`. The bytes, not a reference to them. */
+  attachments: Map<string, StoredAttachment>
 }
 
 export function emptyState(): MemoryState {
@@ -81,6 +86,7 @@ export function emptyState(): MemoryState {
     collections: new Map(),
     events: new Map(),
     audit: new Map(),
+    attachments: new Map(),
     idempotency: new Map(),
   }
 }
@@ -311,6 +317,50 @@ class MemoryIdempotency implements IdempotencyStore {
   }
 }
 
+class MemoryAttachments implements AttachmentStore {
+  constructor(
+    private readonly state: MemoryState,
+    private readonly journal: Journal | undefined,
+  ) {}
+
+  private key(participantId: string, sha256: string): string {
+    return documentKey(participantId, sha256)
+  }
+
+  async put(participantId: string, attachment: StoredAttachment): Promise<void> {
+    // Content-addressed, so a repeat upload of identical bytes is a no-op rather
+    // than a conflict. That is the whole point of hashing the content.
+    const key = this.key(participantId, attachment.sha256)
+    if (this.state.attachments.has(key)) return
+
+    this.state.attachments.set(key, {
+      ...attachment,
+      bytes: Uint8Array.from(attachment.bytes),
+    })
+    await this.journal?.writeAttachment(participantId, attachment)
+  }
+
+  async get(participantId: string, sha256: string): Promise<StoredAttachment | undefined> {
+    const found = this.state.attachments.get(this.key(participantId, sha256))
+    return found ? { ...found, bytes: Uint8Array.from(found.bytes) } : undefined
+  }
+
+  async has(participantId: string, sha256: string): Promise<boolean> {
+    return this.state.attachments.has(this.key(participantId, sha256))
+  }
+
+  async list(participantId: string): Promise<Omit<StoredAttachment, 'bytes'>[]> {
+    const prefix = documentKey(participantId, '')
+    const found: Omit<StoredAttachment, 'bytes'>[] = []
+    for (const [key, attachment] of this.state.attachments) {
+      if (!key.startsWith(prefix)) continue
+      const { bytes: _bytes, ...rest } = attachment
+      found.push(rest)
+    }
+    return found
+  }
+}
+
 class MemoryAuditLog implements AuditLog {
   constructor(
     private readonly state: MemoryState,
@@ -362,6 +412,7 @@ export class MemoryStore implements Store {
   readonly notifications: Collection<NotificationDocument>
   readonly trustedPeers: Collection<TrustedPeerDocument>
   readonly events: EventLog
+  readonly attachments: AttachmentStore
   readonly idempotency: IdempotencyStore
   readonly audit: AuditLog
 
@@ -378,6 +429,7 @@ export class MemoryStore implements Store {
     this.notifications = new MapCollection('notifications', state, journal)
     this.trustedPeers = new MapCollection('trustedPeers', state, journal)
     this.events = new MemoryEventLog(state)
+    this.attachments = new MemoryAttachments(state, journal)
     this.idempotency = new MemoryIdempotency(state, journal)
     this.audit = new MemoryAuditLog(state, journal)
   }

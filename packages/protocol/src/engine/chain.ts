@@ -44,6 +44,8 @@ export interface EventDraft {
   to: string | null
   at: string
   prev: Sha256 | null
+  /** The signed event that justified a runtime-fired transition. See `EventHeader.cause`. */
+  cause?: Sha256 | null
   payload?: JsonObject | null
   attachments?: readonly AttachmentRef[]
 }
@@ -64,6 +66,7 @@ export function buildEventHeader(draft: EventDraft): EventHeader {
     to: draft.to,
     at: draft.at,
     prev: draft.prev,
+    cause: draft.cause ?? null,
     payloadHash: payload === null ? EMPTY_PAYLOAD_HASH : hashJson(payload),
     attachments: [...(draft.attachments ?? [])],
   })

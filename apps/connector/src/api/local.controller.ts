@@ -34,6 +34,7 @@ import { ProblemException } from '../http/problem.js'
 import { INSTANCE_SERVICE } from '../instances/instance.tokens.js'
 import type { CallerContext, InstanceService, WriteOutcome } from '../instances/instance.service.js'
 import { LOG_SERVICE, type LogService } from '../logging/log.service.js'
+import { ATTACHMENTS, type AttachmentService } from '../attachments/attachment.service.js'
 import { NOTIFICATIONS, type NotificationService } from '../notifications/notification.service.js'
 import { LOCAL_HUB, RELAY } from '../runtime.tokens.js'
 import type { Relay } from '../peer/relay.js'
@@ -118,6 +119,7 @@ export class LocalController {
     @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
     @Inject(RELAY) private readonly relay: Relay,
     @Inject(LOCAL_HUB) private readonly hub: StreamHub,
+    @Inject(ATTACHMENTS) private readonly attachments: AttachmentService,
   ) {}
 
   // ── definitions and offerings ────────────────────────────────────────────
@@ -169,6 +171,94 @@ export class LocalController {
   async listConnections(@Req() request: LocalRequest) {
     // Read-only to an integrator by design: connections are operator state.
     return { connections: await this.store.connections.find(caller(request).participant.id) }
+  }
+
+  // ── attachments ──────────────────────────────────────────────────────────
+
+  /**
+   * Upload document bytes and get back the reference a transition will carry.
+   *
+   * The connector computes the hash; the caller does not supply it. A
+   * content-addressed store whose content and address can disagree is not
+   * content-addressed.
+   */
+  @Post('attachments')
+  @RequireScope('attachments.write')
+  async uploadAttachment(
+    @Req() request: LocalRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const context = caller(request)
+    const body = request.body
+    if (!Buffer.isBuffer(body)) {
+      throw ProblemException.badRequest(
+        'send the raw document bytes with a content-type of its own, not JSON',
+      )
+    }
+
+    const mime = (request.headers['content-type'] ?? 'application/octet-stream').split(';')[0]!
+    const stored = await this.attachments.put(context.participant, new Uint8Array(body), mime)
+    if (!stored.ok) throw ProblemException.from(stored.errors)
+
+    void reply.status(201)
+    return stored.value
+  }
+
+  /**
+   * Fetch document bytes, subject to the same visibility rules as a read.
+   *
+   * A replica does not necessarily hold them — bytes follow the reference to the
+   * home node — so if we are entitled but empty-handed, we pull from the host
+   * and serve. The integrator sees one endpoint either way, exactly as it sees
+   * one endpoint for a local and a relayed transition.
+   */
+  @Get('attachments/:sha256')
+  @RequireScope('attachments.read')
+  async getAttachment(
+    @Req() request: LocalRequest,
+    @Res() reply: FastifyReply,
+    @Param('sha256') sha256: string,
+  ): Promise<void> {
+    const context = caller(request)
+    const digest = decodeURIComponent(sha256)
+
+    let found = await this.attachments.read(context.participant, context.participant.did, digest)
+    if (!found) {
+      const host = await this.hostHolding(context.participant.id, digest)
+      if (host !== undefined) {
+        await this.attachments.pull(context.participant, host, [
+          { sha256: digest, mime: 'application/octet-stream', size: 0 },
+        ])
+        found = await this.attachments.read(context.participant, context.participant.did, digest)
+      }
+    }
+
+    // A 404 covers both "no such attachment" and "one you may not read".
+    if (!found) throw ProblemException.notFound(`no attachment ${digest}`)
+
+    void reply
+      .status(200)
+      .header('content-type', found.mime)
+      .header('content-length', String(found.size))
+      // Content-addressed: the bytes for a hash never change, so this is one of
+      // the few things in the system that is genuinely immutable.
+      .header('cache-control', 'public, max-age=31536000, immutable')
+      .header('etag', `"${found.sha256}"`)
+      .send(Buffer.from(found.bytes))
+  }
+
+  /** The peer hosting an instance of ours that references this document. */
+  private async hostHolding(participantId: string, sha256: string): Promise<string | undefined> {
+    for (const instance of await this.store.instances.find(participantId)) {
+      if (instance.home) continue
+      const events = await this.store.events.read(participantId, instance.id, 0)
+      if (!events.some((event) => event.header.attachments.some((ref) => ref.sha256 === sha256))) {
+        continue
+      }
+      const host = this.attachments.hostOf(instance)
+      if (host !== undefined) return host
+    }
+    return undefined
   }
 
   // ── local delivery ───────────────────────────────────────────────────────

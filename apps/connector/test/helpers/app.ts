@@ -6,6 +6,7 @@ import { FakeClock, deterministicIdGenerator } from '@pilots/protocol/testing'
 import { AppModule } from '../../src/app.module.js'
 import { loadConfig, type ConnectorConfig } from '../../src/config/config.js'
 import { ProblemFilter } from '../../src/http/problem.filter.js'
+import { acceptRawBodies } from '../../src/http/raw-body.js'
 import { MemorySecretStore } from '../../src/secrets/secret-store.js'
 import { createRuntime, type Runtime } from '../../src/runtime.js'
 import { ACME, DEFINITIONS_DIR, VANMOER } from './core.js'
@@ -60,9 +61,11 @@ export async function buildTestApp(): Promise<TestApp> {
     imports: [AppModule.forRuntime(runtime)],
   }).compile()
 
-  const app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter(), {
-    logger: false,
-  })
+  const app = moduleRef.createNestApplication<NestFastifyApplication>(
+    new FastifyAdapter({ bodyLimit: runtime.config.maxAttachmentBytes + 1024 * 1024 }),
+    { logger: false },
+  )
+  acceptRawBodies(app.getHttpAdapter().getInstance())
   app.useGlobalFilters(new ProblemFilter(runtime.log))
   await app.init()
   await app.getHttpAdapter().getInstance().ready()

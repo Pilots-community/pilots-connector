@@ -132,6 +132,7 @@ export {
   type AuditEntryDraft,
 } from './engine/audit-chain.js'
 export {
+  canReadAttachment,
   canReadPath,
   filterData,
   filterInstance,

@@ -88,7 +88,16 @@ export const TransitionDefinition = z.strictObject({
    */
   guards: z.array(JsonSchemaDocument).optional(),
   attachments: AttachmentRule.optional(),
-  /** Measured from entry into the `from` state. */
+  /**
+   * How long the state this transition **leads to** may last before
+   * `onDeadline` fires. Armed on entry into `to`, so `offer` carrying
+   * `PT24H` means "an offer sits unanswered for at most a day".
+   *
+   * Not measured from the `from` state: a transition's own precondition has
+   * already been satisfied by the time it fires, so there would be nothing left
+   * to time. The linter enforces that `to` exists and that `onDeadline` can
+   * actually be applied in it.
+   */
   deadline: Duration.optional(),
   /** The id of another transition to fire when the deadline passes. */
   onDeadline: Identifier.optional(),

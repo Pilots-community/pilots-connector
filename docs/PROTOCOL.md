@@ -261,7 +261,8 @@ wrong — and would still pass a one-sided demo.
 | `GET` | `/api/local/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
 | `GET` | `/api/local/v1/events?since=<cursor>` | SSE across every instance this participant is in. |
 | `GET` | `/api/local/v1/notifications?since=<cursor>` | Replay notifications after an outage. Authoritative (§4.4). |
-| `POST` \| `GET` | `/api/local/v1/attachments[/{sha256}]` | Content-addressed documents. |
+| `POST` | `/api/local/v1/attachments` | Upload raw bytes; answers with the `{ sha256, mime, size }` a transition carries. |
+| `GET` | `/api/local/v1/attachments/{sha256}` | Document bytes, visibility-filtered. Pulled from the home node if this connector does not hold them. |
 
 ### 4.3 Relay error semantics
 
@@ -477,6 +478,7 @@ represents a refusal.
     "prev":        "sha256:9f3c…",
     "payloadHash": "sha256:1a7b…",
     "genesis":     "sha256:c40e…",
+    "cause":       null,
     "attachments": [ { "sha256": "…", "mime": "application/pdf", "size": 41022 } ]
   },
   "payload":  { "price": { "value": 320, "currency": "EUR" } },
@@ -506,6 +508,18 @@ represents a refusal.
   was never in the instance, and "the host cannot lie" would hold for every field except the two that
   decide who is allowed to do what. Putting it on every event means an incremental delivery binds
   identity too, rather than only a full replay from `seq` 1.
+- `cause` is `sha256` of the **header of the event that caused this one**, when the runtime fired the
+  transition rather than a participant; `null` otherwise.
+
+  A transition with `by: []` is one no participant may invoke by hand, which means the home node is the
+  only thing that can produce it. Without `cause` there is nothing to distinguish a legitimate
+  link-driven advance from one the host simply decided to write, and a `by: []` transition would be the
+  one place a host *could* invent history. With it, a counterparty takes the hash, finds that event in
+  the instance it belongs to — it holds that instance too, or it would not be linked — and checks the
+  claim.
+
+  A **deadline**-fired transition carries `null`: nothing caused it but the passage of time, and time
+  is not an event anybody signed. What a counterparty checks there is the arithmetic, from the same log.
 - `to` is `null` for a pure data patch — a transition may change state, patch data, or do both.
 - `at` is UTC, always `Z`. A canonical record with local offsets in it is one two implementations can
   disagree about.
@@ -563,8 +577,31 @@ values are unknown — which is the intent.
 ### 7.4 Attachments
 
 Documents are content-addressed. The event header lists `{ sha256, mime, size }`; the bytes are fetched
-from `/attachments/{sha256}` on either surface, subject to the same visibility rules. This keeps the log
-small, makes documents deduplicated and tamper-evident, and avoids base64 in the event stream.
+from `/attachments/{sha256}` on either surface. This keeps the log small, makes documents deduplicated
+and tamper-evident, and avoids base64 in the event stream — a peer verifies a chain without downloading
+a PDF, and downloads one knowing exactly what it must hash to.
+
+**The connector computes the hash; the uploader does not supply it.** A content-addressed store whose
+content and address can disagree is not content-addressed. `POST /attachments` takes the raw bytes with
+their own content type and answers with the `{ sha256, mime, size }` a transition will carry.
+
+**Who may read a document is derived from `visibility`, never declared separately** — a second place to
+say who may read a file is a second place for the two to disagree. The rule, in order:
+
+1. If the hash appears in the viewer's **filtered** data, they may read what references it, so they may
+   read the bytes. This is what makes S1 step 10 work: the shipper fetches the VGM certificate once
+   `certificate` becomes visible at `VGM_ISSUED`, and not one state earlier.
+2. If the hash appears **nowhere** in the data, nothing describes it and there is nothing to withhold.
+   The header reference is visible to every participant anyway, so the bytes are too.
+3. Otherwise the data does reference it, in a part this viewer may not read. Refuse.
+
+A participant reading its **own** store is not a visibility question at all: visibility governs what a
+connector hands to others.
+
+**Bytes follow the reference to the home node.** An actor uploads to its own connector and names the
+hash in a transition; the home node pulls what it does not hold from whoever signed the event, and
+re-hashes it on arrival. Everyone else fetches from the home node, pulling on demand — attachments are
+deliberately **not** replicated with the log, so a peer downloads a document only when it wants one.
 
 ## 8. Concurrency and idempotency
 
@@ -599,7 +636,7 @@ conformance suite rather than an ad-hoc data-access layer.
 | `POST` | `/api/peer/v1/instances/{id}/transitions` | **The one mutating call.** |
 | `GET` | `/api/peer/v1/instances/{id}/events?since=<seq>` | Signed log, visibility-filtered. |
 | `GET` | `/api/peer/v1/stream?since=<cursor>` | SSE across every instance the caller participates in. |
-| `GET` | `/api/peer/v1/attachments/{sha256}` | Content-addressed document bytes. |
+| `GET` | `/api/peer/v1/attachments/{sha256}` | Document bytes, visibility-filtered for the calling peer. |
 
 ### 9.1 Who signs, and what a peer call carries
 

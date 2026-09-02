@@ -54,6 +54,21 @@ export const EventHeader = z.strictObject({
    * because none of what it covers can change.
    */
   genesis: Sha256,
+  /**
+   * The event that caused this one, when the runtime fired it rather than a
+   * participant: `sha256` of the causing event's **header**. `null` otherwise.
+   *
+   * A transition with `by: []` is one no participant may invoke by hand, which
+   * means a home node is the only thing that can produce it — and without this,
+   * nothing distinguishes a legitimate link-driven advance from one the host
+   * simply decided to write. `cause` names the signed event that justified it,
+   * so a counterparty can go and find that event in the instance it belongs to
+   * and check the claim rather than trusting it.
+   *
+   * A deadline-fired transition carries `null`: nothing caused it but the
+   * passage of time, and time is not an event anybody signed.
+   */
+  cause: z.union([Sha256, z.null()]),
   attachments: z.array(AttachmentRef),
 })
 export type EventHeader = z.infer<typeof EventHeader>

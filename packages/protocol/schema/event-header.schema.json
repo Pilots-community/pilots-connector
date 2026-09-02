@@ -71,6 +71,17 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "cause": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "attachments": {
       "type": "array",
       "items": {
@@ -114,6 +125,7 @@
     "prev",
     "payloadHash",
     "genesis",
+    "cause",
     "attachments"
   ],
   "additionalProperties": false

@@ -308,12 +308,17 @@ quotation reaches `AGREED`.
               "at": "2026-08-24T09:14:02Z",
               "prev": "sha256:9f3c…",
               "payloadHash": "sha256:1a7b…",
-              "genesis": "sha256:c40e…" },
+              "genesis": "sha256:c40e…",
+              "cause": null },
   "payload": { "price": { "value": 320, "currency": "EUR" } },
   "sig": "<JWS over the canonicalised header>" }
 ```
 
 - The **signature covers the header only**, and the header commits to the payload by hash.
+- `cause` names the event that justified a **runtime-fired** transition — a `link` advancing one
+  instance from a signed event in another. A `by: []` transition is one no participant may invoke, so
+  without this it would be the single place a host could invent history unchallenged. A deadline-fired
+  transition carries `null`; nothing signed the passing of time.
 - `genesis` commits to the instance's fixed identity — its definition, kind and participants map.
   Those fields are what authority is judged against and they do not live in the log, so they travel
   beside it; without this a replica would have to believe the sender about who the counterparty is.
