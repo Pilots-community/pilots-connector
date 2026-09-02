@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // The client runs in a browser as readily as in Node — it uses `fetch` and
+    // nothing else — so it is typed against the DOM's `fetch`, `Blob` and
+    // `Response` rather than Node's. That is also what stops a Node-only API
+    // from creeping in unnoticed.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test", "*.ts"]
+}

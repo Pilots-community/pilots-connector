@@ -2,11 +2,14 @@ packages:
   - 'packages/*'
   - 'apps/*'
 
-# Both ship a prebuilt platform binary; their install scripts only verify it.
-# esbuild backs Vitest; @swc/core is the transform that emits decorator metadata.
+# All three ship a prebuilt platform binary; their install scripts only verify
+# it. esbuild backs Vitest, @swc/core is the transform that emits decorator
+# metadata, and unrs-resolver is what lets the import-boundary rule resolve a
+# module specifier to a file — without it that rule silently checks nothing.
 allowBuilds:
   esbuild: true
   '@swc/core': true
+  unrs-resolver: true
 
 # `pnpm deploy` (used by the connector's Dockerfile) needs workspace packages
 # injected rather than symlinked, so the runtime image carries real files.

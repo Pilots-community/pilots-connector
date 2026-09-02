@@ -90,6 +90,17 @@ export const ConnectorConfig = z.strictObject({
   /** How often the delivery scan loops run. `0` disables them; tests drive the pumps by hand. */
   deliveryIntervalMs: z.int().min(0),
   /**
+   * Mint an integration key on first boot and write it here, for a co-deployed
+   * UI to read.
+   *
+   * **Development only**, and refused under production config. It exists so
+   * `docker compose up` reaches a usable process UI without a human visiting the
+   * admin UI first — and it writes a *generated* secret to a mounted path rather
+   * than reading a committed one, which is the distinction that matters. In any
+   * real deployment an operator mints a key in the admin UI and injects it.
+   */
+  integrationKeyFile: z.union([z.string().min(1), z.null()]),
+  /**
    * The largest attachment this connector will accept.
    *
    * A ceiling, not a target. It also bounds the HTTP body limit, and the Mongo
@@ -184,6 +195,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     devDidDirectory: bool(env['PILOTS_DEV_DID_DIRECTORY'], false),
     deliveryIntervalMs: Number(env['PILOTS_DELIVERY_INTERVAL_MS'] ?? 1000),
     maxAttachmentBytes: Number(env['PILOTS_MAX_ATTACHMENT_BYTES'] ?? 8 * 1024 * 1024),
+    integrationKeyFile: env['PILOTS_INTEGRATION_KEY_FILE'] ?? null,
   }
 
   const parsed = ConnectorConfig.safeParse(candidate)
@@ -220,6 +232,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
   // deployment that resolves peer identity from its own configuration has given
   // up the property `did:web` was chosen for, and that must not be reachable by
   // forgetting to unset a variable.
+  if (config.integrationKeyFile !== null && config.environment === 'production') {
+    throw new ConfigError(
+      'PILOTS_INTEGRATION_KEY_FILE mints an API key at boot and writes it to disk for another ' +
+        'container to read. It is a demo convenience and cannot be used with NODE_ENV=production; ' +
+        'mint a key in the admin UI and inject it instead.',
+    )
+  }
+
   if (config.devDidDirectory && config.environment === 'production') {
     throw new ConfigError(
       'PILOTS_DEV_DID_DIRECTORY resolves peer DIDs from configuration instead of did:web, ' +

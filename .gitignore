@@ -65,3 +65,4 @@ playwright-report/
 
 # Claude Code local state (machine-specific, not shared via git)
 .claude/settings.local.json
+blob-report/

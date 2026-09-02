@@ -1,12 +1,18 @@
-# `docker compose up` → two connectors, connected, and **zero databases**.
+# `docker compose up` → the full two-party demo: **four containers, zero
+# databases**.
 #
-# This is the M3 demo: Acme (the shipper) and Van Moer (the weigher), each its
-# own process with its own store, its own generated signing key and its own audit
-# log. They share nothing but a network.
+# Acme (the shipper) and Van Moer (the weigher), each with its own connector and
+# its own process UI. Every container is an application process; nothing here is
+# a database, a queue or a broker, which is the claim the count is making.
 #
-# Two containers here means two application processes and nothing else. Neither
-# side needs a database — the file store is one mounted volume — which is the
-# claim the container count is making.
+# The two UIs are deliberately dispensable. `docker compose stop acme-ui` and the
+# process carries on — peers keep delivering, subscriptions keep firing, and the
+# other side notices nothing. That is the whole point of the split, and it is
+# worth doing once in front of an audience.
+#
+# For the headless profile, run only the two connectors:
+#
+#     docker compose up acme vanmoer
 #
 # Note what is seeded and what is not. `PILOTS_CONNECTIONS` establishes the
 # connection at boot so that `up` reaches a first transaction in under a minute.
@@ -45,10 +51,16 @@ services:
       # domain-binding check to "an operator configured this". See
       # docs/ARCHITECTURE.md §8.
       PILOTS_DEV_DID_DIRECTORY: 'true'
+      # Mint an integration key on first boot and leave it where this
+      # participant's UI can read it. **Generated, never committed** — no secret
+      # has a value anywhere in this file. In a real deployment an operator mints
+      # one in the admin UI and injects it.
+      PILOTS_INTEGRATION_KEY_FILE: /shared/acme.key
       # No secret has a value here. The signing key, the API-key pepper and the
       # admin token are generated on first boot into the volume below.
     volumes:
       - acme-data:/data
+      - acme-shared:/shared
     # The claim, enforced rather than asserted: if a connector stops fitting in a
     # 1 GB container, `docker compose up` fails instead of the number quietly
     # going stale in a document.
@@ -86,8 +98,10 @@ services:
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
       PILOTS_DEV_DID_DIRECTORY: 'true'
+      PILOTS_INTEGRATION_KEY_FILE: /shared/vanmoer.key
     volumes:
       - vanmoer-data:/data
+      - vanmoer-shared:/shared
     mem_limit: 1g
     healthcheck:
       test:
@@ -101,6 +115,83 @@ services:
       timeout: 3s
       retries: 12
 
+  # ── the process UIs ────────────────────────────────────────────────────────
+  #
+  # Each holds one API key, scoped to one participant, and owns its own user
+  # accounts. The connector authenticates the key and records who was driving as
+  # an audit hint — it has no idea who these users are, and that is exactly what
+  # lets somebody replace this UI with their own.
+
+  acme-ui:
+    build:
+      context: .
+      dockerfile: apps/process-ui/Dockerfile
+    ports:
+      - '4000:4000'
+    depends_on:
+      acme:
+        condition: service_healthy
+    environment:
+      PILOTS_CONNECTOR_URL: http://acme:3000
+      PILOTS_API_KEY_FILE: /shared/acme.key
+      PILOTS_UI_NAME: Acme Shipping
+      PILOTS_UI_BASE_URL: http://localhost:4000
+      NODE_ENV: development
+      # A demo account, so `up` reaches a usable screen. Refused under
+      # NODE_ENV=production, like every other convenience in this file.
+      PILOTS_UI_SEED_EMAIL: alice@acme.example
+      PILOTS_UI_SEED_PASSWORD: demo-password-acme
+    volumes:
+      - acme-shared:/shared:ro
+    mem_limit: 512m
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  vanmoer-ui:
+    build:
+      context: .
+      dockerfile: apps/process-ui/Dockerfile
+    ports:
+      - '4001:4000'
+    depends_on:
+      vanmoer:
+        condition: service_healthy
+    environment:
+      PILOTS_CONNECTOR_URL: http://vanmoer:3000
+      PILOTS_API_KEY_FILE: /shared/vanmoer.key
+      PILOTS_UI_NAME: Van Moer
+      PILOTS_UI_BASE_URL: http://localhost:4001
+      NODE_ENV: development
+      PILOTS_UI_SEED_EMAIL: bram@vanmoer.example
+      PILOTS_UI_SEED_PASSWORD: demo-password-vanmoer
+    volumes:
+      - vanmoer-shared:/shared:ro
+    mem_limit: 512m
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
 volumes:
   acme-data:
   vanmoer-data:
+  # Carries a *generated* API key from a connector to its own UI. Not a secret
+  # store: one file, written 0600 on first boot, read once.
+  acme-shared:
+  vanmoer-shared:

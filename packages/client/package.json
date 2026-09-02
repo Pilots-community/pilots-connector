@@ -1,0 +1,37 @@
+{
+  "name": "@pilots/client",
+  "version": "0.1.0",
+  "description": "The typed client for a connector's local API, plus the OpenAPI document a non-TypeScript integrator generates from.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./openapi.json": "./openapi.json"
+  },
+  "files": [
+    "dist",
+    "openapi.json"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "openapi:export": "tsx src/bin/export-openapi.ts openapi.json"
+  },
+  "dependencies": {
+    "@pilots/protocol": "workspace:*",
+    "zod": "4.5.4"
+  }
+}

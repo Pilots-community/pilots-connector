@@ -561,21 +561,33 @@ infrastructure at all.
 
 These are acceptance criteria. Measure them; do not assert them.
 
-### 12.1 Measured at M3
+### 12.1 Measured at M5
 
-Three ways, because they answer different questions.
+Four ways, because they answer different questions.
 
-**The two-party demo**, `docker compose up` with the file store, `mem_limit: 1g` on each connector,
-S1 run end to end across both:
+**The full two-party demo**, `docker compose up`: two connectors and two process UIs, file store,
+`mem_limit` on every container, S1 driven through the UI on both sides.
+
+| | |
+|---|---|
+| Containers | **4** (0 databases) |
+| All four healthy | ~11.3 s from `up` |
+| **First transaction** | **~11.6 s from `up`** — started in a browser, relayed to the peer, against a 60 s target |
+| Cold start | connector ~340 ms · UI ~190 ms |
+| Memory in use | connector ~51 MiB / 1 GB · UI ~45 MiB / 512 MB |
+| Image size | connector 236 MB · UI 264 MB |
+
+**The headless profile**, `docker compose up acme vanmoer` — connectors only, no UI:
 
 | | |
 |---|---|
 | Containers | **2** (0 databases) |
 | Both healthy | ~5.7 s from `up` |
-| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer, against a 60 s target |
-| Cold start, each | ~330 ms |
+| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer |
 | Memory in use, each | **~82–86 MiB — 8 % of a 1 GB limit**, after S1 has run across both |
-| Image size | 235 MB |
+
+That the two rows exist as one command with a different argument is the deployment claim: the UI is a
+client, and removing it removes a container rather than a capability.
 
 The limit is written into `docker-compose.yml` rather than only into this table, so a connector that
 stops fitting in a 1 GB container fails `up` instead of quietly making this number stale.
@@ -613,4 +625,4 @@ is the record, and it is paid deliberately: the event log and the audit log are 
 materialised instance is not, because §5.2 already says it is a cache the log rebuilds. Reopening
 reconciles any instance found behind its own log.
 
-The remaining topologies (0 and 4 containers) are measured at M6, when the process UI exists.
+The fully-hosted topology (0 self-run containers) is measured at M6.

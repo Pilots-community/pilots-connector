@@ -171,11 +171,11 @@ Absolute, not relative to anything:
 | Self-run containers, fully hosted | 0 |
 | Database containers, small-party profile | **0** — file store on a mounted volume |
 | Memory, small-party profile | Comfortable in a **1 GB container**, with headroom. Measured at M3: ~82–86 MiB each, two connectors under a 1 GB limit, after S1 has run across both. |
-| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases** |
-| `docker compose up` → first transaction | < 60 s. Measured at M3: **~6 s**, two connectors, relayed across both. |
+| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases**. Measured at M5. |
+| `docker compose up` → first transaction | < 60 s. Measured at M5: **~12 s** for the full four-container demo through the UI; **~6 s** for the two-connector headless profile. |
 | Inbound public HTTPS endpoint required | No, for a party using `stream` delivery |
 | Onboarding a new participant | Publish one static `did.json`, accept one connection request |
-| Full scenario suite (S0–S4) wall-clock | seconds, no containers. Measured at M3: 412 tests in ~2.6 s. |
+| Full scenario suite (S0–S4) wall-clock | seconds, no containers. Measured at M5: 469 tests in ~3 s. |
 
 ## Repo layout and stack
 

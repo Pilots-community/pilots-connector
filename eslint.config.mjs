@@ -45,6 +45,27 @@ export default tseslint.config(
         { type: 'e2e', pattern: 'tests/e2e/*' },
       ],
       'boundaries/include': ['packages/**/*', 'apps/**/*', 'tests/**/*'],
+      /*
+       * Without a resolver the boundary rule is **silently inert**: it cannot
+       * turn `../../../connector/src/x.js` into a file, so it classifies
+       * nothing and reports nothing. It looked configured and enforced nothing
+       * from M2 until M5, which is the failure mode a lint rule has — it is
+       * quiet either way, so the only proof it works is watching it refuse
+       * something.
+       *
+       * `eslint-import-resolver-typescript` also maps the `.js` specifier a
+       * NodeNext import writes back to the `.ts` on disk, which every import in
+       * this repo relies on.
+       */
+      'import/resolver': {
+        typescript: {
+          alwaysTryTypes: true,
+          project: ['packages/*/tsconfig.json', 'apps/*/tsconfig.json', 'tests/e2e/tsconfig.json'],
+          // A workspace genuinely has several projects; the warning is advice
+          // about speed, not a problem to fix.
+          noWarnOnMultipleProjects: true,
+        },
+      },
     },
     plugins: { boundaries },
     rules: {

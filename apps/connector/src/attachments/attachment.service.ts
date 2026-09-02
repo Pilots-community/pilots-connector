@@ -51,7 +51,34 @@ export class AttachmentService {
     private readonly log: LogService,
     private readonly now: () => string,
     private readonly maxBytes: number,
+    private readonly localParticipants: () => readonly ParticipantConfig[],
   ) {}
+
+  /**
+   * The bytes, from **any** local participant that holds them and would serve
+   * them to this viewer.
+   *
+   * The hosted topology, where one connector holds several participants, is the
+   * case this exists for: the host and the replica are the same process, and the
+   * document sits one collection over. Fetching it back from ourselves over HTTP
+   * would be absurd, so we do not — but the entitlement check is the *same* one
+   * a peer would face, run against the holder rather than skipped.
+   */
+  async readLocally(
+    viewer: ParticipantConfig,
+    sha256: string,
+  ): Promise<StoredAttachment | undefined> {
+    const own = await this.read(viewer, viewer.did, sha256)
+    if (own) return own
+
+    for (const holder of this.localParticipants()) {
+      if (holder.id === viewer.id) continue
+      if (!(await this.store.attachments.has(holder.id, sha256))) continue
+      if (!(await this.entitled(holder, viewer.did, sha256))) continue
+      return this.store.attachments.get(holder.id, sha256)
+    }
+    return undefined
+  }
 
   /**
    * Store bytes and return the reference a transition will carry.

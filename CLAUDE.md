@@ -11,10 +11,11 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M4 complete** — negotiated quotations, links, deadlines and attachments.
-S0, S1, S2, S4a, S4b, S4d and S5 run as tests in ~2.9 s with no containers; `docker compose up` gives
-two connectors, zero databases, and a first relayed transaction ~6 s in.
-M5 (the process UI and `packages/client`) is the next milestone.
+Current status: **M5 complete** — the process UI and the integration surface.
+`packages/client` ships a typed client and an OpenAPI document; `apps/process-ui` is its own container
+with a BFF that holds the API key and owns its own users. S0–S5 run as tests in ~3 s with no
+containers, and `docker compose up` gives **four containers, zero databases**, first transaction ~12 s
+in through the UI. M6 (measure and harden) is the next milestone.
 
 ## What we're building
 
@@ -125,7 +126,9 @@ State both unprompted when the topic comes up; do not oversell either.
 pilots-service/
   packages/protocol/     THE SPEC. Zod schemas, JCS canonicalisation, sign/verify, evaluator,
                          visibility filter, definition linter, JSON Schema export. Tests live here.
-  packages/client/       Typed local-API client + OpenAPI doc. The integration surface.
+  packages/client/       Typed local-API client + a committed OpenAPI document, so a
+                         non-TypeScript integrator generates their own rather than
+                         reimplementing this one. Depends on the protocol, never on the connector.
   apps/connector/        NestJS (Fastify adapter). Three API surfaces + admin UI.
     src/peer/            The peer surface as a plain function, the Transport port, the in-process
                          and HTTP adapters, bearer tokens, and the relay. The Nest controller is a
@@ -143,7 +146,12 @@ pilots-service/
     src/store/           Repository port, memory/file/mongo adapters, conformance suite.
                          Connector-internal by design — do not promote to a shared package.
     src/admin-ui/        Minimal admin UI: connections, API keys, offerings, subscriptions, audit log.
-  apps/process-ui/       Demo process management. BFF (holds the API key, owns its own users) + SPA.
+  apps/process-ui/       Demo process management, its own container.
+    src/server/          The BFF: holds the one API key, owns its own user accounts
+                         (better-auth), turns a signed-in user into an `X-Actor-Ref`, and
+                         verifies the event log itself rather than trusting the connector.
+    src/web/             The SPA. Transitions and forms rendered from the definition, so a
+                         new process needs no UI work.
   tests/e2e/             Playwright. Wiring and UI only, never protocol behaviour.
   docs/                  Design documents.
 ```
@@ -179,7 +187,14 @@ pnpm schema:export      # regenerate packages/protocol/schema/*.json from the zo
 pnpm --filter @pilots/connector start        # needs `pnpm build` first
 pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying to :3000
 node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first transaction
-docker compose up                            # two connectors, 0 databases, connection seeded
+docker compose up                            # 4 containers (2 connectors + 2 UIs), 0 databases
+docker compose up acme vanmoer               # the headless profile: connectors only
+pnpm --filter @pilots/process-ui dev         # BFF on :4000
+pnpm --filter @pilots/process-ui dev:web     # SPA on :5175, proxying the BFF
+
+pnpm openapi:export     # regenerate packages/client/openapi.json from the code
+pnpm test:e2e           # Playwright. Needs `docker compose up` first.
+pnpm test:e2e:install   # one-time browser download
 
 # the Mongo adapter runs the same conformance suite, but only when pointed at one.
 # It needs a replica set — a standalone mongod cannot do the transactions the port requires.
@@ -196,16 +211,20 @@ transitions from a terminal state; and warnings that do not fail a definition.
 
 ## Measured, not claimed
 
-**The two-party demo** — `docker compose up`, file store, `mem_limit: 1g` on each, S1 run across both:
+**The full two-party demo** — `docker compose up`: two connectors and two process UIs, file store,
+`mem_limit` on every container.
 
 | | |
 |---|---|
-| Containers | **2** (0 databases) |
-| Both healthy | ~5.7 s from `up` |
-| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer, against a 60 s target |
-| Cold start, each | ~330 ms |
-| Memory in use, each | **~82–86 MiB — 8% of a 1 GB limit**, after S1 has run across both |
-| Image size | 235 MB |
+| Containers | **4** (0 databases) |
+| All four healthy | ~11.3 s from `up` |
+| **First transaction** | **~11.6 s from `up`** — started in the UI, relayed to the peer, against a 60 s target |
+| Cold start | connector ~340 ms · UI ~190 ms |
+| Memory in use | connector ~51 MiB / 1 GB · UI ~45 MiB / 512 MB |
+| Image size | connector 236 MB · UI 264 MB |
+
+Connectors only (`docker compose up acme vanmoer`) is the headless profile: **2 containers**, both
+healthy ~5.7 s, first relayed transaction ~6.0 s, ~82–86 MiB each after S1 has run across both.
 
 The limit lives in `docker-compose.yml`, not only in this table, so a connector that outgrows 1 GB
 fails `up` instead of quietly making the number stale. The image grew 14 MB at M3 for the Mongo
@@ -246,8 +265,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M2** — connector, single party ✅ **done** | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, admin UI | Met: one container, no database; S1 runs on the local API with `curl` + an API key; the audit log shows every call including refusals, with an intact chain; memory and cold start measured |
 | **M3** — two connectors ✅ **done** | Scenario harness + in-process transport **first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, Mongo adapter + conformance | Met: S0, S1, S4a, S4b, S4d, S5 as scenario tests (412 tests, ~2.6 s, no containers); an automated participant runs S1 with no human; Mongo passes the same conformance suite; two containers, 0 databases, S1 end to end, both replicas verify |
 | **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
-| **M5** — process UI + integration surface *(current target)* | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, **Playwright** | S1 and S2 via the process UI on Acme's side, Van Moer via local-delivery webhook; the UI container can stop without the connector caring |
-| **M6** — measure and harden | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
+| **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `acme-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
+| **M6** — measure and harden *(current target)* | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
 | **M7** — publish and deploy *(event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
 ## Working agreements

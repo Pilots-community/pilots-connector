@@ -115,10 +115,15 @@ connection, and that a broken chain is loud and red on screen.
 It never carries the burden of proving protocol behaviour. If an e2e test is the only thing covering a
 rule, that rule is missing a scenario test.
 
-Likely shape, not yet committed: Playwright's `webServer` starts two connector processes and the UI on
-localhost with the file store — no containers. `docker compose` is then needed only for **S4c**, where
-container count and cold-start time are the things being measured, so containers are the subject rather
-than the scaffolding. To be revisited once there is something to run.
+**Built at M5**, and smaller than the plan expected: seven specs over the process UI and the admin UI.
+It runs against `docker compose up` rather than starting local processes, because the thing being
+tested *is* four containers wired together — starting them another way would exercise a topology
+nobody ships.
+
+What it proved that nothing else did: two genuine bugs in the SPA, both races. A stale definition
+fetch could land after a newer one and overwrite it, and resetting the form inside that async effect
+could wipe a role the user had already chosen. Neither is reachable from a scenario test, because
+neither is about the protocol — which is exactly the division of labour this tier is for.
 
 ## 4. What this buys
 

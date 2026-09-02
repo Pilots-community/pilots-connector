@@ -40,15 +40,18 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 
 ## Where the code is
 
-**M1 through M4 are built — two connectors run a negotiated process end to end.**
+**M1 through M5 are built — two parties run a negotiated process end to end, each through their own UI.**
 
 | | |
 |---|---|
 | [`packages/protocol`](packages/protocol) | The specification: schemas, JCS, signing and chain verification, peer bearer tokens, the state-machine evaluator, the visibility filter, the definition linter, a JSON Schema export |
-| [`apps/connector`](apps/connector) | The connector: the store (memory + file + Mongo, one conformance suite), all three API surfaces, the connection handshake, the relay, peer replication, local delivery, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
+| [`apps/connector`](apps/connector) | The connector: the store (memory + file + Mongo, one conformance suite), all three API surfaces, the connection handshake, the relay, peer replication, local delivery, links, deadlines, attachments, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
+| [`packages/client`](packages/client) | The integration surface: a typed client for the local API and a committed OpenAPI document, so a non-TypeScript integrator generates their own |
+| [`apps/process-ui`](apps/process-ui) | The demo process UI, its own container: a BFF holding one API key and owning its own users, and a SPA that renders transitions and forms **from the definition** — a new process needs no UI work |
 
-`docker compose up` runs **two connectors and zero databases**, with the first relayed transaction
-about six seconds in. The scenarios that actually argue for the design — a party going offline
+`docker compose up` runs **four containers and zero databases** — two connectors and two process UIs —
+with the first transaction about twelve seconds in, started by a person in a browser and relayed to the
+other party. Stop either UI and the process carries on: it is a client, not part of the runtime. The scenarios that actually argue for the design — a party going offline
 mid-process and catching up, and a host caught rewriting history — run as ordinary tests in
 milliseconds, with no containers at all.
 
@@ -57,11 +60,11 @@ start, waiting, and a `link` advances it the moment the price is agreed. Deadlin
 over stored state, so an offer expiring after a day is a test that advances a clock rather than one that
 sleeps.
 
-[docs/ROADMAP.md](docs/ROADMAP.md) M5 — the process UI and the typed integration client — is next.
+[docs/ROADMAP.md](docs/ROADMAP.md) M6 — measure and harden — is next.
 
 ```bash
 pnpm install
-pnpm test               # 427 tests, ~2.9 s, no network, no containers, no real clock
+pnpm test               # 469 tests, ~3 s, no network, no containers, no real clock
 pnpm lint:definitions   # check docs/definitions against the schema and the linter
 pnpm build
 

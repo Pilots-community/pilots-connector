@@ -122,6 +122,32 @@ export class LocalController {
     @Inject(ATTACHMENTS) private readonly attachments: AttachmentService,
   ) {}
 
+  // ── who this key acts for ────────────────────────────────────────────────
+
+  /**
+   * Which participant this key belongs to.
+   *
+   * A client needs its own DID to fill a `participants` map — a definition names
+   * a *role*, and only an instance names the participant filling it, so there is
+   * no way to start anything without knowing who you are. Nothing else on this
+   * surface answered that, and a UI guessing from configuration would be a UI
+   * that could be pointed at the wrong connector and not notice.
+   *
+   * No scope beyond a valid key: asking who a credential belongs to is not a
+   * privilege, and refusing it would only push integrators into hardcoding it.
+   */
+  @Get('me')
+  me(@Req() request: LocalRequest) {
+    const { participant } = caller(request)
+    return {
+      participant: {
+        id: participant.id,
+        did: participant.did,
+        displayName: participant.displayName,
+      },
+    }
+  }
+
   // ── definitions and offerings ────────────────────────────────────────────
 
   @Get('definitions')
@@ -222,7 +248,8 @@ export class LocalController {
     const context = caller(request)
     const digest = decodeURIComponent(sha256)
 
-    let found = await this.attachments.read(context.participant, context.participant.did, digest)
+    // Ours, or a co-hosted participant's on this same connector.
+    let found = await this.attachments.readLocally(context.participant, digest)
     if (!found) {
       const host = await this.hostHolding(context.participant.id, digest)
       if (host !== undefined) {
