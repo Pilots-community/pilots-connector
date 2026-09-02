@@ -10,6 +10,14 @@
 # other side notices nothing. That is the whole point of the split, and it is
 # worth doing once in front of an audience.
 #
+# Before the first run:
+#
+#     pnpm demo:env      # writes a gitignored .env with fresh credentials
+#
+# Every secret in this file is a variable *name*. The values live in `.env`,
+# which compose reads automatically and git ignores, so nothing here can be
+# committed by accident. Remotely the same variables come from a secret manager.
+#
 # For the headless profile, run only the two connectors:
 #
 #     docker compose up acme vanmoer
@@ -51,16 +59,15 @@ services:
       # domain-binding check to "an operator configured this". See
       # docs/ARCHITECTURE.md §8.
       PILOTS_DEV_DID_DIRECTORY: 'true'
-      # Mint an integration key on first boot and leave it where this
-      # participant's UI can read it. **Generated, never committed** — no secret
-      # has a value anywhere in this file. In a real deployment an operator mints
-      # one in the admin UI and injects it.
-      PILOTS_INTEGRATION_KEY_FILE: /shared/acme.key
-      # No secret has a value here. The signing key, the API-key pepper and the
-      # admin token are generated on first boot into the volume below.
+      # The key this participant's UI will present. **A name, never a value** —
+      # it comes from `.env`, which `pnpm demo:env` generates and .gitignore
+      # excludes. Remotely the same variable comes from a secret manager, and the
+      # connector refuses this setting under NODE_ENV=production anyway.
+      PILOTS_SEED_API_KEY: ${ACME_API_KEY:?run `pnpm demo:env` first}
+      # The signing key, the API-key pepper and the admin token are generated on
+      # first boot into the volume below. None of them appears here either.
     volumes:
       - acme-data:/data
-      - acme-shared:/shared
     # The claim, enforced rather than asserted: if a connector stops fitting in a
     # 1 GB container, `docker compose up` fails instead of the number quietly
     # going stale in a document.
@@ -98,10 +105,9 @@ services:
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
       PILOTS_DEV_DID_DIRECTORY: 'true'
-      PILOTS_INTEGRATION_KEY_FILE: /shared/vanmoer.key
+      PILOTS_SEED_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
     volumes:
       - vanmoer-data:/data
-      - vanmoer-shared:/shared
     mem_limit: 1g
     healthcheck:
       test:
@@ -133,16 +139,19 @@ services:
         condition: service_healthy
     environment:
       PILOTS_CONNECTOR_URL: http://acme:3000
-      PILOTS_API_KEY_FILE: /shared/acme.key
+      # The same value the connector registered. One key, one participant.
+      PILOTS_API_KEY: ${ACME_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_UI_AUTH_SECRET: ${ACME_UI_AUTH_SECRET:?run `pnpm demo:env` first}
       PILOTS_UI_NAME: Acme Shipping
       PILOTS_UI_BASE_URL: http://localhost:4000
       NODE_ENV: development
-      # A demo account, so `up` reaches a usable screen. Refused under
-      # NODE_ENV=production, like every other convenience in this file.
-      PILOTS_UI_SEED_EMAIL: alice@acme.example
-      PILOTS_UI_SEED_PASSWORD: demo-password-acme
-    volumes:
-      - acme-shared:/shared:ro
+      # A demo account, so `up` reaches a usable screen. Deliberately readable:
+      # it is a login somebody has to type, and hiding it in `.env` would only
+      # mean going to look it up. It grants access to nothing but this
+      # throwaway UI, and `loadConfig` refuses the whole seeding mechanism under
+      # NODE_ENV=production. Override from `.env` if you would rather.
+      PILOTS_UI_SEED_EMAIL: ${ACME_UI_EMAIL:-alice@acme.example}
+      PILOTS_UI_SEED_PASSWORD: ${ACME_UI_PASSWORD:-demo-password-acme}
     mem_limit: 512m
     healthcheck:
       test:
@@ -167,14 +176,13 @@ services:
         condition: service_healthy
     environment:
       PILOTS_CONNECTOR_URL: http://vanmoer:3000
-      PILOTS_API_KEY_FILE: /shared/vanmoer.key
+      PILOTS_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_UI_AUTH_SECRET: ${VANMOER_UI_AUTH_SECRET:?run `pnpm demo:env` first}
       PILOTS_UI_NAME: Van Moer
       PILOTS_UI_BASE_URL: http://localhost:4001
       NODE_ENV: development
-      PILOTS_UI_SEED_EMAIL: bram@vanmoer.example
-      PILOTS_UI_SEED_PASSWORD: demo-password-vanmoer
-    volumes:
-      - vanmoer-shared:/shared:ro
+      PILOTS_UI_SEED_EMAIL: ${VANMOER_UI_EMAIL:-bram@vanmoer.example}
+      PILOTS_UI_SEED_PASSWORD: ${VANMOER_UI_PASSWORD:-demo-password-vanmoer}
     mem_limit: 512m
     healthcheck:
       test:
@@ -191,7 +199,3 @@ services:
 volumes:
   acme-data:
   vanmoer-data:
-  # Carries a *generated* API key from a connector to its own UI. Not a secret
-  # store: one file, written 0600 on first boot, read once.
-  acme-shared:
-  vanmoer-shared:

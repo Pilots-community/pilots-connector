@@ -74,6 +74,47 @@ export class ApiKeyService {
    * audit logs, and the caller gets a flat 401. Distinguishing "unknown key"
    * from "wrong secret" is free enumeration.
    */
+  /**
+   * Register a key whose value was decided outside the connector.
+   *
+   * **Development only.** The demo hands the same value to a connector and to
+   * its co-deployed UI from one `.env` file, so `docker compose up` reaches a
+   * working screen without a human minting anything. `loadConfig` refuses it
+   * under production config, where an operator mints a key in the admin UI and
+   * the value is injected from a secret manager.
+   *
+   * Idempotent: seeding the same key twice leaves the existing record alone, so
+   * a restart neither duplicates nor rotates it.
+   */
+  async seed(
+    presented: string,
+    request: Omit<MintRequest, 'createdBy'>,
+  ): Promise<ApiKeyDocument | undefined> {
+    const separator = presented.indexOf('.')
+    if (separator <= 0) return undefined
+    const id = presented.slice(0, separator)
+    const secret = presented.slice(separator + 1)
+    if (secret === '' || !/^ak_[0-9A-HJKMNP-TV-Z]{26}$/i.test(id)) return undefined
+
+    const existing = await this.store.findApiKeyById(id)
+    if (existing) return existing
+
+    const record: ApiKeyDocument = {
+      id,
+      participantId: request.participantId,
+      label: request.label,
+      secretHash: this.hash(secret),
+      scopes: request.scopes,
+      createdBy: 'seed',
+      createdAt: this.now(),
+      lastUsedAt: null,
+      revokedAt: null,
+      expiresAt: request.expiresAt ?? null,
+    }
+    await this.store.apiKeys.upsert(record)
+    return record
+  }
+
   async verify(presented: string | undefined): Promise<VerifyResult> {
     if (presented === undefined) return { ok: false, reason: 'malformed', keyId: null }
 

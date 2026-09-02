@@ -201,9 +201,15 @@ role selects come from the definition and "Us" is resolved by the BFF. And the s
 `acme-ui` stopped, Van Moer issued the VGM, Acme's *connector* replicated it, and the UI came back
 showing `VGM_ISSUED` having held no state at all.
 
-`docker compose up` now gives the full demo: **four containers, zero databases**, all healthy in
-~11.3 s, first transaction through the UI at ~11.6 s against a 60 s target, ~45 MiB per UI and
-~52 MiB per connector.
+`pnpm demo:env && docker compose up` now gives the full demo: **four containers, zero databases**, all
+healthy in ~11.3 s, first transaction through the UI at ~11.6 s against a 60 s target, ~45 MiB per UI
+and ~52 MiB per connector.
+
+`demo:env` generates a **gitignored** `.env` that compose reads automatically, so the compose file
+carries variable names and never values — a connector and its UI simply agree on one key. Remotely the
+same variables come from a secret manager, and `PILOTS_SEED_API_KEY` is refused under
+`NODE_ENV=production` regardless, because a key whose value was decided outside the connector is a
+demo convenience rather than a deployment pattern.
 
 **Carried to M6:** the same run with Van Moer's UI idle and a mock backoffice driving over a
 notification subscription. The behaviour is proven — an automated participant runs S1 in the scenario

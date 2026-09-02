@@ -299,55 +299,50 @@ export async function createRuntime(
   })
 
   /*
-   * A generated integration key, written where a co-deployed UI can read it.
+   * An API key whose value came from configuration.
    *
-   * Development only — `loadConfig` refuses it under production config. Note
-   * what it is not: a committed credential. The secret is minted here on first
-   * boot, written 0600, and never appears in a repository, an image or a compose
-   * file. Subsequent boots leave the existing file alone, so the UI's key
-   * survives a restart.
+   * Development only — `loadConfig` refuses it under production config. The demo
+   * gives a connector and its UI the same value from one gitignored `.env`, so
+   * nothing is committed and `docker compose up` reaches a working screen. It is
+   * audited like any other key: a credential that appears with no record of
+   * where it came from is exactly what the audit log exists to prevent, and
+   * "configuration did it at boot" is an answer rather than an exemption.
    */
-  if (config.integrationKeyFile !== null) {
-    const { writeFile, mkdir, access } = await import('node:fs/promises')
-    const { dirname } = await import('node:path')
-    const held = await access(config.integrationKeyFile).then(
-      () => true,
-      () => false,
-    )
-    if (!held) {
-      const participant = config.participants[0]
-      if (participant) {
-        const minted = await apiKeys.mint({
-          participantId: participant.id,
-          label: 'co-deployed process UI',
-          scopes: [
-            'instances:read',
-            'instances:write',
-            'events:read',
-            'definitions:read',
-            'connections:read',
-            'attachments:read',
-            'attachments:write',
-          ],
-          createdBy: 'boot',
-        })
-        await mkdir(dirname(config.integrationKeyFile), { recursive: true })
-        await writeFile(config.integrationKeyFile, minted.secret, { mode: 0o600 })
+  if (config.seedApiKey !== null) {
+    const participant = config.participants[0]
+    if (participant) {
+      const before = await store.apiKeys.find(participant.id)
+      const seeded = await apiKeys.seed(config.seedApiKey, {
+        participantId: participant.id,
+        label: 'co-deployed process UI',
+        scopes: [
+          'instances:read',
+          'instances:write',
+          'events:read',
+          'definitions:read',
+          'connections:read',
+          'attachments:read',
+          'attachments:write',
+        ],
+      })
 
-        // Audited like any other key. A credential that appears with no record
-        // of where it came from is exactly what the audit log exists to prevent,
-        // and "the runtime did it at boot" is an answer, not an exemption.
+      if (!seeded) {
+        log.warn(
+          {},
+          'PILOTS_SEED_API_KEY is not a well-formed key (expected `ak_<26 chars>.<secret>`); ignoring it',
+        )
+      } else if (!before.some((key) => key.id === seeded.id)) {
         await log.record({
           level: 'warn',
-          message: 'minted an integration key at boot and wrote it to disk',
+          message: 'registered an API key from configuration',
           audit: {
             participantId: participant.id,
             category: 'admin',
             action: 'apiKey.create',
-            actor: { kind: 'runtime', id: 'boot', actorRef: null },
+            actor: { kind: 'runtime', id: 'seed', actorRef: null },
             outcome: 'ok',
-            subject: { apiKey: minted.record.id },
-            detail: `PILOTS_INTEGRATION_KEY_FILE=${config.integrationKeyFile}; development only`,
+            subject: { apiKey: seeded.id },
+            detail: 'from PILOTS_SEED_API_KEY; development only',
           },
         })
       }

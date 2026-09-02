@@ -11,8 +11,6 @@
  * Nothing here has a secret default. The key is minted in the admin UI and
  * injected; a default would be a credential in a committed file.
  */
-import { readFileSync } from 'node:fs'
-
 import { z } from 'zod'
 
 export const ProcessUiConfig = z.strictObject({
@@ -43,30 +41,6 @@ export class ConfigError extends Error {
   }
 }
 
-/**
- * The key, from the environment or from a file a co-deployed connector wrote.
- *
- * The file form exists for `docker compose up`: the connector mints a key on
- * first boot and writes it to a shared volume, so nothing has to carry a
- * credential through a committed file. In any real deployment an operator mints
- * one in the admin UI and injects the value.
- */
-function readApiKey(env: NodeJS.ProcessEnv): string {
-  const direct = env['PILOTS_API_KEY']
-  if (direct !== undefined && direct.trim() !== '') return direct.trim()
-
-  const file = env['PILOTS_API_KEY_FILE']
-  if (file === undefined || file.trim() === '') return ''
-  try {
-    return readFileSync(file.trim(), 'utf8').trim()
-  } catch (cause) {
-    throw new ConfigError(
-      `PILOTS_API_KEY_FILE points at ${file}, which could not be read: ${(cause as Error).message}. ` +
-        'The connector writes it on first boot; if they share a volume, it may simply not be up yet.',
-    )
-  }
-}
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfig {
   const seedEmail = env['PILOTS_UI_SEED_EMAIL']
   const seedPassword = env['PILOTS_UI_SEED_PASSWORD']
@@ -77,7 +51,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfi
     environment: env['NODE_ENV'] ?? 'development',
     logLevel: env['PILOTS_UI_LOG_LEVEL'] ?? 'info',
     connectorUrl: env['PILOTS_CONNECTOR_URL'] ?? 'http://localhost:3000',
-    apiKey: readApiKey(env),
+    apiKey: (env['PILOTS_API_KEY'] ?? '').trim(),
     displayName: env['PILOTS_UI_NAME'] ?? 'Process UI',
     authSecret: env['PILOTS_UI_AUTH_SECRET'] ?? null,
     seedUser:
@@ -96,9 +70,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfi
 
   if (parsed.data.apiKey === '') {
     throw new ConfigError(
-      'PILOTS_API_KEY (or PILOTS_API_KEY_FILE) is required: mint one in the connector’s admin UI, ' +
-        'scoped to this participant. It has no default, because a default would be a credential in a ' +
-        'committed file.',
+      'PILOTS_API_KEY is required: mint one in the connector’s admin UI, scoped to this ' +
+        'participant. It has no default, because a default would be a credential in a committed ' +
+        'file. For the demo, `pnpm demo:env` writes a gitignored .env that compose reads.',
     )
   }
 

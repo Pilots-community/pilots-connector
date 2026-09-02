@@ -90,16 +90,16 @@ export const ConnectorConfig = z.strictObject({
   /** How often the delivery scan loops run. `0` disables them; tests drive the pumps by hand. */
   deliveryIntervalMs: z.int().min(0),
   /**
-   * Mint an integration key on first boot and write it here, for a co-deployed
-   * UI to read.
+   * An API key whose value was decided outside the connector, registered at boot.
    *
-   * **Development only**, and refused under production config. It exists so
-   * `docker compose up` reaches a usable process UI without a human visiting the
-   * admin UI first — and it writes a *generated* secret to a mounted path rather
-   * than reading a committed one, which is the distinction that matters. In any
-   * real deployment an operator mints a key in the admin UI and injects it.
+   * **Development only**, and refused under production config. The demo hands
+   * the same value to a connector and to its UI from one `.env` file — which is
+   * gitignored, so no credential is ever committed — and `docker compose up`
+   * reaches a working screen without a human minting anything first. In a real
+   * deployment an operator mints a key in the admin UI and the value arrives
+   * from a secret manager.
    */
-  integrationKeyFile: z.union([z.string().min(1), z.null()]),
+  seedApiKey: z.union([z.string().min(1), z.null()]),
   /**
    * The largest attachment this connector will accept.
    *
@@ -195,7 +195,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     devDidDirectory: bool(env['PILOTS_DEV_DID_DIRECTORY'], false),
     deliveryIntervalMs: Number(env['PILOTS_DELIVERY_INTERVAL_MS'] ?? 1000),
     maxAttachmentBytes: Number(env['PILOTS_MAX_ATTACHMENT_BYTES'] ?? 8 * 1024 * 1024),
-    integrationKeyFile: env['PILOTS_INTEGRATION_KEY_FILE'] ?? null,
+    seedApiKey: env['PILOTS_SEED_API_KEY'] ?? null,
   }
 
   const parsed = ConnectorConfig.safeParse(candidate)
@@ -232,11 +232,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
   // deployment that resolves peer identity from its own configuration has given
   // up the property `did:web` was chosen for, and that must not be reachable by
   // forgetting to unset a variable.
-  if (config.integrationKeyFile !== null && config.environment === 'production') {
+  if (config.seedApiKey !== null && config.environment === 'production') {
     throw new ConfigError(
-      'PILOTS_INTEGRATION_KEY_FILE mints an API key at boot and writes it to disk for another ' +
-        'container to read. It is a demo convenience and cannot be used with NODE_ENV=production; ' +
-        'mint a key in the admin UI and inject it instead.',
+      'PILOTS_SEED_API_KEY registers an API key whose value was decided elsewhere. It is a demo ' +
+        'convenience and cannot be used with NODE_ENV=production; mint a key in the admin UI and ' +
+        'inject the value instead.',
     )
   }
 

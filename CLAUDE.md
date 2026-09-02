@@ -187,6 +187,7 @@ pnpm schema:export      # regenerate packages/protocol/schema/*.json from the zo
 pnpm --filter @pilots/connector start        # needs `pnpm build` first
 pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying to :3000
 node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first transaction
+pnpm demo:env                                # writes a gitignored .env with fresh credentials
 docker compose up                            # 4 containers (2 connectors + 2 UIs), 0 databases
 docker compose up acme vanmoer               # the headless profile: connectors only
 pnpm --filter @pilots/process-ui dev         # BFF on :4000

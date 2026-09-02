@@ -43,13 +43,9 @@ ENV PILOTS_HOST=0.0.0.0 \
     PILOTS_STORE_DIR=/data \
     PILOTS_DEFINITIONS_DIR=/app/definitions
 
-# One mounted volume is the whole of the small-party deployment. `/shared` is
-# optional and empty unless PILOTS_INTEGRATION_KEY_FILE points into it — it
-# exists so a co-deployed UI can be handed a *generated* key without one being
-# committed anywhere. Both are owned by `node`, because the process does not run
-# as root.
+# One mounted volume is the whole of the small-party deployment.
 VOLUME ["/data"]
-RUN mkdir -p /data /shared && chown -R node:node /data /shared /app
+RUN mkdir -p /data && chown -R node:node /data /app
 USER node
 EXPOSE 3000
 

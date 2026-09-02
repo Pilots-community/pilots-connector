@@ -49,7 +49,7 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 | [`packages/client`](packages/client) | The integration surface: a typed client for the local API and a committed OpenAPI document, so a non-TypeScript integrator generates their own |
 | [`apps/process-ui`](apps/process-ui) | The demo process UI, its own container: a BFF holding one API key and owning its own users, and a SPA that renders transitions and forms **from the definition** — a new process needs no UI work |
 
-`docker compose up` runs **four containers and zero databases** — two connectors and two process UIs —
+`pnpm demo:env && docker compose up` runs **four containers and zero databases** — two connectors and two process UIs —
 with the first transaction about twelve seconds in, started by a person in a browser and relayed to the
 other party. Stop either UI and the process carries on: it is a client, not part of the runtime. The scenarios that actually argue for the design — a party going offline
 mid-process and catching up, and a host caught rewriting history — run as ordinary tests in
