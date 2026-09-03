@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       PILOTS_PARTICIPANT_ID: org-a
       PILOTS_PARTICIPANT_DID: did:web:org-a.example
@@ -67,7 +67,7 @@ services:
       # through the configured base URL instead — which reduces the
       # domain-binding check to "an operator configured this". See
       # docs/ARCHITECTURE.md §8.
-      PILOTS_DEV_DID_DIRECTORY: "true"
+      PILOTS_DEV_DID_DIRECTORY: 'true'
       # The key this participant's UI will present. **A name, never a value** —
       # it comes from `.env`, which `pnpm demo:env` generates and .gitignore
       # excludes. Remotely the same variable comes from a secret manager, and the
@@ -89,9 +89,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -103,7 +103,7 @@ services:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
-      - "3001:3000"
+      - '3001:3000'
     environment:
       PILOTS_PARTICIPANT_ID: org-b
       PILOTS_PARTICIPANT_DID: did:web:org-b.example
@@ -118,7 +118,7 @@ services:
           "displayName":"Org A",
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
-      PILOTS_DEV_DID_DIRECTORY: "true"
+      PILOTS_DEV_DID_DIRECTORY: 'true'
       PILOTS_SEED_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
       PILOTS_SEED_ADMIN_TOKEN: ${ORG_B_ADMIN_TOKEN:?run `pnpm demo:env` first}
     volumes:
@@ -127,9 +127,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -148,7 +148,7 @@ services:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
-      - "4000:4000"
+      - '4000:4000'
     depends_on:
       org-a:
         condition: service_healthy
@@ -160,6 +160,10 @@ services:
       # The same label as its connector's, so the two screens in a side-by-side
       # demo are never ambiguous about which organisation they belong to.
       PILOTS_UI_NAME: ${ORG_A_NAME:-Org A}
+      # Cookies ignore the port, so both UIs on localhost would otherwise share
+      # one session cookie and sign each other out. Two process UIs on one host
+      # must differ here.
+      PILOTS_UI_COOKIE_PREFIX: org-a
       PILOTS_UI_BASE_URL: http://localhost:4000
       NODE_ENV: development
       # A demo account, so `up` reaches a usable screen. Deliberately readable:
@@ -173,9 +177,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -187,7 +191,7 @@ services:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
-      - "4001:4000"
+      - '4001:4000'
     depends_on:
       org-b:
         condition: service_healthy
@@ -196,6 +200,7 @@ services:
       PILOTS_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
       PILOTS_UI_AUTH_SECRET: ${ORG_B_UI_AUTH_SECRET:?run `pnpm demo:env` first}
       PILOTS_UI_NAME: ${ORG_B_NAME:-Org B}
+      PILOTS_UI_COOKIE_PREFIX: org-b
       PILOTS_UI_BASE_URL: http://localhost:4001
       NODE_ENV: development
       PILOTS_UI_SEED_EMAIL: ${ORG_B_UI_EMAIL:-bob@org-b.example}
@@ -204,9 +209,9 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s

@@ -11,17 +11,38 @@
  * would.
  */
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { expect, test, type Page } from '@playwright/test'
 
 const ADMIN_UI = process.env['PILOTS_E2E_ORG_A_ADMIN'] ?? 'http://localhost:3000/admin/'
+const REPO = resolve(dirname(__filename), '..', '..')
 
-/** The token, from the log line that showed it once. */
+/**
+ * The admin token, the way an operator would get it.
+ *
+ * `.env` first, because `PILOTS_SEED_ADMIN_TOKEN` makes that the source of
+ * truth for the demo. The log is the fallback, for a connector that generated
+ * its own token instead.
+ *
+ * Reading the log *first* was boot-history-dependent and therefore flaky: a
+ * seeded token is logged only on the boot that adopts it, so a fresh
+ * `down -v && up` printed one and an ordinary restart did not.
+ */
 function adminToken(service = 'org-a'): string {
+  const variable = `ORG_${service === 'org-a' ? 'A' : 'B'}_ADMIN_TOKEN`
+  try {
+    const env = readFileSync(resolve(REPO, '.env'), 'utf8')
+    const match = new RegExp(`^${variable}="?([^"\\n]+)"?$`, 'm').exec(env)
+    if (match?.[1]) return match[1]
+  } catch {
+    // No .env — fall through to the log.
+  }
+
   const logs = execFileSync('docker', ['compose', 'logs', service], {
     // Playwright compiles these to CJS, so `__dirname` is what is available.
-    cwd: resolve(dirname(__filename), '..', '..'),
+    cwd: REPO,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
   })
@@ -31,7 +52,7 @@ function adminToken(service = 'org-a'): string {
     const parsed = JSON.parse(json) as { adminToken?: string }
     if (parsed.adminToken) return parsed.adminToken
   }
-  throw new Error(`no admin token in ${service}'s log`)
+  throw new Error(`no ${variable} in .env and no admin token in ${service}'s log`)
 }
 
 async function signIn(page: Page): Promise<void> {

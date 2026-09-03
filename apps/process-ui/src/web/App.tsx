@@ -475,16 +475,29 @@ export function App() {
   const [tab, setTab] = useState<'processes' | 'start'>('processes')
 
   const refresh = useCallback(() => {
-    void api.session().then((session) => {
-      setUser(session.user)
-      setParticipant(session.participant)
-      setDid(session.did)
-      // The browser tab too: two tabs called "Pilots" is exactly the ambiguity
-      // this is meant to remove.
-      document.title = `${session.participant} — Pilots`
-      setReady(true)
-      if (session.user) void api.instances().then(({ instances: list }) => setInstances(list))
-    })
+    void api
+      .session()
+      .then((session) => {
+        setUser(session.user)
+        setParticipant(session.participant)
+        setDid(session.did)
+        // The browser tab too: two tabs called "Pilots" is exactly the ambiguity
+        // this is meant to remove.
+        document.title = `${session.participant} — Pilots`
+        setReady(true)
+        if (session.user) void api.instances().then(({ instances: list }) => setInstances(list))
+      })
+      .catch(() => {
+        /*
+         * The BFF is unreachable, or answered something unreadable.
+         *
+         * Without this the promise rejects, `ready` stays false and the app
+         * renders `null` — a blank page that never resolves and says nothing.
+         * A sign-in screen is both honest and actionable.
+         */
+        setUser(null)
+        setReady(true)
+      })
   }, [])
 
   useEffect(refresh, [refresh])

@@ -206,7 +206,9 @@ is the whole process.
 - Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
+- **Do not commit it.** This repository's `CLAUDE.md` reserves git writes for the
+  human supervisor and `.claude/settings.json` blocks them. Write the file, then
+  tell the supervisor it is there to review and commit.
 
 **Spec Self-Review:**
 After writing the spec document, look at it with fresh eyes:

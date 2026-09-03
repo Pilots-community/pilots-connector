@@ -255,3 +255,59 @@ describe('configuration refuses what it should', () => {
     ).toThrow(/cannot be used with NODE_ENV=production/)
   })
 })
+
+/**
+ * Session cookies are scoped to this UI, not to the host.
+ *
+ * A regression test with a scar. Both process UIs used better-auth's default
+ * cookie name, and **cookies ignore the port** — so `localhost:4000` and
+ * `localhost:4001` addressed the same cookie. Signing into one silently signed
+ * the other out, which looked exactly like "refreshing logs me out" to anyone
+ * driving both orgs side by side.
+ *
+ * The e2e suite could not have caught it: it opens the second UI with
+ * `browser.newPage()`, which is a fresh browser context with its own cookie
+ * jar, so the two never collided there.
+ */
+describe('session cookies are scoped to this UI', () => {
+  const base = {
+    PILOTS_CONNECTOR_URL: 'http://localhost:3000',
+    PILOTS_API_KEY: API_KEY,
+    NODE_ENV: 'test' as const,
+  }
+
+  it('defaults the prefix, and takes it from configuration', () => {
+    expect(loadConfig(base).cookiePrefix).toBe('pilots')
+    expect(loadConfig({ ...base, PILOTS_UI_COOKIE_PREFIX: 'org-a' }).cookiePrefix).toBe('org-a')
+  })
+
+  it('refuses a prefix that would not be a legal cookie name', () => {
+    expect(() => loadConfig({ ...base, PILOTS_UI_COOKIE_PREFIX: 'Org A' })).toThrow(ConfigError)
+  })
+
+  it('names the cookie after the prefix, so two UIs on one host do not collide', async () => {
+    const settings = loadConfig({
+      ...base,
+      PILOTS_UI_COOKIE_PREFIX: 'org-a',
+      PILOTS_UI_SEED_EMAIL: 'alice@org-a.example',
+      PILOTS_UI_SEED_PASSWORD: 'correct-horse-battery',
+    })
+    const isolated = createAuth(settings, 'http://localhost')
+    await isolated.seed()
+
+    const response = await isolated.handler(
+      new Request('http://localhost/api/auth/sign-in/email', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'alice@org-a.example',
+          password: 'correct-horse-battery',
+        }),
+      }),
+    )
+
+    const setCookie = response.headers.get('set-cookie') ?? ''
+    expect(setCookie).toContain('org-a.session_token')
+    expect(setCookie).not.toContain('better-auth.session_token')
+  })
+})

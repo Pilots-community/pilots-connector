@@ -27,6 +27,19 @@ export const ProcessUiConfig = z.strictObject({
   /** Signs this UI's own sessions. Generated on first boot if absent. */
   authSecret: z.union([z.string().min(32), z.null()]),
   /**
+   * Namespaces this UI's session cookie.
+   *
+   * **Cookies ignore the port.** Two process UIs on `localhost:4000` and
+   * `localhost:4001` address the same cookie jar, so if both use better-auth's
+   * default name, whichever signs in second silently signs the other out — and
+   * it presents as "refreshing logs me out". Two UIs on one host **must** differ
+   * here. The default is deliberately not unique: one UI needs no ceremony.
+   *
+   * Constrained to what is legal and unambiguous in a cookie name, because a
+   * space or a semicolon here would produce a cookie header nobody can parse.
+   */
+  cookiePrefix: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
+  /**
    * A demo account created at boot, so `docker compose up` reaches a usable UI
    * without a sign-up flow. Absent in any deployment that matters.
    */
@@ -54,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfi
     apiKey: (env['PILOTS_API_KEY'] ?? '').trim(),
     displayName: env['PILOTS_UI_NAME'] ?? 'Process UI',
     authSecret: env['PILOTS_UI_AUTH_SECRET'] ?? null,
+    cookiePrefix: env['PILOTS_UI_COOKIE_PREFIX'] ?? 'pilots',
     seedUser:
       seedEmail === undefined || seedPassword === undefined
         ? null

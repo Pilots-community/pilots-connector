@@ -61,6 +61,15 @@ export function createAuth(config: ProcessUiConfig, baseURL: string): AuthServic
       // The BFF and the SPA are the same origin, so a cookie is the right
       // carrier and does not need to be readable by script.
       useSecureCookies: config.environment === 'production',
+      /*
+       * Namespaced, because **cookies ignore the port**.
+       *
+       * Two process UIs on one host — which is exactly what the demo runs —
+       * would otherwise both write `better-auth.session_token` for `localhost`
+       * and sign each other out. The symptom is "refreshing logs me out",
+       * because the refresh is merely when you find out.
+       */
+      cookiePrefix: config.cookiePrefix,
     },
   })
 

@@ -49,7 +49,7 @@ independently testable deliverable.
 - "Run it to make sure it fails" - step
 - "Implement the minimal code to make the test pass" - step
 - "Run the tests and make sure they pass" - step
-- "Commit" - step
+- "Verify" - step (see **Committing** below: in this repo the supervisor commits, not you)
 
 ## Plan Document Header
 
@@ -120,13 +120,28 @@ def function(input):
 Run: `pytest tests/path/test.py::test_name -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify**
 
 ```bash
-git add tests/path/test.py src/path/file.py
-git commit -m "feat: add specific feature"
+pytest tests/path/test.py -v && <the project's lint/typecheck gate>
 ```
+
+Then stop and tell the supervisor the task is ready to review and commit.
 ````
+
+## Committing
+
+**This repository's `CLAUDE.md` reserves every git write operation for the human
+supervisor, and `.claude/settings.json` blocks them.** A plan that ends its tasks
+with `git add` / `git commit` therefore emits commands that cannot run.
+
+So the last step of every task is **Verify**, not **Commit**: run the tests and
+the project's gate, then stop and report the task as ready to review and commit.
+Task boundaries stay exactly where they were — a task is still the smallest unit
+worth a fresh reviewer's gate — only the final action changes.
+
+Do not write `git add`, `git commit`, `git push`, or any other git write into a
+plan for this repository.
 
 ## No Placeholders
 
