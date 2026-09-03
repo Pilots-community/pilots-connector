@@ -22,8 +22,8 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import type { Store } from '../store.js'
 import { DuplicateKeyError, NotFoundError, type EventWrite } from '../types.js'
 
-const ACME = 'acme'
-const VANMOER = 'vanmoer'
+const ORG_A = 'org-a'
+const ORG_B = 'org-b'
 const INSTANCE = '01J0000000000000000000000A'
 const AT = '2026-08-24T09:00:00.000Z'
 
@@ -34,10 +34,10 @@ function instanceAt(
 ): StoredInstance {
   return {
     id: INSTANCE,
-    participantId: ACME,
+    participantId: ORG_A,
     kind: 'service',
     definition: 'container-weighing@1.0.0',
-    participants: { shipper: 'did:web:acme-shipping.example', weigher: 'did:web:vanmoer.example' },
+    participants: { shipper: 'did:web:org-a.example', weigher: 'did:web:org-b.example' },
     quotationId: null,
     offering: null,
     state,
@@ -61,7 +61,7 @@ function eventAt(
       instance: INSTANCE,
       seq,
       transition: seq === 1 ? 'create' : 'announceTruck',
-      actor: 'did:web:acme-shipping.example',
+      actor: 'did:web:org-a.example',
       from,
       to,
       at: AT,
@@ -74,8 +74,8 @@ function eventAt(
     payload: payload as never,
     redacted: false,
     sig: 'eyJhbGciOiJFZERTQSJ9..signature',
-    participantId: ACME,
-    actorRef: 'alice@acme.example',
+    participantId: ORG_A,
+    actorRef: 'alice@org-a.example',
     recordedAt: AT,
   }
 }
@@ -112,7 +112,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
     // ─────────────────────────────────────────────────────────────────────────
     describe('collections', () => {
-      const key = (id: string, participantId = ACME) => ({
+      const key = (id: string, participantId = ORG_A) => ({
         id,
         participantId,
         label: 'backoffice',
@@ -127,12 +127,12 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('round-trips a document', async () => {
         await store.apiKeys.insert(key('ak_00000000000000000000000001'))
-        const found = await store.apiKeys.get(ACME, 'ak_00000000000000000000000001')
+        const found = await store.apiKeys.get(ORG_A, 'ak_00000000000000000000000001')
         expect(found?.label).toBe('backoffice')
       })
 
       it('returns undefined for a document that is not there', async () => {
-        expect(await store.apiKeys.get(ACME, 'ak_00000000000000000000000009')).toBeUndefined()
+        expect(await store.apiKeys.get(ORG_A, 'ak_00000000000000000000000009')).toBeUndefined()
       })
 
       it('refuses a duplicate id for the same participant', async () => {
@@ -143,26 +143,26 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       })
 
       it('scopes every read by participant', async () => {
-        await store.apiKeys.insert(key('ak_00000000000000000000000001', ACME))
-        await store.apiKeys.insert(key('ak_00000000000000000000000002', VANMOER))
+        await store.apiKeys.insert(key('ak_00000000000000000000000001', ORG_A))
+        await store.apiKeys.insert(key('ak_00000000000000000000000002', ORG_B))
 
-        expect(await store.apiKeys.get(VANMOER, 'ak_00000000000000000000000001')).toBeUndefined()
-        expect(await store.apiKeys.find(ACME)).toHaveLength(1)
-        expect(await store.apiKeys.find(VANMOER)).toHaveLength(1)
-        expect(await store.apiKeys.count(ACME)).toBe(1)
+        expect(await store.apiKeys.get(ORG_B, 'ak_00000000000000000000000001')).toBeUndefined()
+        expect(await store.apiKeys.find(ORG_A)).toHaveLength(1)
+        expect(await store.apiKeys.find(ORG_B)).toHaveLength(1)
+        expect(await store.apiKeys.count(ORG_A)).toBe(1)
       })
 
       it('lets the same id exist for two participants', async () => {
-        await store.apiKeys.insert(key('ak_00000000000000000000000001', ACME))
+        await store.apiKeys.insert(key('ak_00000000000000000000000001', ORG_A))
         await expect(
-          store.apiKeys.insert(key('ak_00000000000000000000000001', VANMOER)),
+          store.apiKeys.insert(key('ak_00000000000000000000000001', ORG_B)),
         ).resolves.toBeUndefined()
       })
 
       it('replaces an existing document and refuses to replace a missing one', async () => {
         await store.apiKeys.insert(key('ak_00000000000000000000000001'))
         await store.apiKeys.replace({ ...key('ak_00000000000000000000000001'), label: 'renamed' })
-        expect((await store.apiKeys.get(ACME, 'ak_00000000000000000000000001'))?.label).toBe(
+        expect((await store.apiKeys.get(ORG_A, 'ak_00000000000000000000000001'))?.label).toBe(
           'renamed',
         )
 
@@ -174,13 +174,13 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       it('upserts either way', async () => {
         await store.apiKeys.upsert(key('ak_00000000000000000000000001'))
         await store.apiKeys.upsert({ ...key('ak_00000000000000000000000001'), label: 'again' })
-        expect(await store.apiKeys.count(ACME)).toBe(1)
+        expect(await store.apiKeys.count(ORG_A)).toBe(1)
       })
 
       it('deletes, and reports whether there was anything to delete', async () => {
         await store.apiKeys.insert(key('ak_00000000000000000000000001'))
-        expect(await store.apiKeys.delete(ACME, 'ak_00000000000000000000000001')).toBe(true)
-        expect(await store.apiKeys.delete(ACME, 'ak_00000000000000000000000001')).toBe(false)
+        expect(await store.apiKeys.delete(ORG_A, 'ak_00000000000000000000000001')).toBe(true)
+        expect(await store.apiKeys.delete(ORG_A, 'ak_00000000000000000000000001')).toBe(false)
       })
 
       it('filters, sorts and limits', async () => {
@@ -188,11 +188,11 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
         await store.apiKeys.insert({ ...key('ak_00000000000000000000000002'), label: 'other' })
         await store.apiKeys.insert({ ...key('ak_00000000000000000000000003'), revokedAt: AT })
 
-        expect(await store.apiKeys.find(ACME, { where: { label: 'other' } })).toHaveLength(1)
-        expect(await store.apiKeys.find(ACME, { where: { revokedAt: null } })).toHaveLength(2)
-        expect(await store.apiKeys.find(ACME, { limit: 2 })).toHaveLength(2)
+        expect(await store.apiKeys.find(ORG_A, { where: { label: 'other' } })).toHaveLength(1)
+        expect(await store.apiKeys.find(ORG_A, { where: { revokedAt: null } })).toHaveLength(2)
+        expect(await store.apiKeys.find(ORG_A, { limit: 2 })).toHaveLength(2)
 
-        const descending = await store.apiKeys.find(ACME, {
+        const descending = await store.apiKeys.find(ORG_A, {
           sort: { field: 'id', direction: 'desc' },
         })
         expect(descending.map((k) => k.id)).toEqual([
@@ -204,17 +204,17 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('hands back copies, so a caller cannot mutate the store by accident', async () => {
         await store.apiKeys.insert(key('ak_00000000000000000000000001'))
-        const first = await store.apiKeys.get(ACME, 'ak_00000000000000000000000001')
+        const first = await store.apiKeys.get(ORG_A, 'ak_00000000000000000000000001')
         first!.label = 'mutated in place'
-        expect((await store.apiKeys.get(ACME, 'ak_00000000000000000000000001'))?.label).toBe(
+        expect((await store.apiKeys.get(ORG_A, 'ak_00000000000000000000000001'))?.label).toBe(
           'backoffice',
         )
       })
 
       it('finds an API key by id alone, because an inbound request has nothing else', async () => {
-        await store.apiKeys.insert(key('ak_00000000000000000000000002', VANMOER))
+        await store.apiKeys.insert(key('ak_00000000000000000000000002', ORG_B))
         const found = await store.findApiKeyById('ak_00000000000000000000000002')
-        expect(found?.participantId).toBe(VANMOER)
+        expect(found?.participantId).toBe(ORG_B)
         expect(await store.findApiKeyById('ak_00000000000000000000000009')).toBeUndefined()
       })
     })
@@ -223,45 +223,45 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
     describe('appendEvent — one atomic operation', () => {
       it('writes the event and the instance together', async () => {
         const result = await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(1, 'ORDERED', null),
           instanceAfter: instanceAt(1, 'ORDERED'),
         })
         expect(result.ok).toBe(true)
 
-        expect((await store.instances.get(ACME, INSTANCE))?.seq).toBe(1)
-        expect(await store.events.read(ACME, INSTANCE)).toHaveLength(1)
+        expect((await store.instances.get(ORG_A, INSTANCE))?.seq).toBe(1)
+        expect(await store.events.read(ORG_A, INSTANCE)).toHaveLength(1)
       })
 
       it('advances an existing instance', async () => {
         await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(1, 'ORDERED', null),
           instanceAfter: instanceAt(1, 'ORDERED'),
         })
         const result = await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 1,
           event: eventAt(2, 'TRUCK_ANNOUNCED', 'ORDERED', { truckPlate: '1-ABC-123' }),
           instanceAfter: instanceAt(2, 'TRUCK_ANNOUNCED'),
         })
         expect(result.ok).toBe(true)
-        expect((await store.instances.get(ACME, INSTANCE))?.state).toBe('TRUCK_ANNOUNCED')
-        expect(await store.events.read(ACME, INSTANCE)).toHaveLength(2)
+        expect((await store.instances.get(ORG_A, INSTANCE))?.state).toBe('TRUCK_ANNOUNCED')
+        expect(await store.events.read(ORG_A, INSTANCE)).toHaveLength(2)
       })
 
       it('reports a conflict with the actual seq when expectedSeq is stale', async () => {
         await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(1, 'ORDERED', null),
           instanceAfter: instanceAt(1, 'ORDERED'),
         })
 
         const stale = await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(2, 'TRUCK_ANNOUNCED', 'ORDERED'),
           instanceAfter: instanceAt(2, 'TRUCK_ANNOUNCED'),
@@ -273,22 +273,22 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('leaves NO partial write behind after a conflict', async () => {
         await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(1, 'ORDERED', null),
           instanceAfter: instanceAt(1, 'ORDERED'),
         })
 
         await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(2, 'PAID', 'ORDERED'),
           instanceAfter: instanceAt(2, 'PAID'),
         })
 
         // Never an appended event with an unadvanced instance, nor the reverse.
-        const instance = await store.instances.get(ACME, INSTANCE)
-        const events = await store.events.read(ACME, INSTANCE)
+        const instance = await store.instances.get(ORG_A, INSTANCE)
+        const events = await store.events.read(ORG_A, INSTANCE)
         expect(instance?.seq).toBe(1)
         expect(instance?.state).toBe('ORDERED')
         expect(events).toHaveLength(1)
@@ -297,7 +297,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('gives exactly one winner when two writers race the same seq', async () => {
         await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(1, 'ORDERED', null),
           instanceAfter: instanceAt(1, 'ORDERED'),
@@ -305,13 +305,13 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
         const results = await Promise.all([
           append(store, {
-            participantId: ACME,
+            participantId: ORG_A,
             expectedSeq: 1,
             event: eventAt(2, 'TRUCK_ANNOUNCED', 'ORDERED', { truckPlate: 'A' }),
             instanceAfter: instanceAt(2, 'TRUCK_ANNOUNCED'),
           }),
           append(store, {
-            participantId: ACME,
+            participantId: ORG_A,
             expectedSeq: 1,
             event: eventAt(2, 'CANCELLED', 'ORDERED', { cancellationReason: 'B' }),
             instanceAfter: instanceAt(2, 'CANCELLED'),
@@ -321,15 +321,15 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
         expect(results.filter((r) => r.ok)).toHaveLength(1)
         expect(results.filter((r) => !r.ok)).toHaveLength(1)
 
-        const events = await store.events.read(ACME, INSTANCE)
+        const events = await store.events.read(ORG_A, INSTANCE)
         expect(events).toHaveLength(2)
         expect(events.map((e) => e.header.seq)).toEqual([1, 2])
-        expect((await store.instances.get(ACME, INSTANCE))?.seq).toBe(2)
+        expect((await store.instances.get(ORG_A, INSTANCE))?.seq).toBe(2)
       })
 
       it('refuses an event whose seq does not follow the instance', async () => {
         const result = await append(store, {
-          participantId: ACME,
+          participantId: ORG_A,
           expectedSeq: 0,
           event: eventAt(2, 'ORDERED', null),
           instanceAfter: instanceAt(2, 'ORDERED'),
@@ -347,40 +347,40 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
         instanceAfter: {
           ...instanceAt(seq, state),
           participantId,
-          home: participantId === VANMOER,
+          home: participantId === ORG_B,
         },
       })
 
       it('writes one instance to every participant that takes part in it', async () => {
         const result = await store.appendEvent([
-          writeFor(ACME, 1, 'ORDERED'),
-          writeFor(VANMOER, 1, 'ORDERED'),
+          writeFor(ORG_A, 1, 'ORDERED'),
+          writeFor(ORG_B, 1, 'ORDERED'),
         ])
         expect(result.ok).toBe(true)
 
         // Each participant holds its own copy, and only the host is `home`.
-        expect((await store.instances.get(ACME, INSTANCE))?.home).toBe(false)
-        expect((await store.instances.get(VANMOER, INSTANCE))?.home).toBe(true)
-        expect(await store.events.read(ACME, INSTANCE)).toHaveLength(1)
-        expect(await store.events.read(VANMOER, INSTANCE)).toHaveLength(1)
+        expect((await store.instances.get(ORG_A, INSTANCE))?.home).toBe(false)
+        expect((await store.instances.get(ORG_B, INSTANCE))?.home).toBe(true)
+        expect(await store.events.read(ORG_A, INSTANCE)).toHaveLength(1)
+        expect(await store.events.read(ORG_B, INSTANCE)).toHaveLength(1)
       })
 
       it('applies nothing at all when any one write conflicts', async () => {
-        await store.appendEvent([writeFor(ACME, 1, 'ORDERED'), writeFor(VANMOER, 1, 'ORDERED')])
+        await store.appendEvent([writeFor(ORG_A, 1, 'ORDERED'), writeFor(ORG_B, 1, 'ORDERED')])
 
-        // Van Moer's copy is at 1; Acme's is too. Ask for a batch where only
+        // Org B's copy is at 1; Org A's is too. Ask for a batch where only
         // one side is stale.
         const mixed = await store.appendEvent([
-          { ...writeFor(ACME, 2, 'TRUCK_ANNOUNCED'), expectedSeq: 1 },
-          { ...writeFor(VANMOER, 2, 'TRUCK_ANNOUNCED'), expectedSeq: 0 },
+          { ...writeFor(ORG_A, 2, 'TRUCK_ANNOUNCED'), expectedSeq: 1 },
+          { ...writeFor(ORG_B, 2, 'TRUCK_ANNOUNCED'), expectedSeq: 0 },
         ])
 
         expect(mixed.ok).toBe(false)
-        if (!mixed.ok) expect(mixed.conflict.participantId).toBe(VANMOER)
+        if (!mixed.ok) expect(mixed.conflict.participantId).toBe(ORG_B)
 
-        // Acme must NOT have advanced, even though its own write was valid.
-        expect((await store.instances.get(ACME, INSTANCE))?.seq).toBe(1)
-        expect(await store.events.read(ACME, INSTANCE)).toHaveLength(1)
+        // Org A must NOT have advanced, even though its own write was valid.
+        expect((await store.instances.get(ORG_A, INSTANCE))?.seq).toBe(1)
+        expect(await store.events.read(ORG_A, INSTANCE)).toHaveLength(1)
       })
 
       it('accepts an empty batch as a no-op rather than a failure', async () => {
@@ -393,7 +393,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       beforeEach(async () => {
         for (const seq of [1, 2, 3]) {
           await append(store, {
-            participantId: ACME,
+            participantId: ORG_A,
             expectedSeq: seq - 1,
             event: eventAt(seq, `STATE_${seq}`, seq === 1 ? null : `STATE_${seq - 1}`, { n: seq }),
             instanceAfter: instanceAt(seq, `STATE_${seq}`),
@@ -402,84 +402,84 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       })
 
       it('reads in seq order', async () => {
-        const events = await store.events.read(ACME, INSTANCE)
+        const events = await store.events.read(ORG_A, INSTANCE)
         expect(events.map((e) => e.header.seq)).toEqual([1, 2, 3])
       })
 
       it('reads strictly after a cursor, which is what ?since= means', async () => {
-        expect((await store.events.read(ACME, INSTANCE, 1)).map((e) => e.header.seq)).toEqual([
+        expect((await store.events.read(ORG_A, INSTANCE, 1)).map((e) => e.header.seq)).toEqual([
           2, 3,
         ])
-        expect(await store.events.read(ACME, INSTANCE, 3)).toEqual([])
+        expect(await store.events.read(ORG_A, INSTANCE, 3)).toEqual([])
       })
 
       it('limits', async () => {
-        expect(await store.events.read(ACME, INSTANCE, 0, 2)).toHaveLength(2)
+        expect(await store.events.read(ORG_A, INSTANCE, 0, 2)).toHaveLength(2)
       })
 
       it('reports the head', async () => {
-        expect((await store.events.head(ACME, INSTANCE))?.header.seq).toBe(3)
-        expect(await store.events.head(ACME, '01J0000000000000000000000B')).toBeUndefined()
+        expect((await store.events.head(ORG_A, INSTANCE))?.header.seq).toBe(3)
+        expect(await store.events.head(ORG_A, '01J0000000000000000000000B')).toBeUndefined()
       })
 
       it('streams every event for a participant behind a monotonic cursor', async () => {
-        const all = await store.events.readAll(ACME)
+        const all = await store.events.readAll(ORG_A)
         expect(all).toHaveLength(3)
         expect(all.map((e) => e.cursor)).toEqual([...all.map((e) => e.cursor)].sort())
 
-        const after = await store.events.readAll(ACME, all[0]!.cursor)
+        const after = await store.events.readAll(ORG_A, all[0]!.cursor)
         expect(after.map((e) => e.event.header.seq)).toEqual([2, 3])
       })
 
       it('never leaks another participant’s events', async () => {
-        expect(await store.events.read(VANMOER, INSTANCE)).toEqual([])
-        expect(await store.events.readAll(VANMOER)).toEqual([])
+        expect(await store.events.read(ORG_B, INSTANCE)).toEqual([])
+        expect(await store.events.readAll(ORG_B)).toEqual([])
       })
     })
 
     // ─────────────────────────────────────────────────────────────────────────
     describe('claimIdempotencyKey — exactly one winner', () => {
       it('lets the first caller through and replays the result to the second', async () => {
-        expect(await store.idempotency.claim(ACME, 'k1', 'transition', AT)).toBeNull()
-        await store.idempotency.complete(ACME, 'k1', { seq: 4 }, AT)
+        expect(await store.idempotency.claim(ORG_A, 'k1', 'transition', AT)).toBeNull()
+        await store.idempotency.complete(ORG_A, 'k1', { seq: 4 }, AT)
 
-        const replay = await store.idempotency.claim(ACME, 'k1', 'transition', AT)
+        const replay = await store.idempotency.claim(ORG_A, 'k1', 'transition', AT)
         expect(replay?.status).toBe('complete')
         expect(replay?.result).toEqual({ seq: 4 })
       })
 
       it('gives exactly one winner under a genuine race', async () => {
         const claims = await Promise.all([
-          store.idempotency.claim(ACME, 'race', 'transition', AT),
-          store.idempotency.claim(ACME, 'race', 'transition', AT),
-          store.idempotency.claim(ACME, 'race', 'transition', AT),
+          store.idempotency.claim(ORG_A, 'race', 'transition', AT),
+          store.idempotency.claim(ORG_A, 'race', 'transition', AT),
+          store.idempotency.claim(ORG_A, 'race', 'transition', AT),
         ])
         expect(claims.filter((c) => c === null)).toHaveLength(1)
         expect(claims.filter((c) => c !== null)).toHaveLength(2)
       })
 
       it('reports a still-running original as pending rather than complete', async () => {
-        await store.idempotency.claim(ACME, 'k2', 'transition', AT)
-        const second = await store.idempotency.claim(ACME, 'k2', 'transition', AT)
+        await store.idempotency.claim(ORG_A, 'k2', 'transition', AT)
+        const second = await store.idempotency.claim(ORG_A, 'k2', 'transition', AT)
         expect(second?.status).toBe('pending')
       })
 
       it('releases a claim whose work failed, so a retry is not blocked forever', async () => {
-        await store.idempotency.claim(ACME, 'k3', 'transition', AT)
-        await store.idempotency.release(ACME, 'k3')
-        expect(await store.idempotency.claim(ACME, 'k3', 'transition', AT)).toBeNull()
+        await store.idempotency.claim(ORG_A, 'k3', 'transition', AT)
+        await store.idempotency.release(ORG_A, 'k3')
+        expect(await store.idempotency.claim(ORG_A, 'k3', 'transition', AT)).toBeNull()
       })
 
       it('scopes keys by participant and by operation', async () => {
-        await store.idempotency.claim(ACME, 'shared', 'transition', AT)
-        expect(await store.idempotency.claim(VANMOER, 'shared', 'transition', AT)).toBeNull()
-        expect(await store.idempotency.claim(ACME, 'shared', 'instance.create', AT)).toBeNull()
+        await store.idempotency.claim(ORG_A, 'shared', 'transition', AT)
+        expect(await store.idempotency.claim(ORG_B, 'shared', 'transition', AT)).toBeNull()
+        expect(await store.idempotency.claim(ORG_A, 'shared', 'instance.create', AT)).toBeNull()
       })
     })
 
     // ─────────────────────────────────────────────────────────────────────────
     describe('the audit log', () => {
-      const entry = (action: string, participantId = ACME) => ({
+      const entry = (action: string, participantId = ORG_A) => ({
         at: AT,
         participantId,
         category: 'local' as const,
@@ -510,8 +510,8 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       })
 
       it('keeps each participant’s chain separate', async () => {
-        await store.audit.append(entry('a', ACME))
-        const other = await store.audit.append(entry('b', VANMOER))
+        await store.audit.append(entry('a', ORG_A))
+        const other = await store.audit.append(entry('b', ORG_B))
         expect(other.seq).toBe(1)
         expect(other.prev).toBeNull()
       })
@@ -530,10 +530,10 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
         await store.audit.append(entry('b'))
         await store.audit.append(entry('c'))
 
-        expect((await store.audit.read(ACME)).map((e) => e.action)).toEqual(['a', 'b', 'c'])
-        expect((await store.audit.read(ACME, 1)).map((e) => e.action)).toEqual(['b', 'c'])
-        expect((await store.audit.head(ACME))?.action).toBe('c')
-        expect(await store.audit.count(ACME)).toBe(3)
+        expect((await store.audit.read(ORG_A)).map((e) => e.action)).toEqual(['a', 'b', 'c'])
+        expect((await store.audit.read(ORG_A, 1)).map((e) => e.action)).toEqual(['b', 'c'])
+        expect((await store.audit.head(ORG_A))?.action).toBe('c')
+        expect(await store.audit.count(ORG_A)).toBe(3)
       })
 
       it('records denials, which is the whole reason it exists', async () => {
@@ -542,7 +542,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
           outcome: 'denied',
           problem: 'urn:pilots:problem:role-not-permitted',
         })
-        expect((await store.audit.read(ACME))[0]?.outcome).toBe('denied')
+        expect((await store.audit.read(ORG_A))[0]?.outcome).toBe('denied')
       })
     })
 
@@ -550,7 +550,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
     describe('audit retention — keeping less without proving less', () => {
       const entry = (action: string) => ({
         at: AT,
-        participantId: ACME,
+        participantId: ORG_A,
         category: 'admin' as const,
         action,
         actor: { kind: 'adminSession' as const, id: 'op', actorRef: null },
@@ -571,9 +571,9 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       it('discards a prefix without renumbering what remains', async () => {
         for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
 
-        expect(await store.audit.prune(ACME, 2)).toBe(2)
+        expect(await store.audit.prune(ORG_A, 2)).toBe(2)
 
-        const kept = await store.audit.read(ACME)
+        const kept = await store.audit.read(ORG_A)
         // Still 3, 4, 5 — not 1, 2, 3. Renumbering would make retention
         // indistinguishable from rewriting, and the chain worthless.
         expect(kept.map((one) => one.seq)).toEqual([3, 4, 5])
@@ -582,9 +582,9 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('leaves the retained segment verifiable from where it now starts', async () => {
         for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
-        await store.audit.prune(ACME, 2)
+        await store.audit.prune(ORG_A, 2)
 
-        const kept = await store.audit.read(ACME)
+        const kept = await store.audit.read(ORG_A)
         // A chain whose earlier links are elsewhere is not a broken chain, and
         // `from` is how a verifier is told so.
         expect(verifyAuditChain(kept, { from: 3 }).ok).toBe(true)
@@ -595,9 +595,9 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('still detects tampering inside what was kept', async () => {
         for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
-        await store.audit.prune(ACME, 2)
+        await store.audit.prune(ORG_A, 2)
 
-        const kept = await store.audit.read(ACME)
+        const kept = await store.audit.read(ORG_A)
         const tampered = kept.map((one, index) =>
           index === 1 ? { ...one, action: 'something-else' } : one,
         )
@@ -608,23 +608,23 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
       it('appends after a prune without a gap in the chain', async () => {
         for (const action of ['a', 'b', 'c']) await store.audit.append(entry(action))
-        await store.audit.prune(ACME, 1)
+        await store.audit.prune(ORG_A, 1)
 
         const appended = await store.audit.append(entry('d'))
         expect(appended.seq).toBe(4)
 
-        const kept = await store.audit.read(ACME)
+        const kept = await store.audit.read(ORG_A)
         expect(verifyAuditChain(kept, { from: 2 }).ok).toBe(true)
       })
 
       it('survives a reopen', async () => {
         if (!context.persistent) return
         for (const action of ['a', 'b', 'c', 'd']) await store.audit.append(entry(action))
-        await store.audit.prune(ACME, 2)
+        await store.audit.prune(ORG_A, 2)
 
         const reopened = await context.reopen(store)
         try {
-          const kept = await reopened.audit.read(ACME)
+          const kept = await reopened.audit.read(ORG_A)
           expect(kept.map((one) => one.seq)).toEqual([3, 4])
           expect(verifyAuditChain(kept, { from: 3 }).ok).toBe(true)
         } finally {
@@ -647,9 +647,9 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       })
 
       it('stores and returns the exact bytes', async () => {
-        await store.attachments.put(ACME, attachment())
+        await store.attachments.put(ORG_A, attachment())
 
-        const found = await store.attachments.get(ACME, DIGEST)
+        const found = await store.attachments.get(ORG_A, DIGEST)
         expect(found?.mime).toBe('application/pdf')
         expect(found?.size).toBe(BYTES.byteLength)
         // Byte-for-byte, not "something that decodes to the same string". An
@@ -659,29 +659,29 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
       })
 
       it('treats a repeat put of the same address as a no-op', async () => {
-        await store.attachments.put(ACME, attachment())
-        await store.attachments.put(ACME, attachment(new TextEncoder().encode('different')))
+        await store.attachments.put(ORG_A, attachment())
+        await store.attachments.put(ORG_A, attachment(new TextEncoder().encode('different')))
 
         // Content-addressed: the address is the content, so the first write wins
         // and a second cannot quietly change what a hash refers to.
-        const found = await store.attachments.get(ACME, DIGEST)
+        const found = await store.attachments.get(ORG_A, DIGEST)
         expect(Array.from(found?.bytes ?? [])).toEqual(Array.from(BYTES))
-        expect(await store.attachments.list(ACME)).toHaveLength(1)
+        expect(await store.attachments.list(ORG_A)).toHaveLength(1)
       })
 
       it('scopes attachments by participant like everything else', async () => {
-        await store.attachments.put(ACME, attachment())
+        await store.attachments.put(ORG_A, attachment())
 
-        expect(await store.attachments.has(ACME, DIGEST)).toBe(true)
-        expect(await store.attachments.has(VANMOER, DIGEST)).toBe(false)
-        expect(await store.attachments.get(VANMOER, DIGEST)).toBeUndefined()
-        expect(await store.attachments.list(VANMOER)).toEqual([])
+        expect(await store.attachments.has(ORG_A, DIGEST)).toBe(true)
+        expect(await store.attachments.has(ORG_B, DIGEST)).toBe(false)
+        expect(await store.attachments.get(ORG_B, DIGEST)).toBeUndefined()
+        expect(await store.attachments.list(ORG_B)).toEqual([])
       })
 
       it('lists metadata without the bytes', async () => {
-        await store.attachments.put(ACME, attachment())
+        await store.attachments.put(ORG_A, attachment())
 
-        const listed = await store.attachments.list(ACME)
+        const listed = await store.attachments.list(ORG_A)
         expect(listed).toHaveLength(1)
         expect(listed[0]?.sha256).toBe(DIGEST)
         expect(listed[0]).not.toHaveProperty('bytes')
@@ -696,12 +696,12 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
           : 'starts empty after reopen, as an in-memory store must',
         async () => {
           await append(store, {
-            participantId: ACME,
+            participantId: ORG_A,
             expectedSeq: 0,
             event: eventAt(1, 'ORDERED', null, { containerNumber: 'MSCU1234567' }),
             instanceAfter: instanceAt(1, 'ORDERED'),
           })
-          await store.attachments.put(ACME, {
+          await store.attachments.put(ORG_A, {
             sha256: `sha256:${'d'.repeat(64)}`,
             mime: 'application/pdf',
             size: 3,
@@ -710,7 +710,7 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
           })
           await store.audit.append({
             at: AT,
-            participantId: ACME,
+            participantId: ORG_A,
             category: 'local',
             action: 'instance.create',
             actor: { kind: 'apiKey', id: 'ak_1', actorRef: null },
@@ -730,8 +730,8 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
           const reopened = await context.reopen(store)
           try {
-            const instance = await reopened.instances.get(ACME, INSTANCE)
-            const events = await reopened.events.read(ACME, INSTANCE)
+            const instance = await reopened.instances.get(ORG_A, INSTANCE)
+            const events = await reopened.events.read(ORG_A, INSTANCE)
 
             if (!context.persistent) {
               expect(instance).toBeUndefined()
@@ -741,17 +741,17 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
 
             // Document bytes survive too. An attachment that vanished on
             // restart would leave a log referencing a document nobody holds.
-            const document = await reopened.attachments.get(ACME, `sha256:${'d'.repeat(64)}`)
+            const document = await reopened.attachments.get(ORG_A, `sha256:${'d'.repeat(64)}`)
             expect(Array.from(document?.bytes ?? [])).toEqual([1, 2, 3])
 
             expect(instance?.state).toBe('ORDERED')
             expect(instance?.seq).toBe(1)
             expect(events).toHaveLength(1)
             expect(events[0]?.payload).toEqual({ containerNumber: 'MSCU1234567' })
-            expect((await reopened.audit.head(ACME))?.action).toBe('instance.create')
+            expect((await reopened.audit.head(ORG_A))?.action).toBe('instance.create')
             // The chain has to survive too, or the audit log's tamper evidence
             // only holds for as long as the process does.
-            expect((await reopened.audit.head(ACME))?.seq).toBe(1)
+            expect((await reopened.audit.head(ORG_A))?.seq).toBe(1)
           } finally {
             await reopened.close()
           }

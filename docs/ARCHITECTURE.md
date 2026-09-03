@@ -148,7 +148,7 @@ Three things follow, and each is a rule the implementation has to honour:
 3. **Offerings are data, not config.** They belong in the store with `participantId`, and in the admin
    API alongside API keys and connections.
 
-The demo deliberately exercises one direction only — Acme consumes, Van Moer supplies — because that is
+The demo deliberately exercises one direction only — Org A consumes, Org B supplies — because that is
 enough to show the protocol. **Symmetry is proven by a scenario test instead**
 ([SCENARIOS.md S5](SCENARIOS.md#s5--a-participant-is-both-supplier-and-consumer)), so it is a tested
 property rather than a claim resting on a demo nobody ran.
@@ -176,13 +176,13 @@ participant's key:
 
 ```
 POST  our-connector/api/local/v1/instances
-      Authorization: ApiKey …          X-Actor-Ref: alice@acme.example
+      Authorization: ApiKey …          X-Actor-Ref: alice@org-a.example
       { "definition": "container-transport@1.0.0",
-        "participants": { "shipper": "did:web:acme…", "transporter": "did:web:vanmoer…" } }
+        "participants": { "shipper": "did:web:org-a…", "transporter": "did:web:org-b…" } }
 
   → definition's hostedBy role is `transporter`
-  → participants.transporter is did:web:vanmoer… — not one of ours
-  → relay to  vanmoer/api/peer/v1/instances,  signed JWS
+  → participants.transporter is did:web:org-b… — not one of ours
+  → relay to  org-b/api/peer/v1/instances,  signed JWS
   → return the peer's 201 as our own
 
   (same endpoint, a different participants map, and `transporter` could just as
@@ -280,8 +280,8 @@ Two properties matter more than they look:
   "participantId": "…",
   "kind": "service",
   "definition": "container-transport@1.0.0",
-  "participants": { "shipper": "did:web:acme-shipping.example",
-                    "transporter": "did:web:vanmoer.example" },
+  "participants": { "shipper": "did:web:org-a.example",
+                    "transporter": "did:web:org-b.example" },
   "quotationId": "018f2b…",
   "state": "ASSIGNED",
   "seq": 3,
@@ -303,7 +303,7 @@ quotation reaches `AGREED`.
 
 ```jsonc
 { "header": { "instance": "018f2c…", "seq": 4, "transition": "quote",
-              "actor": "did:web:vanmoer.example",
+              "actor": "did:web:org-b.example",
               "from": "REQUESTED", "to": "OFFERED",
               "at": "2026-08-24T09:14:02Z",
               "prev": "sha256:9f3c…",
@@ -341,7 +341,7 @@ What makes a participant a supplier (§3.3). A record in its own store, publishe
 admin UI at runtime — not a config file, not a deployment decision.
 
 ```jsonc
-{ "id": "urn:offering:vanmoer:container-weighing",
+{ "id": "urn:offering:org-b:container-weighing",
   "participantId": "…",
   "title": "Container weighing, Antwerp 869",
   "quotationDefinition": "container-weighing-quotation@1.0.0",
@@ -443,7 +443,7 @@ is what keeps "the two profiles differ in deployment only" checkable rather than
 docker compose -f docker-compose.yml -f docker-compose.mongo.yml up
 ```
 
-One changed service. Van Moer is the terminal operator, so Van Moer runs the document store; Acme
+One changed service. Org B is the terminal operator, so Org B runs the document store; Org A
 stays on the file store, which is the one-truck haulier's profile. **Same image, different
 configuration** — that is the deployment claim the overlay exists to make checkable, and it would be
 worth nothing if the two parties ran different builds. Measured, running the two side by side: the
@@ -605,7 +605,7 @@ The demo runs one participant per connector. The code does not assume it:
 - API keys are scoped to a participant.
 - Configuration holds a *list* of participants.
 - `did:web` supports path segments, so a hosted tenant has a real, resolvable DID:
-  `did:web:connectors.example.com:t:acme`.
+  `did:web:connectors.example.com:t:org-a`.
 
 This is a few hours of care now. It is what makes the semi- and fully-lightweight topologies possible
 without a rewrite — which is the only realistic path to onboarding parties too small to run any

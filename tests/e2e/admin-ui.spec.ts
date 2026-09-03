@@ -15,10 +15,10 @@ import { dirname, resolve } from 'node:path'
 
 import { expect, test, type Page } from '@playwright/test'
 
-const ADMIN_UI = process.env['PILOTS_E2E_ACME_ADMIN'] ?? 'http://localhost:3000/admin/'
+const ADMIN_UI = process.env['PILOTS_E2E_ORG_A_ADMIN'] ?? 'http://localhost:3000/admin/'
 
 /** The token, from the log line that showed it once. */
-function adminToken(service = 'acme'): string {
+function adminToken(service = 'org-a'): string {
   const logs = execFileSync('docker', ['compose', 'logs', service], {
     // Playwright compiles these to CJS, so `__dirname` is what is available.
     cwd: resolve(dirname(__filename), '..', '..'),
@@ -42,6 +42,17 @@ async function signIn(page: Page): Promise<void> {
 }
 
 test.describe('the operator surface', () => {
+  test('says whose connector it is, by label and by identity', async ({ page }) => {
+    await signIn(page)
+
+    // A demo has several of these open at once. The label comes from
+    // configuration and the DID does not, so both are shown — renaming an
+    // organisation must not look like a different connector.
+    await expect(page.getByTestId('admin-participant')).toContainText('Org A')
+    await expect(page.locator('header').first()).toContainText('did:web:org-a.example')
+    await expect(page).toHaveTitle(/^Org A — /)
+  })
+
   test('mints an API key and shows the secret exactly once', async ({ page }) => {
     await signIn(page)
     await page.getByRole('button', { name: 'API keys' }).click()
@@ -69,7 +80,7 @@ test.describe('the operator surface', () => {
     await signIn(page)
     await page.getByRole('button', { name: 'Connections' }).click()
 
-    await expect(page.getByText('did:web:vanmoer.example').first()).toBeVisible()
+    await expect(page.getByText('did:web:org-b.example').first()).toBeVisible()
     await expect(page.getByText('ACTIVE').first()).toBeVisible()
   })
 

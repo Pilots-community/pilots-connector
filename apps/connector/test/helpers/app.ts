@@ -9,7 +9,7 @@ import { ProblemFilter } from '../../src/http/problem.filter.js'
 import { acceptRawBodies } from '../../src/http/raw-body.js'
 import { MemorySecretStore } from '../../src/secrets/secret-store.js'
 import { createRuntime, type Runtime } from '../../src/runtime.js'
-import { ACME, DEFINITIONS_DIR, VANMOER } from './core.js'
+import { ORG_A, DEFINITIONS_DIR, ORG_B } from './core.js'
 
 export interface TestApp {
   app: NestFastifyApplication
@@ -38,7 +38,7 @@ export function testConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorC
       PILOTS_DEFINITIONS_DIR: DEFINITIONS_DIR,
       NODE_ENV: 'test',
       PILOTS_LOG_LEVEL: 'silent',
-      PILOTS_PARTICIPANTS: JSON.stringify([ACME, VANMOER]),
+      PILOTS_PARTICIPANTS: JSON.stringify([ORG_A, ORG_B]),
       // One connector, no peers: these tests are about the HTTP surfaces, and a
       // connector with nowhere to relay to is exactly the M2 shape they assert.
       PILOTS_PEER_TRANSPORT: 'none',

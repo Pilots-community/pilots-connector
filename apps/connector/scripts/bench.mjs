@@ -41,15 +41,15 @@ const child = spawn(process.execPath, [join(connectorRoot, 'dist/main.js')], {
     PILOTS_DEFINITIONS_DIR: join(repoRoot, 'docs/definitions'),
     PILOTS_PARTICIPANTS: JSON.stringify([
       {
-        id: 'acme',
-        did: 'did:web:acme-shipping.example',
-        displayName: 'Acme Shipping',
+        id: 'org-a',
+        did: 'did:web:org-a.example',
+        displayName: 'Org A',
         baseUrl: base,
       },
       {
-        id: 'vanmoer',
-        did: 'did:web:vanmoer.example',
-        displayName: 'Van Moer',
+        id: 'org-b',
+        did: 'did:web:org-b.example',
+        displayName: 'Org B',
         baseUrl: base,
       },
     ]),
@@ -133,7 +133,7 @@ try {
       body: JSON.stringify({
         label: 'bench',
         scopes: ['instances:read', 'instances:write'],
-        participantId: 'acme',
+        participantId: 'org-a',
       }),
     })
   ).body.secret
@@ -144,8 +144,8 @@ try {
     body: JSON.stringify({
       definition: 'container-weighing@1.0.0',
       participants: {
-        shipper: 'did:web:acme-shipping.example',
-        weigher: 'did:web:vanmoer.example',
+        shipper: 'did:web:org-a.example',
+        weigher: 'did:web:org-b.example',
       },
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
     }),
@@ -172,8 +172,8 @@ try {
       body: JSON.stringify({
         definition: 'container-weighing@1.0.0',
         participants: {
-          shipper: 'did:web:acme-shipping.example',
-          weigher: 'did:web:vanmoer.example',
+          shipper: 'did:web:org-a.example',
+          weigher: 'did:web:org-b.example',
         },
         data: { containerNumber: 'MSCU1234567', terminal: '869' },
       }),

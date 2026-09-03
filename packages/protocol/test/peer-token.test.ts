@@ -7,7 +7,7 @@ import {
   type PeerTokenRejection,
 } from '../src/crypto/peer-token.js'
 import { staticDidResolver } from '../src/ports/did-resolver.js'
-import { ACME, VANMOER, twoParties } from './helpers/chain.js'
+import { ORG_A, ORG_B, twoParties } from './helpers/chain.js'
 
 const NOW = Date.parse('2026-08-24T09:00:00.000Z')
 
@@ -22,11 +22,11 @@ function replayGuard() {
   }
 }
 
-async function acmeCallingVanMoer(overrides: { jti?: string; ttlSeconds?: number } = {}) {
+async function orgACallingOrgB(overrides: { jti?: string; ttlSeconds?: number } = {}) {
   const parties = await twoParties()
-  const token = await signPeerToken(parties.signer, 'acme', {
-    iss: ACME,
-    aud: VANMOER,
+  const token = await signPeerToken(parties.signer, 'org-a', {
+    iss: ORG_A,
+    aud: ORG_B,
     jti: overrides.jti ?? 'jti-1',
     nowMs: NOW,
     ...(overrides.ttlSeconds === undefined ? {} : { ttlSeconds: overrides.ttlSeconds }),
@@ -41,7 +41,7 @@ async function rejectionOf(
   },
 ): Promise<PeerTokenRejection> {
   const result = await verifyPeerToken(token, {
-    audience: VANMOER,
+    audience: ORG_B,
     nowMs: NOW,
     seenJti: replayGuard(),
     ...options,
@@ -52,11 +52,11 @@ async function rejectionOf(
 
 describe('peer bearer tokens', () => {
   it('verifies a token minted for us by a peer we can resolve', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
 
     const result = await verifyPeerToken(token, {
       resolver: parties.resolver,
-      audience: VANMOER,
+      audience: ORG_B,
       nowMs: NOW,
       seenJti: replayGuard(),
     })
@@ -64,8 +64,8 @@ describe('peer bearer tokens', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.value).toEqual({
-      iss: ACME,
-      aud: VANMOER,
+      iss: ORG_A,
+      aud: ORG_B,
       iat: Math.floor(NOW / 1000),
       exp: Math.floor(NOW / 1000) + PEER_TOKEN_TTL_SECONDS,
       jti: 'jti-1',
@@ -73,11 +73,11 @@ describe('peer bearer tokens', () => {
   })
 
   it('rejects a replayed jti — but only after the signature has proven genuine', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
     const seenJti = replayGuard()
     const options = {
       resolver: parties.resolver,
-      audience: VANMOER,
+      audience: ORG_B,
       nowMs: NOW,
       seenJti,
     }
@@ -90,17 +90,17 @@ describe('peer bearer tokens', () => {
 
     // The forgery must not have burned the jti of a token that had not been
     // presented yet, or a peer could invalidate another's tokens at will.
-    const forged = await signPeerToken(parties.signer, 'vanmoer', {
-      iss: ACME, // lying about who we are, signed with the wrong key
-      aud: VANMOER,
+    const forged = await signPeerToken(parties.signer, 'org-b', {
+      iss: ORG_A, // lying about who we are, signed with the wrong key
+      aud: ORG_B,
       jti: 'not-yet-used',
       nowMs: NOW,
     })
     expect(await rejectionOf(forged, { resolver: parties.resolver })).toBe('issuer-mismatch')
 
-    const honest = await signPeerToken(parties.signer, 'acme', {
-      iss: ACME,
-      aud: VANMOER,
+    const honest = await signPeerToken(parties.signer, 'org-a', {
+      iss: ORG_A,
+      aud: ORG_B,
       jti: 'not-yet-used',
       nowMs: NOW,
     })
@@ -108,14 +108,14 @@ describe('peer bearer tokens', () => {
   })
 
   it('refuses a token addressed to somebody else rather than forwarding it', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
     expect(
       await rejectionOf(token, { resolver: parties.resolver, audience: 'did:web:third.example' }),
     ).toBe('audience-mismatch')
   })
 
   it('refuses an expired token, and one from a peer whose clock is far ahead', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
     const resolver = parties.resolver
 
     expect(await rejectionOf(token, { resolver, nowMs: NOW + 3_600_000 })).toBe('expired')
@@ -126,7 +126,7 @@ describe('peer bearer tokens', () => {
       (
         await verifyPeerToken(token, {
           resolver,
-          audience: VANMOER,
+          audience: ORG_B,
           nowMs: NOW + (PEER_TOKEN_TTL_SECONDS + 30) * 1000,
           seenJti: replayGuard(),
         })
@@ -135,32 +135,32 @@ describe('peer bearer tokens', () => {
   })
 
   it('refuses a long-lived token, which would be a password rather than a credential', async () => {
-    const { parties, token } = await acmeCallingVanMoer({ ttlSeconds: 60 * 60 * 24 * 365 })
+    const { parties, token } = await orgACallingOrgB({ ttlSeconds: 60 * 60 * 24 * 365 })
     expect(await rejectionOf(token, { resolver: parties.resolver })).toBe('lifetime-too-long')
   })
 
   it('refuses a token whose issuer does not resolve, and one signed by an unpublished key', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
 
     expect(await rejectionOf(token, { resolver: staticDidResolver({}) })).toBe(
       'issuer-unresolvable',
     )
 
-    // Acme resolves, but its published document lists Van Moer's key only.
+    // Org A resolves, but its published document lists Org B's key only.
     const swapped = staticDidResolver({
-      [ACME]: { ...parties.documents[VANMOER]!, id: ACME },
+      [ORG_A]: { ...parties.documents[ORG_B]!, id: ORG_A },
     })
     expect(await rejectionOf(token, { resolver: swapped })).toBe('key-unknown')
   })
 
   it('refuses a tampered token and anything that is not a peer token at all', async () => {
-    const { parties, token } = await acmeCallingVanMoer()
+    const { parties, token } = await orgACallingOrgB()
     const [header, payload, signature] = token.split('.') as [string, string, string]
 
     const tampered = Buffer.from(
       JSON.stringify({
         ...(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as object),
-        iss: ACME,
+        iss: ORG_A,
         jti: 'swapped',
       }),
     ).toString('base64url')
@@ -176,7 +176,7 @@ describe('peer bearer tokens', () => {
     const parties = await twoParties()
     // A detached event signature has an empty middle segment and no `typ`.
     const { signDetachedJws } = await import('../src/crypto/jws.js')
-    const detached = await signDetachedJws(parties.signer, 'acme', new Uint8Array([1, 2, 3]))
+    const detached = await signDetachedJws(parties.signer, 'org-a', new Uint8Array([1, 2, 3]))
     expect(await rejectionOf(detached, { resolver: parties.resolver })).toBe('malformed')
   })
 })

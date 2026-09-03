@@ -70,7 +70,15 @@ function Problem({ error }: { error: UiError }) {
 
 // ── sign in ─────────────────────────────────────────────────────────────────
 
-function SignIn({ onDone, participant }: { onDone: () => void; participant: string }) {
+function SignIn({
+  onDone,
+  participant,
+  did,
+}: {
+  onDone: () => void
+  participant: string
+  did: string | null
+}) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [creating, setCreating] = useState(false)
@@ -79,6 +87,11 @@ function SignIn({ onDone, participant }: { onDone: () => void; participant: stri
   return (
     <div className="mx-auto mt-24 w-full max-w-sm">
       <Card title={`Sign in — ${participant}`}>
+        {did ? (
+          <p className="mb-3 text-xs text-slate-500" data-testid="signin-did">
+            This UI belongs to <span className="font-mono">{did}</span>.
+          </p>
+        ) : null}
         <form
           className="flex flex-col gap-3"
           onSubmit={(event) => {
@@ -452,6 +465,10 @@ function Detail({ id, onBack }: { id: string; onBack: () => void }) {
 export function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [participant, setParticipant] = useState('Process UI')
+  // Our own DID, shown rather than merely used. Two of these UIs sit side by
+  // side in a demo, and "which organisation am I looking at" must never be a
+  // question anybody has to answer by checking the port number.
+  const [did, setDid] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const [instances, setInstances] = useState<InstanceView[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -461,6 +478,10 @@ export function App() {
     void api.session().then((session) => {
       setUser(session.user)
       setParticipant(session.participant)
+      setDid(session.did)
+      // The browser tab too: two tabs called "Pilots" is exactly the ambiguity
+      // this is meant to remove.
+      document.title = `${session.participant} — Pilots`
       setReady(true)
       if (session.user) void api.instances().then(({ instances: list }) => setInstances(list))
     })
@@ -469,7 +490,7 @@ export function App() {
   useEffect(refresh, [refresh])
 
   if (!ready) return null
-  if (!user) return <SignIn participant={participant} onDone={refresh} />
+  if (!user) return <SignIn participant={participant} did={did} onDone={refresh} />
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 p-6">
@@ -478,7 +499,15 @@ export function App() {
           <h1 className="text-lg font-semibold" data-testid="participant">
             {participant}
           </h1>
-          <p className="text-xs text-slate-500">signed in as {user.email}</p>
+          <p className="text-xs text-slate-500">
+            {/*
+              The label is configuration; the DID is the identity. Showing both
+              keeps the demo honest about which is which — rename an
+              organisation and its DID does not move.
+            */}
+            <span data-testid="did">{did ?? 'connector not reachable'}</span> · signed in as{' '}
+            {user.email}
+          </p>
         </div>
         <button type="button" className={ghost} onClick={() => void api.signOut().then(refresh)}>
           Sign out

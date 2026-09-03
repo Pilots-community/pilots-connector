@@ -16,7 +16,7 @@ import { defineConfig, devices } from '@playwright/test'
  * containers wired together. Starting the processes some other way would test a
  * topology nobody ships.
  */
-const acmeUi = process.env['PILOTS_E2E_ACME_UI'] ?? 'http://localhost:4000'
+const orgAUi = process.env['PILOTS_E2E_ORG_A_UI'] ?? 'http://localhost:4000'
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -28,7 +28,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   use: {
-    baseURL: acmeUi,
+    baseURL: orgAUi,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

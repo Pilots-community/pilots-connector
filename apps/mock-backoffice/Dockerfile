@@ -1,7 +1,7 @@
 # The mock backoffice: a stand-in for a participant's own systems.
 #
 # It exists so "one side automates, the other clicks" is a deployment difference
-# rather than a slide. Van Moer runs this instead of a UI; the connectors cannot
+# rather than a slide. Org B runs this instead of a UI; the connectors cannot
 # tell the difference, because there is none to tell — same API, same key, same
 # rules. One is a person clicking and one is a machine reacting.
 FROM node:24-alpine AS build

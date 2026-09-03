@@ -57,6 +57,7 @@ Deployment topologies (`[…]` is one container):
 - [docs/TESTING.md](docs/TESTING.md) — the four test tiers and why scenario tests are hermetic
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) — end-to-end walkthroughs (S0–S4)
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones M1–M7 from empty repo to running demo
+- [README.md](README.md#running-the-demo) — how to set the demo up locally and what to show in it
 - [docs/definitions/](docs/definitions/) — five real example process definitions
 - [docs/superpowers/specs/](docs/superpowers/specs/) — design decision records, with the reasoning
 
@@ -195,7 +196,7 @@ pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying to :3
 node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first transaction
 pnpm demo:env                                # writes a gitignored .env with fresh credentials
 docker compose up                            # 4 containers (2 connectors + 2 UIs), 0 databases
-docker compose up acme vanmoer               # the headless profile: connectors only
+docker compose up org-a org-b               # the headless profile: connectors only
 pnpm bench:topologies                        # every topology, started cold and counted (S4c)
 
 # two overlays, each adding one container. Always pass the same -f files to
@@ -286,7 +287,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M2** — connector, single party ✅ **done** | Store (port + memory + file + conformance), all three surfaces, API keys + scopes, audit log, application logger, `If-Match` / `Idempotency-Key` / RFC 7807, `auto` transitions, admin UI | Met: one container, no database; S1 runs on the local API with `curl` + an API key; the audit log shows every call including refusals, with an intact chain; memory and cold start measured |
 | **M3** — two connectors ✅ **done** | Scenario harness + in-process transport **first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, Mongo adapter + conformance | Met: S0, S1, S4a, S4b, S4d, S5 as scenario tests (412 tests, ~2.6 s, no containers); an automated participant runs S1 with no human; Mongo passes the same conformance suite; two containers, 0 databases, S1 end to end, both replicas verify |
 | **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
-| **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `acme-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
+| **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `org-a-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
 | **M6** — measure and harden ✅ **done** | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Met: every topology started cold and counted — 2/4/4/0 containers, **0 databases** in all of them, first transaction 5.6–11.4 s against 60 s; 506 tests, ~4 s. Found three real bugs, including a large party regenerating its signing key on every restart |
 | **M7** — publish and deploy *(current target, event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
@@ -296,6 +297,9 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   criteria. If a change adds a container or dependency, say what it buys.
 - **Prefer boring, standard pieces.** JSON Schema, JCS (RFC 8785), `did:web`, JWS, JSON Merge Patch, SSE,
   RFC 7807. The composition is the contribution.
+- **The demo's two organisations are `org-a` and `org-b`.** Identifiers are neutral and committed; the
+  names on screen are `ORG_A_NAME` / `ORG_B_NAME` in the gitignored `.env`. No real company name goes
+  into code, config, tests or a definition.
 - **Never commit private keys or hardcode credentials** — not even in demo seed scripts or test fixtures.
   Test keys are generated at test setup.
 - **Assume this repo becomes public.** Origin is Bitbucket now, GitHub later, possibly public
@@ -329,7 +333,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   they happened
 - **`action.required` computed, not declared**: it falls out of the state machine (`by` on transitions),
   so notifications, UI buttons and the permission check are one rule with three consumers
-- **Both sides run the demo UI in the first demo**: every step verifiable by hand; Van Moer additionally
+- **Both sides run the demo UI in the first demo**: every step verifiable by hand; Org B additionally
   subscribes a mock backoffice so the automated path shows alongside the manual one
 - **Offerings are runtime data, not config**: publishing one is what makes a participant a supplier, so
   supplier/consumer never becomes a build flag or a deployment mode

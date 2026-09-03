@@ -13,15 +13,15 @@
 import { signPeerToken, verifyAuditChain } from '@pilots/protocol'
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildScenario, SCENARIO_START, type Scenario } from './helpers/network.js'
 
 let scenario: Scenario
 
 beforeEach(async () => {
   scenario = await buildScenario({
-    acme: { participants: [ACME] },
-    vanmoer: { participants: [VANMOER] },
+    'org-a': { participants: [ORG_A] },
+    'org-b': { participants: [ORG_B] },
   })
 })
 
@@ -29,22 +29,22 @@ afterEach(async () => {
   await scenario.close()
 })
 
-/** A token Acme mints for Van Moer, with whatever we want to get wrong about it. */
-async function acmeToken(
+/** A token Org A mints for Org B, with whatever we want to get wrong about it. */
+async function orgAToken(
   overrides: { aud?: string; jti?: string; nowMs?: number; ttlSeconds?: number } = {},
 ): Promise<string> {
-  const acme = scenario.node('acme')
-  return signPeerToken(acme.runtime.identity.asSigner(), ACME.id, {
-    iss: ACME.did,
-    aud: overrides.aud ?? VANMOER.did,
+  const orgA = scenario.node('org-a')
+  return signPeerToken(orgA.runtime.identity.asSigner(), ORG_A.id, {
+    iss: ORG_A.did,
+    aud: overrides.aud ?? ORG_B.did,
     jti: overrides.jti ?? 'jti-1',
     nowMs: overrides.nowMs ?? Date.parse(SCENARIO_START),
     ...(overrides.ttlSeconds === undefined ? {} : { ttlSeconds: overrides.ttlSeconds }),
   })
 }
 
-async function callVanMoer(token: string | undefined, path = '/api/peer/v1/offerings') {
-  return scenario.node('vanmoer').runtime.peers.handle({
+async function callOrgB(token: string | undefined, path = '/api/peer/v1/offerings') {
+  return scenario.node('org-b').runtime.peers.handle({
     method: 'GET',
     path,
     headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
@@ -54,7 +54,7 @@ async function callVanMoer(token: string | undefined, path = '/api/peer/v1/offer
 async function refusals(): Promise<
   { action: string; outcome: string; problem: string | null; detail: string | null }[]
 > {
-  const entries = await scenario.node('vanmoer').runtime.store.audit.read(VANMOER.id)
+  const entries = await scenario.node('org-b').runtime.store.audit.read(ORG_B.id)
   return entries
     .filter((entry) => entry.outcome !== 'ok')
     .map((entry) => ({
@@ -67,7 +67,7 @@ async function refusals(): Promise<
 
 describe('the peer surface refuses, and says so in the audit log', () => {
   it('refuses a call with no bearer token', async () => {
-    const response = await callVanMoer(undefined)
+    const response = await callOrgB(undefined)
     expect(response.status).toBe(401)
 
     const audited = await refusals()
@@ -77,67 +77,67 @@ describe('the peer surface refuses, and says so in the audit log', () => {
   })
 
   it('refuses a token addressed to somebody else rather than forwarding it', async () => {
-    const response = await callVanMoer(await acmeToken({ aud: 'did:web:third-party.example' }))
+    const response = await callOrgB(await orgAToken({ aud: 'did:web:third-party.example' }))
     expect(response.status).toBe(401)
     expect((await refusals())[0]?.detail).toContain('third-party.example')
   })
 
   it('refuses a replayed token, and records the jti so it can be traced', async () => {
-    await scenario.connect('acme', 'vanmoer')
-    const token = await acmeToken({ jti: 'replay-me' })
+    await scenario.connect('org-a', 'org-b')
+    const token = await orgAToken({ jti: 'replay-me' })
 
-    expect((await callVanMoer(token)).status).toBe(200)
-    expect((await callVanMoer(token)).status).toBe(401)
+    expect((await callOrgB(token)).status).toBe(200)
+    expect((await callOrgB(token)).status).toBe(401)
 
-    const entries = await scenario.node('vanmoer').runtime.store.audit.read(VANMOER.id)
+    const entries = await scenario.node('org-b').runtime.store.audit.read(ORG_B.id)
     const replayed = entries.findLast((entry) => entry.action === 'auth.peer')
     expect(replayed?.detail).toContain('replayed')
     expect(replayed?.request?.jti).toBe('replay-me')
     // The peer DID is recorded even though the call was refused: "an unknown
     // caller" and "a known peer replaying" are different operational events.
-    expect(replayed?.actor.id).toBe(ACME.did)
+    expect(replayed?.actor.id).toBe(ORG_A.did)
   })
 
   it('refuses an expired token', async () => {
-    const token = await acmeToken({ nowMs: Date.parse(SCENARIO_START) - 3_600_000 })
-    expect((await callVanMoer(token)).status).toBe(401)
+    const token = await orgAToken({ nowMs: Date.parse(SCENARIO_START) - 3_600_000 })
+    expect((await callOrgB(token)).status).toBe(401)
     expect((await refusals())[0]?.detail).toContain('expired')
   })
 
   it('refuses a long-lived token, which would be a password rather than a credential', async () => {
-    const token = await acmeToken({ ttlSeconds: 60 * 60 * 24 * 365 })
-    expect((await callVanMoer(token)).status).toBe(401)
+    const token = await orgAToken({ ttlSeconds: 60 * 60 * 24 * 365 })
+    expect((await callOrgB(token)).status).toBe(401)
     expect((await refusals())[0]?.detail).toContain('lifetime-too-long')
   })
 
   it('refuses a token signed by a key the issuer never published', async () => {
-    // Van Moer's key, claiming to be Acme.
+    // Org B's key, claiming to be Org A.
     const forged = await signPeerToken(
-      scenario.node('vanmoer').runtime.identity.asSigner(),
-      VANMOER.id,
-      { iss: ACME.did, aud: VANMOER.did, jti: 'forged', nowMs: Date.parse(SCENARIO_START) },
+      scenario.node('org-b').runtime.identity.asSigner(),
+      ORG_B.id,
+      { iss: ORG_A.did, aud: ORG_B.did, jti: 'forged', nowMs: Date.parse(SCENARIO_START) },
     )
-    expect((await callVanMoer(forged)).status).toBe(401)
+    expect((await callOrgB(forged)).status).toBe(401)
     expect((await refusals())[0]?.detail).toContain('issuer-mismatch')
   })
 
   it('refuses process traffic from an authenticated peer with no ACTIVE connection', async () => {
     // The token verifies perfectly. The connection is the second gate, and there
     // is no privileged path around it.
-    const response = await callVanMoer(await acmeToken())
+    const response = await callOrgB(await orgAToken())
     expect(response.status).toBe(403)
     expect((response.body as { type: string }).type).toContain('connection-not-active')
   })
 
   it('lets the handshake through without one, because that is what establishes it', async () => {
-    const response = await scenario.node('vanmoer').runtime.peers.handle({
+    const response = await scenario.node('org-b').runtime.peers.handle({
       method: 'POST',
       path: '/api/peer/v1/connections/requests',
-      headers: { authorization: `Bearer ${await acmeToken()}` },
+      headers: { authorization: `Bearer ${await orgAToken()}` },
       body: {
         connectionId: '01J0000000000000000000000A',
-        fromDid: ACME.did,
-        fromBaseUrl: ACME.baseUrl,
+        fromDid: ORG_A.did,
+        fromBaseUrl: ORG_A.baseUrl,
         delivery: { channel: 'stream' },
       },
     })
@@ -146,48 +146,48 @@ describe('the peer surface refuses, and says so in the audit log', () => {
   })
 
   it('keeps the audit chain unbroken across every refusal', async () => {
-    await callVanMoer(undefined)
-    await callVanMoer(await acmeToken({ aud: 'did:web:third-party.example' }))
-    await callVanMoer(await acmeToken({ ttlSeconds: 60 * 60 * 24 * 365, jti: 'jti-2' }))
-    await callVanMoer(await acmeToken({ jti: 'jti-3' }))
+    await callOrgB(undefined)
+    await callOrgB(await orgAToken({ aud: 'did:web:third-party.example' }))
+    await callOrgB(await orgAToken({ ttlSeconds: 60 * 60 * 24 * 365, jti: 'jti-2' }))
+    await callOrgB(await orgAToken({ jti: 'jti-3' }))
 
-    const entries = await scenario.node('vanmoer').runtime.store.audit.read(VANMOER.id)
+    const entries = await scenario.node('org-b').runtime.store.audit.read(ORG_B.id)
     expect(entries.length).toBeGreaterThanOrEqual(4)
     expect(verifyAuditChain(entries).ok).toBe(true)
 
     // And the event log is silent about all of it, by design.
-    const instances = await scenario.node('vanmoer').runtime.store.instances.find(VANMOER.id)
+    const instances = await scenario.node('org-b').runtime.store.instances.find(ORG_B.id)
     expect(instances).toHaveLength(0)
   })
 })
 
 describe('a peer may not write outside its own identity', () => {
   it('refuses an event signed by someone other than the caller', async () => {
-    await scenario.connect('acme', 'vanmoer')
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    await scenario.connect('org-a', 'org-b')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
 
-    const created = await acme.runtime.instances.create(acme.caller(), {
+    const created = await orgA.runtime.instances.create(orgA.caller(), {
       definition: 'container-weighing@1.0.0',
-      participants: { shipper: ACME.did, weigher: VANMOER.did },
+      participants: { shipper: ORG_A.did, weigher: ORG_B.did },
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
     })
     if (!created.ok) throw new Error('create failed')
     await scenario.settle()
 
-    const events = await vanmoer.runtime.store.events.read(VANMOER.id, created.value.instance.id, 0)
+    const events = await orgB.runtime.store.events.read(ORG_B.id, created.value.instance.id, 0)
     const genuine = events[0]!
 
-    // Van Moer authenticates as itself and submits an event Acme signed. A peer
+    // Org B authenticates as itself and submits an event Org A signed. A peer
     // may act for itself; relaying somebody else's signed event is a different
     // feature with a different threat model.
-    const token = await signPeerToken(vanmoer.runtime.identity.asSigner(), VANMOER.id, {
-      iss: VANMOER.did,
-      aud: ACME.did,
+    const token = await signPeerToken(orgB.runtime.identity.asSigner(), ORG_B.id, {
+      iss: ORG_B.did,
+      aud: ORG_A.did,
       jti: 'not-mine',
       nowMs: scenario.clock.now(),
     })
-    const response = await acme.runtime.peers.handle({
+    const response = await orgA.runtime.peers.handle({
       method: 'POST',
       path: `/api/peer/v1/instances/${created.value.instance.id}/transitions`,
       headers: { authorization: `Bearer ${token}` },
@@ -196,7 +196,7 @@ describe('a peer may not write outside its own identity', () => {
           id: created.value.instance.id,
           kind: 'service',
           definition: 'container-weighing@1.0.0',
-          participants: { shipper: ACME.did, weigher: VANMOER.did },
+          participants: { shipper: ORG_A.did, weigher: ORG_B.did },
           quotationId: null,
           offering: null,
           createdAt: genuine.header.at,

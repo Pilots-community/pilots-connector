@@ -11,8 +11,8 @@ import { ProcessDefinition } from '../src/schemas/definition.js'
 import type { Instance } from '../src/schemas/instance.js'
 import { shipped } from './helpers/definitions.js'
 
-const ACME = 'did:web:acme-shipping.example'
-const VANMOER = 'did:web:vanmoer.example'
+const ORG_A = 'did:web:org-a.example'
+const ORG_B = 'did:web:org-b.example'
 const AT = '2026-08-24T09:14:02.000Z'
 
 const weighing = shipped('container-weighing.json')
@@ -24,7 +24,7 @@ function instanceOf(overrides: Partial<Instance> = {}): Instance {
     id: '01J0000000000000000000000A',
     kind: 'service',
     definition: 'container-weighing@1.0.0',
-    participants: { shipper: ACME, weigher: VANMOER },
+    participants: { shipper: ORG_A, weigher: ORG_B },
     quotationId: null,
     offering: null,
     state: 'ORDERED',
@@ -156,7 +156,7 @@ describe('evaluateTransition — refusals', () => {
         definition: 'container-transport-quotation@1.0.0',
         kind: 'quotation',
         state: 'OFFERED',
-        participants: { shipper: ACME, transporter: VANMOER },
+        participants: { shipper: ORG_A, transporter: ORG_B },
         data: {
           pickup: { location: 'Antwerp' },
           dropoff: { location: 'Ghent' },
@@ -190,7 +190,7 @@ describe('evaluateTransition — refusals', () => {
       definition: 'container-transport-quotation@1.0.0',
       kind: 'quotation',
       state: 'OFFERED',
-      participants: { shipper: ACME, transporter: VANMOER },
+      participants: { shipper: ORG_A, transporter: ORG_B },
       data: {
         pickup: { location: 'Antwerp' },
         dropoff: { location: 'Ghent' },
@@ -250,7 +250,7 @@ describe('evaluateTransition — the runtime actor', () => {
     definition: 'container-transport-quotation@1.0.0',
     kind: 'quotation',
     state: 'OFFERED',
-    participants: { shipper: ACME, transporter: VANMOER },
+    participants: { shipper: ORG_A, transporter: ORG_B },
     data: { pickup: { location: 'A' }, dropoff: { location: 'B' }, containerType: '40HC' },
   })
 
@@ -323,7 +323,7 @@ describe('a transition with no `to` is a pure data update', () => {
         definition: 'notes@1.0.0',
         state: 'OPEN',
         data: {},
-        participants: { author: ACME },
+        participants: { author: ORG_A },
       }),
       { transition: 'annotate', patch: { note: 'hello' }, actor: { roles: ['author'] }, at: AT },
     )
@@ -362,7 +362,7 @@ describe('availableTransitions — one rule, three consumers', () => {
     const offered = instanceOf({
       definition: 'container-transport-quotation@1.0.0',
       state: 'OFFERED',
-      participants: { shipper: ACME, transporter: VANMOER },
+      participants: { shipper: ORG_A, transporter: ORG_B },
       data: {},
     })
     const ids = availableTransitions(transportQuotation, offered, ['shipper', 'transporter']).map(
@@ -396,7 +396,7 @@ describe('autoTransitions — what makes a standing quotation a definition conce
       definition: 'container-transport-quotation@1.0.0',
       kind: 'quotation',
       state: 'REQUESTED',
-      participants: { shipper: ACME, transporter: VANMOER },
+      participants: { shipper: ORG_A, transporter: ORG_B },
       data: {},
     })
     expect(autoTransitions(transportQuotation, requested)).toEqual([])
@@ -406,9 +406,9 @@ describe('autoTransitions — what makes a standing quotation a definition conce
 describe('evaluateCreate', () => {
   const base = {
     id: '01J0000000000000000000000A',
-    participants: { shipper: ACME, weigher: VANMOER },
+    participants: { shipper: ORG_A, weigher: ORG_B },
     data: { containerNumber: 'MSCU1234567', terminal: '869' },
-    actorDid: ACME,
+    actorDid: ORG_A,
     at: AT,
   }
 
@@ -432,14 +432,14 @@ describe('evaluateCreate', () => {
   })
 
   it('refuses a missing role', () => {
-    const result = evaluateCreate(weighing, { ...base, participants: { shipper: ACME } })
+    const result = evaluateCreate(weighing, { ...base, participants: { shipper: ORG_A } })
     expect(problems(result as never)).toEqual([Problem.notAParticipant])
   })
 
   it('refuses a role the definition does not declare', () => {
     const result = evaluateCreate(weighing, {
       ...base,
-      participants: { ...base.participants, stowaway: ACME },
+      participants: { ...base.participants, stowaway: ORG_A },
     })
     expect(problems(result as never)).toEqual([Problem.notAParticipant])
   })

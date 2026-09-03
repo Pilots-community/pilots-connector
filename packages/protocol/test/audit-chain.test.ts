@@ -4,7 +4,7 @@ import { auditEntryHash, chainAuditEntry, verifyAuditChain } from '../src/engine
 import { Problem } from '../src/problems.js'
 import type { AuditEntry } from '../src/schemas/audit.js'
 
-const PARTICIPANT = 'acme'
+const PARTICIPANT = 'org-a'
 
 function draft(overrides: Partial<Parameters<typeof chainAuditEntry>[0]> = {}) {
   return {
@@ -12,7 +12,7 @@ function draft(overrides: Partial<Parameters<typeof chainAuditEntry>[0]> = {}) {
     participantId: PARTICIPANT,
     category: 'local' as const,
     action: 'transition.apply',
-    actor: { kind: 'apiKey' as const, id: 'ak_1', actorRef: 'alice@acme.example' },
+    actor: { kind: 'apiKey' as const, id: 'ak_1', actorRef: 'alice@org-a.example' },
     outcome: 'ok' as const,
     problem: null,
     detail: null,

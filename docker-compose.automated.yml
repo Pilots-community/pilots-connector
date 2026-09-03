@@ -1,10 +1,10 @@
-# The **automated party** — Van Moer driven by its own systems instead of a person.
+# The **automated party** — Org B driven by its own systems instead of a person.
 #
 #     docker compose -f docker-compose.yml -f docker-compose.automated.yml up
 #
-# One extra container and one extra setting. Van Moer's connector pushes
+# One extra container and one extra setting. Org B's connector pushes
 # `action.required` to a backoffice, which answers on the ordinary local API with
-# an ordinary key; Acme's side is still a person clicking. **Neither connector can
+# an ordinary key; Org A's side is still a person clicking. **Neither connector can
 # tell the difference, because there is none to tell** — that is the claim, and it
 # is why this is an overlay rather than a mode.
 #
@@ -14,15 +14,15 @@
 #
 # To see the automated path with nobody watching over its shoulder:
 #
-#     docker compose -f docker-compose.yml -f docker-compose.automated.yml up --scale vanmoer-ui=0
+#     docker compose -f docker-compose.yml -f docker-compose.automated.yml up --scale org-b-ui=0
 services:
-  vanmoer:
+  org-b:
     environment:
       # Operator state, seeded the way connections are: a shortcut so `up`
       # reaches a working demo, never a replacement for the admin surface.
       PILOTS_SUBSCRIPTIONS: >-
         [{"id":"backoffice",
-          "participantId":"vanmoer",
+          "participantId":"org-b",
           "label":"mock backoffice",
           "channel":"webhook",
           "target":{"url":"http://backoffice:5000/hook",
@@ -39,13 +39,13 @@ services:
       context: .
       dockerfile: apps/mock-backoffice/Dockerfile
     depends_on:
-      vanmoer:
+      org-b:
         condition: service_healthy
     environment:
-      PILOTS_CONNECTOR_URL: http://vanmoer:3000
-      # An ordinary integrator with an ordinary key — the same one Van Moer's UI
+      PILOTS_CONNECTOR_URL: http://org-b:3000
+      # An ordinary integrator with an ordinary key — the same one Org B's UI
       # holds, because they are the same participant.
-      PILOTS_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
       PILOTS_BACKOFFICE_SECRET: ${BACKOFFICE_SECRET:?run `pnpm demo:env` first}
       PILOTS_BACKOFFICE_ACTOR: weighbridge-controller
       # Everything this business knows: its own data, keyed by the transition it

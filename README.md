@@ -62,8 +62,8 @@ start, waiting, and a `link` advances it the moment the price is agreed. Deadlin
 over stored state, so an offer expiring after a day is a test that advances a clock rather than one that
 sleeps.
 
-A party with no UI is a container too. Add one overlay file and Van Moer's backoffice applies `weigh`,
-`recordPayment` and `issueVgm` unattended while Acme clicks in a browser, over an ordinary API key —
+A party with no UI is a container too. Add one overlay file and Org B's backoffice applies `weigh`,
+`recordPayment` and `issueVgm` unattended while Org A clicks in a browser, over an ordinary API key —
 neither connector can tell which side had a person on it. A large party runs the same image against a managed document
 store by adding one overlay file; a party that loses that store gets its hosted processes back from the
 replicas of the peers it was hosting for, verifying every signature including its own.
@@ -81,6 +81,260 @@ docker compose up       # the full demo: 4 containers, 0 databases
 pnpm bench:topologies   # every topology, started cold and counted
 node apps/connector/scripts/bench.mjs   # the numbers below, measured
 ```
+
+## Running the demo
+
+Everything below has been run as written. The demo has two organisations, `org-a` and `org-b`. The
+identifiers are neutral and fixed; the **names on screen are two environment variables**, so a demo for
+a particular audience carries their names without a line of code changing — see
+[Who the two organisations are](#who-the-two-organisations-are).
+
+### What you need
+
+| | |
+|---|---|
+| Node | 24 (`>=24 <25` — the repo pins it) |
+| pnpm | 11 (`corepack enable` picks up the pinned version) |
+| Docker | with `docker compose` v2, for the container demo only |
+
+The test suite needs none of that beyond Node: no containers, no network, no database.
+
+```bash
+pnpm install
+pnpm test               # 506 tests, ~4 s
+```
+
+### First run
+
+```bash
+pnpm demo:env
+docker compose up
+```
+
+`demo:env` writes a **gitignored `.env`** with freshly generated credentials. It has to exist before
+compose starts, because the compose file carries variable *names* and never values — nothing secret can
+reach the repository by accident. Re-running it adds anything missing and rotates nothing.
+
+Four containers, zero databases, healthy in about eleven seconds:
+
+| | | |
+|---|---|---|
+| Org A's connector | http://localhost:3000 | admin UI at [`/admin/`](http://localhost:3000/admin/) |
+| Org A's process UI | http://localhost:4000 | sign in as `alice@org-a.example` / `demo-password-org-a` |
+| Org B's connector | http://localhost:3001 | admin UI at [`/admin/`](http://localhost:3001/admin/) |
+| Org B's process UI | http://localhost:4001 | sign in as `bram@org-b.example` / `demo-password-org-b` |
+
+The connectors are already connected to each other: `PILOTS_CONNECTIONS` seeds the handshake at boot so
+that `up` reaches a first transaction inside a minute. That is a shortcut for the demo, not a
+replacement — the handshake works without it, and `s0-connect.test.ts` is what proves it.
+
+**To reach an admin UI** you need the admin token, which the connector prints once on first boot and
+never stores in the clear:
+
+```bash
+docker compose logs org-a | grep -o '"adminToken":"[^"]*"'
+```
+
+If you have already restarted and lost it, `docker compose down -v && docker compose up` starts over
+with a fresh identity.
+
+### A first process, in two browsers
+
+Put the two process UIs side by side — each names its organisation and its DID in the header, so which
+is which is never in doubt.
+
+1. **In Org A's UI** (`:4000`), sign in, open **Start**, and choose `container-weighing@1.0.0`.
+   Pick *Us* for `shipper` and Org B for `weigher`, fill in a container number and a terminal, and
+   start it. Note what you never type: a DID. Roles come from the definition and *Us* is resolved by
+   the UI's backend.
+2. The instance appears at `ORDERED`. **Only `announceTruck` is offered** — the other transitions belong
+   to the weigher, and the connector computed that from the definition rather than the UI guessing.
+   Apply it.
+3. **Switch to Org B's UI** (`:4001`). The same instance is there, marked *your turn*, offering `weigh`
+   and nothing else. Weigh it.
+4. Back in Org A's UI, open the instance and look at `grossMass`. **It is not there.** The definition
+   grants that field to the shipper only from `PAID`, and it was withheld on the way out — Org A's
+   connector never received it. Record the payment from Org B's side and it appears.
+5. Open the **event log** on either side. Every event is signed and chained, and the status beside it is
+   the result of a check the UI's backend ran itself against the published keys — not something the
+   connector asserted about itself.
+
+### The UI is a client, not the runtime
+
+```bash
+docker compose stop org-a-ui
+```
+
+Carry on from Org B's side. Peers keep delivering, subscriptions keep firing, deadlines keep scanning.
+Start it again and it shows the current state, having held none of it. This is the point of the split,
+and it is worth doing once in front of an audience.
+
+### Driving it with no UI at all
+
+The process UI is one client of a documented API. Here is the same start, over `curl`, with the API key
+`demo:env` generated:
+
+```bash
+set -a; . ./.env; set +a
+
+ID=$(curl -s -X POST http://localhost:3000/api/local/v1/instances \
+  -H "authorization: ApiKey $ORG_A_API_KEY" \
+  -H 'x-actor-ref: dispatcher@org-a' \
+  -H 'content-type: application/json' \
+  -d '{"definition":"container-weighing@1.0.0",
+       "participants":{"shipper":"did:web:org-a.example","weigher":"did:web:org-b.example"},
+       "data":{"containerNumber":"MSCU1234567","terminal":"869"}}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["instance"]["id"])')
+```
+
+Advance it. `If-Match` is required, not optional — it is what makes a concurrent write a `409` instead
+of a silent overwrite:
+
+```bash
+curl -s -X POST "http://localhost:3000/api/local/v1/instances/$ID/transitions" \
+  -H "authorization: ApiKey $ORG_A_API_KEY" \
+  -H 'x-actor-ref: dispatcher@org-a' \
+  -H 'if-match: "1"' \
+  -H 'content-type: application/json' \
+  -d '{"transition":"announceTruck","patch":{"truckPlate":"1-ABC-123"}}'
+```
+
+And read it from the **other** organisation's connector, which has its own verified copy:
+
+```bash
+curl -s "http://localhost:3001/api/local/v1/instances/$ID" \
+  -H "authorization: ApiKey $ORG_B_API_KEY" -H 'x-actor-ref: ops@org-b'
+```
+
+Every call went to the caller's *own* connector. Neither client addressed a peer, and neither knew which
+side was hosting.
+
+### A party with no UI at all
+
+Org B can run a back-office system instead of a screen. One overlay adds it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.automated.yml up
+```
+
+Start a weighing from Org A's UI and stop clicking. Org B's backoffice applies `weigh`, `recordPayment`
+and `issueVgm` on its own, over an ordinary API key, and Org B's audit log records
+`weighbridge-controller` as the actor. It holds **no copy of the definition and no state machine** — it
+is told it is its turn and what it may do, and posts the transition id back.
+
+### A large party's document store
+
+The other overlay puts Org B's connector on a managed document store, leaving Org A on the file store —
+**the same image, different configuration**, which is the deployment claim in one command:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml up
+```
+
+This is the one shape that costs a database container, and it costs it for one party.
+
+> **Pass the same `-f` files to `down` as to `up`.** A `down -v` that does not name an overlay leaves
+> that overlay's containers and volumes behind.
+
+### Losing a connector's store, and getting it back
+
+Worth showing, because it is the honest answer to "what happens when the host dies". Run it on the
+managed-store overlay, where the documents live in the database and the **signing key does not** — which
+is the split that makes it possible:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml up -d
+```
+
+Start a weighing and advance it once, then destroy Org B's document store while leaving its key:
+
+```bash
+docker rm -f pilots-service-org-b-1 pilots-service-mongo-1
+```
+
+```bash
+docker volume rm pilots-service_org-b-mongo
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml up -d org-b mongo
+```
+
+It comes back as the **same participant** — no "first boot" line in its log, because `/data` still holds
+its key — with no processes at all. Ask it to fetch one back, using the admin token it printed on its
+real first boot:
+
+```bash
+SID=$(curl -s -X POST http://localhost:3001/api/admin/v1/sessions -H 'content-type: application/json' -d '{"token":"adm_PASTE_YOURS"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["session"]["id"])')
+```
+
+```bash
+curl -s -X POST "http://localhost:3001/api/admin/v1/instances/$ID/recover" -H "authorization: Session $SID" -H 'content-type: application/json' -d '{}'
+```
+
+```json
+{
+  "instanceId": "01M1H5A1…",
+  "from": "did:web:org-a.example",
+  "applied": 2,
+  "seq": 2,
+  "state": "TRUCK_ANNOUNCED",
+  "home": true,
+  "redacted": 0
+}
+```
+
+It pulled the instance back from Org A's replica, verified every signature on the way in — including the
+ones it made itself — and is the home node again, able to write the next event. `POST
+…/instances/$ID/rebuild` then refolds it from that log and answers `"verified": true`.
+
+Two honest limits, both visible in that response. `redacted` counts events whose payload the peer was
+never allowed to see: the host lost those fields with its disk, and what it kept is the ability to prove
+what happened. And on the **file** profile there is nothing to demonstrate this way — `/data` holds the
+store *and* `secrets.json`, so losing one loses the other, and a connector that loses its key comes back
+as a different participant for whom nothing previously signed still verifies. That is correct, and it is
+why the two are kept separable.
+
+### Who the two organisations are
+
+The identifiers are fixed and neutral, so nothing about any particular company is committed:
+
+| | |
+|---|---|
+| participant id | `org-a`, `org-b` |
+| DID | `did:web:org-a.example`, `did:web:org-b.example` — the reserved `.example` TLD, so they resolve nowhere |
+| compose services | `org-a`, `org-a-ui`, `org-b`, `org-b-ui` |
+
+The **names on screen** are separate, and live in `.env`:
+
+```bash
+ORG_A_NAME="Northbound Freight"
+ORG_B_NAME="Dockside Terminal"
+```
+
+`docker compose up -d` and both that organisation's screens — process UI and admin UI, header and
+browser tab — carry the new name, while the DID underneath does not move. That separation is the point:
+a label is configuration, an identity is not.
+
+### Starting over
+
+```bash
+docker compose down -v          # containers and their volumes: fresh identities next time
+pnpm demo:env                   # rotate credentials by deleting .env first
+```
+
+### Running the pieces without Docker
+
+```bash
+pnpm build
+pnpm --filter @pilots/connector start        # :3000, needs `pnpm build` first
+pnpm --filter @pilots/connector dev:ui       # admin UI on :5174, proxying :3000
+pnpm --filter @pilots/process-ui dev         # the BFF on :4000
+pnpm --filter @pilots/process-ui dev:web     # the SPA on :5175, proxying the BFF
+```
+
+One connector with no configuration comes up on the memory store with a generated identity, which is
+enough to explore the admin UI and the local API. `apps/connector/.env.example` lists what it reads.
 
 ## Measured, not claimed
 

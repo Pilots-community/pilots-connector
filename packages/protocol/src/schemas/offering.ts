@@ -24,7 +24,7 @@ export const OfferingStatus = z.enum(['PUBLISHED', 'WITHDRAWN'])
 export type OfferingStatus = z.infer<typeof OfferingStatus>
 
 export const Offering = z.strictObject({
-  /** A URN chosen by the publisher, e.g. `urn:offering:vanmoer:container-weighing`. */
+  /** A URN chosen by the publisher, e.g. `urn:offering:org-b:container-weighing`. */
   id: z.string().min(1).max(255),
   participantId: z.string().min(1),
   title: z.string().min(1),

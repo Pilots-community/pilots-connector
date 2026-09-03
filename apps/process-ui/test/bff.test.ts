@@ -47,7 +47,7 @@ function fakeConnector(): { app: FastifyInstance; seen: Seen[]; url: () => strin
   })
 
   app.get('/api/local/v1/me', async () => ({
-    participant: { id: 'acme', did: 'did:web:acme-shipping.example', displayName: 'Acme' },
+    participant: { id: 'org-a', did: 'did:web:org-a.example', displayName: 'Org A' },
   }))
   app.get('/api/local/v1/instances', async () => ({ instances: [] }))
   app.get('/api/local/v1/connections', async () => ({ connections: [] }))
@@ -84,10 +84,10 @@ function config(connectorUrl: string): ProcessUiConfig {
     PILOTS_UI_PORT: '0',
     PILOTS_CONNECTOR_URL: connectorUrl,
     PILOTS_API_KEY: API_KEY,
-    PILOTS_UI_NAME: 'Acme Shipping',
+    PILOTS_UI_NAME: 'Org A',
     PILOTS_UI_LOG_LEVEL: 'silent',
     NODE_ENV: 'test',
-    PILOTS_UI_SEED_EMAIL: 'alice@acme.example',
+    PILOTS_UI_SEED_EMAIL: 'alice@org-a.example',
     PILOTS_UI_SEED_PASSWORD: 'correct-horse-battery',
   })
 }
@@ -129,7 +129,7 @@ beforeEach(async () => {
   const signedIn = await ui.inject({
     method: 'POST',
     url: '/api/auth/sign-in/email',
-    payload: { email: 'alice@acme.example', password: 'correct-horse-battery' },
+    payload: { email: 'alice@org-a.example', password: 'correct-horse-battery' },
   })
   cookie = signedIn.headers['set-cookie'] as string
   connector.seen.length = 0
@@ -181,7 +181,7 @@ describe('the credential boundary', () => {
     expect(call?.authorization).toBe(`ApiKey ${API_KEY}`)
     // The connector authenticates the key and records the person. It has no
     // idea who alice is, and must not.
-    expect(call?.actorRef).toBe('alice@acme.example')
+    expect(call?.actorRef).toBe('alice@org-a.example')
   })
 
   it('resolves "us" to our own DID, which the browser never has to know', async () => {
@@ -191,7 +191,7 @@ describe('the credential boundary', () => {
       headers: signedIn(),
       payload: {
         definition: 'container-weighing@1.0.0',
-        participants: { shipper: '__self__', weigher: 'did:web:vanmoer.example' },
+        participants: { shipper: '__self__', weigher: 'did:web:org-b.example' },
       },
     })
 
@@ -199,8 +199,8 @@ describe('the credential boundary', () => {
       (one) => one.method === 'POST' && one.path === '/api/local/v1/instances',
     )
     expect((created?.body as { participants: Record<string, string> }).participants).toEqual({
-      shipper: 'did:web:acme-shipping.example',
-      weigher: 'did:web:vanmoer.example',
+      shipper: 'did:web:org-a.example',
+      weigher: 'did:web:org-b.example',
     })
   })
 })
@@ -249,7 +249,7 @@ describe('configuration refuses what it should', () => {
         PILOTS_CONNECTOR_URL: 'http://localhost:3000',
         PILOTS_API_KEY: API_KEY,
         NODE_ENV: 'production',
-        PILOTS_UI_SEED_EMAIL: 'alice@acme.example',
+        PILOTS_UI_SEED_EMAIL: 'alice@org-a.example',
         PILOTS_UI_SEED_PASSWORD: 'correct-horse-battery',
       }),
     ).toThrow(/cannot be used with NODE_ENV=production/)

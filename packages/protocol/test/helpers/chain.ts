@@ -11,8 +11,8 @@ import type { AttachmentRef } from '../../src/schemas/common.js'
 import type { SignedEvent } from '../../src/schemas/event.js'
 import { instanceGenesis, type InstanceGenesis } from '../../src/schemas/instance.js'
 
-export const ACME = 'did:web:acme-shipping.example'
-export const VANMOER = 'did:web:vanmoer.example'
+export const ORG_A = 'did:web:org-a.example'
+export const ORG_B = 'did:web:org-b.example'
 
 export interface TwoParties {
   signer: LocalEd25519Signer
@@ -22,16 +22,16 @@ export interface TwoParties {
 
 /** Two participants with freshly generated keys. No key is ever a fixture. */
 export async function twoParties(): Promise<TwoParties> {
-  const signer = await LocalEd25519Signer.generate({ acme: ACME, vanmoer: VANMOER })
+  const signer = await LocalEd25519Signer.generate({ 'org-a': ORG_A, 'org-b': ORG_B })
   const documents = {
-    [ACME]: await signer.didDocument('acme'),
-    [VANMOER]: await signer.didDocument('vanmoer'),
+    [ORG_A]: await signer.didDocument('org-a'),
+    [ORG_B]: await signer.didDocument('org-b'),
   }
   return { signer, resolver: staticDidResolver(documents), documents }
 }
 
 export interface AppendSpec {
-  participantId: 'acme' | 'vanmoer'
+  participantId: 'org-a' | 'org-b'
   actor: string
   transition: string
   from: string | null
@@ -48,7 +48,7 @@ export interface AppendSpec {
 export const DEFAULT_GENESIS: InstanceGenesis = instanceGenesis({
   kind: 'service',
   definition: 'container-weighing@1.0.0',
-  participants: { shipper: ACME, weigher: VANMOER },
+  participants: { shipper: ORG_A, weigher: ORG_B },
 })
 
 /** Build a signed, chained log the way a home node would. */

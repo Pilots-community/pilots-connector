@@ -2,22 +2,22 @@
  * S0 — Connect. The prerequisite for everything else.
  *
  * Operator work rather than integration work, and the thing a demo is allowed to
- * seed from configuration only because it is proven here. Note what Acme never
+ * seed from configuration only because it is proven here. Note what Org A never
  * needs: a domain with an inbound route, a TLS certificate, a firewall rule, or
  * a callback URL per request. It publishes one static `did.json` and holds one
  * outbound connection.
  */
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildScenario, type Scenario } from './helpers/network.js'
 
 let scenario: Scenario
 
 beforeEach(async () => {
   scenario = await buildScenario({
-    acme: { participants: [ACME] },
-    vanmoer: { participants: [VANMOER] },
+    'org-a': { participants: [ORG_A] },
+    'org-b': { participants: [ORG_B] },
   })
 })
 
@@ -29,15 +29,15 @@ const operator = { kind: 'adminSession', id: 'operator' } as const
 
 describe('S0 — the handshake', () => {
   it('takes a connection from request to ACTIVE on both sides', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
 
-    // 1–2. Acme's operator asks; Van Moer holds it pending a human decision.
-    const requested = await acme.runtime.connections.request(
-      ACME,
+    // 1–2. Org A's operator asks; Org B holds it pending a human decision.
+    const requested = await orgA.runtime.connections.request(
+      ORG_A,
       {
-        peerDid: VANMOER.did,
-        peerBaseUrl: VANMOER.baseUrl,
+        peerDid: ORG_B.did,
+        peerBaseUrl: ORG_B.baseUrl,
         delivery: { channel: 'stream' },
       },
       operator,
@@ -46,53 +46,51 @@ describe('S0 — the handshake', () => {
     if (!requested.ok) return
     expect(requested.value.status).toBe('PENDING_OUTBOUND')
 
-    // 3. Van Moer resolved the DID, checked the document's host against the
+    // 3. Org B resolved the DID, checked the document's host against the
     // claimed base URL, and verified the request's JWS — all before an operator
     // was ever shown the request.
-    const inbound = await vanmoer.runtime.connections.between(VANMOER.id, ACME.did)
+    const inbound = await orgB.runtime.connections.between(ORG_B.id, ORG_A.did)
     expect(inbound?.status).toBe('PENDING_INBOUND')
     // Both sides share one id, which is what lets the callbacks address it.
     expect(inbound?.id).toBe(requested.value.id)
 
-    // 4–5. Van Moer's operator accepts; the callback makes Acme ACTIVE too.
-    const accepted = await vanmoer.runtime.connections.accept(
-      VANMOER,
+    // 4–5. Org B's operator accepts; the callback makes Org A ACTIVE too.
+    const accepted = await orgB.runtime.connections.accept(
+      ORG_B,
       requested.value.id,
-      { channel: 'webhook', url: `${VANMOER.baseUrl}/api/peer/v1/deliveries` },
+      { channel: 'webhook', url: `${ORG_B.baseUrl}/api/peer/v1/deliveries` },
       operator,
     )
     expect(accepted.ok).toBe(true)
 
-    expect((await vanmoer.runtime.connections.between(VANMOER.id, ACME.did))?.status).toBe('ACTIVE')
-    expect((await acme.runtime.connections.between(ACME.id, VANMOER.did))?.status).toBe('ACTIVE')
+    expect((await orgB.runtime.connections.between(ORG_B.id, ORG_A.did))?.status).toBe('ACTIVE')
+    expect((await orgA.runtime.connections.between(ORG_A.id, ORG_B.did))?.status).toBe('ACTIVE')
   })
 
   it('records the delivery channel per direction, not per connection', async () => {
-    await scenario.connect('acme', 'vanmoer', {
+    await scenario.connect('org-a', 'org-b', {
       fromWants: { channel: 'stream' },
-      toWants: { channel: 'webhook', url: `${VANMOER.baseUrl}/api/peer/v1/deliveries` },
+      toWants: { channel: 'webhook', url: `${ORG_B.baseUrl}/api/peer/v1/deliveries` },
     })
 
-    const onAcme = await scenario.node('acme').runtime.connections.between(ACME.id, VANMOER.did)
-    const onVanMoer = await scenario
-      .node('vanmoer')
-      .runtime.connections.between(VANMOER.id, ACME.did)
+    const onOrgA = await scenario.node('org-a').runtime.connections.between(ORG_A.id, ORG_B.did)
+    const onOrgB = await scenario.node('org-b').runtime.connections.between(ORG_B.id, ORG_A.did)
 
-    // Acme dials out and holds a line: it needs no inbound endpoint at all.
-    expect(onAcme?.inbound.channel).toBe('stream')
-    expect(onAcme?.outbound.channel).toBe('webhook')
-    // Van Moer's view is the mirror image. One connection, both directions.
-    expect(onVanMoer?.inbound.channel).toBe('webhook')
-    expect(onVanMoer?.outbound.channel).toBe('stream')
+    // Org A dials out and holds a line: it needs no inbound endpoint at all.
+    expect(onOrgA?.inbound.channel).toBe('stream')
+    expect(onOrgA?.outbound.channel).toBe('webhook')
+    // Org B's view is the mirror image. One connection, both directions.
+    expect(onOrgB?.inbound.channel).toBe('webhook')
+    expect(onOrgB?.outbound.channel).toBe('stream')
   })
 
   it('refuses a peer whose DID is not bound to the base URL it hands us', async () => {
-    const acme = scenario.node('acme')
+    const orgA = scenario.node('org-a')
 
-    const result = await acme.runtime.connections.request(
-      ACME,
+    const result = await orgA.runtime.connections.request(
+      ORG_A,
       {
-        peerDid: VANMOER.did,
+        peerDid: ORG_B.did,
         // did:web is domain-bound by construction. A DID that resolves at one
         // origin cannot ask us to send its traffic to another.
         peerBaseUrl: 'https://attacker.example',
@@ -107,13 +105,13 @@ describe('S0 — the handshake', () => {
   })
 
   it('refuses a request whose body claims a different sender than its token', async () => {
-    const vanmoer = scenario.node('vanmoer')
+    const orgB = scenario.node('org-b')
 
-    // The bearer token proved the caller is Acme. Claiming to be somebody else
+    // The bearer token proved the caller is Org A. Claiming to be somebody else
     // in the body is the interesting attack, and it is a hard refusal.
-    const result = await vanmoer.runtime.connections.receiveRequest(
-      VANMOER,
-      ACME.did,
+    const result = await orgB.runtime.connections.receiveRequest(
+      ORG_B,
+      ORG_A.did,
       {
         connectionId: '01J0000000000000000000000A',
         fromDid: 'did:web:someone-else.example',
@@ -125,31 +123,29 @@ describe('S0 — the handshake', () => {
 
     expect(result.ok).toBe(false)
     if (result.ok) return
-    expect(result.errors[0]?.detail).toMatch(/issued by .*acme/)
+    expect(result.errors[0]?.detail).toMatch(/issued by .*org-a/)
   })
 
   it('leaves a rejected connection terminal, and audits who decided', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
 
-    const requested = await acme.runtime.connections.request(
-      ACME,
-      { peerDid: VANMOER.did, peerBaseUrl: VANMOER.baseUrl, delivery: { channel: 'stream' } },
+    const requested = await orgA.runtime.connections.request(
+      ORG_A,
+      { peerDid: ORG_B.did, peerBaseUrl: ORG_B.baseUrl, delivery: { channel: 'stream' } },
       operator,
     )
     if (!requested.ok) throw new Error('request failed')
 
-    await vanmoer.runtime.connections.reject(VANMOER, requested.value.id, 'not this year', {
+    await orgB.runtime.connections.reject(ORG_B, requested.value.id, 'not this year', {
       kind: 'adminSession',
-      id: 'vanmoer-operator',
+      id: 'org-b-operator',
     })
 
-    expect((await vanmoer.runtime.connections.between(VANMOER.id, ACME.did))?.status).toBe(
-      'REJECTED',
-    )
-    expect((await acme.runtime.connections.between(ACME.id, VANMOER.did))?.status).toBe('REJECTED')
+    expect((await orgB.runtime.connections.between(ORG_B.id, ORG_A.did))?.status).toBe('REJECTED')
+    expect((await orgA.runtime.connections.between(ORG_A.id, ORG_B.did))?.status).toBe('REJECTED')
 
-    const audit = await vanmoer.runtime.store.audit.read(VANMOER.id)
+    const audit = await orgB.runtime.store.audit.read(ORG_B.id)
     const entry = audit.find((one) => one.action === 'connection.reject')
     expect(entry?.outcome).toBe('ok')
     expect(entry?.actor.kind).toBe('adminSession')
@@ -159,11 +155,11 @@ describe('S0 — the handshake', () => {
 
 describe('a connection is the gate every process call passes', () => {
   it('refuses to start a process with a peer we have no connection to', async () => {
-    const acme = scenario.node('acme')
+    const orgA = scenario.node('org-a')
 
-    const result = await acme.runtime.instances.create(acme.caller(), {
+    const result = await orgA.runtime.instances.create(orgA.caller(), {
       definition: 'container-weighing@1.0.0',
-      participants: { shipper: ACME.did, weigher: VANMOER.did },
+      participants: { shipper: ORG_A.did, weigher: ORG_B.did },
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
     })
 

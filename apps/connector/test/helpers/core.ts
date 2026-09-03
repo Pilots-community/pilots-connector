@@ -17,18 +17,18 @@ import type { Store } from '../../src/store/store.js'
  */
 export const DEFINITIONS_DIR = process.env['PILOTS_TEST_DEFINITIONS'] ?? '../../docs/definitions'
 
-export const ACME: ParticipantConfig = {
-  id: 'acme',
-  did: 'did:web:acme-shipping.example',
-  displayName: 'Acme Shipping',
-  baseUrl: 'https://acme-shipping.example',
+export const ORG_A: ParticipantConfig = {
+  id: 'org-a',
+  did: 'did:web:org-a.example',
+  displayName: 'Org A',
+  baseUrl: 'https://org-a.example',
 }
 
-export const VANMOER: ParticipantConfig = {
-  id: 'vanmoer',
-  did: 'did:web:vanmoer.example',
-  displayName: 'Van Moer',
-  baseUrl: 'https://vanmoer.example',
+export const ORG_B: ParticipantConfig = {
+  id: 'org-b',
+  did: 'did:web:org-b.example',
+  displayName: 'Org B',
+  baseUrl: 'https://org-b.example',
 }
 
 export interface TestCore {
@@ -51,7 +51,7 @@ export interface TestCore {
  * clock.
  */
 export async function buildCore(
-  participants: ParticipantConfig[] = [ACME, VANMOER],
+  participants: ParticipantConfig[] = [ORG_A, ORG_B],
 ): Promise<TestCore> {
   const store = new MemoryStore()
   const clock = new FakeClock('2026-08-24T09:00:00.000Z')

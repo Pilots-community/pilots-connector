@@ -25,7 +25,7 @@ export class WellKnownController {
 
   /**
    * `did:web` path segments, so a hosted tenant has a real, resolvable DID of
-   * its own — `did:web:connectors.example:t:acme` resolves here.
+   * its own — `did:web:connectors.example:t:org-a` resolves here.
    */
   @Get('t/:participantId/did.json')
   async tenantDidDocument(

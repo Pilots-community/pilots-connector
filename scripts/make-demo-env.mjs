@@ -32,19 +32,32 @@ function apiKey() {
   return `${id}.${randomBytes(32).toString('base64url')}`
 }
 
+/**
+ * Not secrets — the names people see on screen.
+ *
+ * The identifiers (`org-a`, `did:web:org-a.example`) are fixed and neutral, so
+ * nothing about a particular company is committed. The **labels** live here,
+ * because a demo for a particular audience wants their names on the screens and
+ * that is a property of the demo, not of the software.
+ */
+const LABELS = [
+  [
+    'ORG_A_NAME',
+    'Org A',
+    'Shown in Org A’s process UI and admin UI. Change it to whatever the demo needs.',
+  ],
+  ['ORG_B_NAME', 'Org B', 'The same, for Org B.'],
+]
+
 const VARIABLES = [
-  ['ACME_API_KEY', apiKey, 'Acme’s connector registers it; Acme’s UI presents it.'],
-  ['VANMOER_API_KEY', apiKey, 'The same, for Van Moer.'],
+  ['ORG_A_API_KEY', apiKey, 'Org A’s connector registers it; Org A’s UI presents it.'],
+  ['ORG_B_API_KEY', apiKey, 'The same, for Org B.'],
   [
-    'ACME_UI_AUTH_SECRET',
+    'ORG_A_UI_AUTH_SECRET',
     () => randomBytes(32).toString('base64url'),
-    'Signs Acme UI’s own sessions, so a restart does not sign everyone out.',
+    'Signs Org A UI’s own sessions, so a restart does not sign everyone out.',
   ],
-  [
-    'VANMOER_UI_AUTH_SECRET',
-    () => randomBytes(32).toString('base64url'),
-    'The same, for Van Moer.',
-  ],
+  ['ORG_B_UI_AUTH_SECRET', () => randomBytes(32).toString('base64url'), 'The same, for Org B.'],
   [
     'BACKOFFICE_SECRET',
     () => randomBytes(32).toString('base64url'),
@@ -72,6 +85,18 @@ const lines = [
   '',
 ]
 let added = 0
+lines.push('# ── who the demo is about. Yours to edit; not secrets. ──', '')
+for (const [name, fallback, note] of LABELS) {
+  const value = existing.get(name) ?? fallback
+  if (!existing.has(name)) added += 1
+  lines.push(`# ${note}`)
+  // Quoted, because a name has spaces in it and a `.env` gets sourced by shells
+  // as well as read by compose.
+  lines.push(`${name}="${value.replace(/^"|"$/g, '')}"`)
+  lines.push('')
+}
+
+lines.push('# ── generated credentials. Delete a line and re-run to rotate it. ──', '')
 for (const [name, generate, note] of VARIABLES) {
   const value = existing.get(name) ?? generate()
   if (!existing.has(name)) added += 1

@@ -144,6 +144,11 @@ export function App() {
       .then(({ participants: list }) => {
         setParticipants(list)
         setParticipantId((current) => current || (list[0]?.id ?? ''))
+        // Whose connector this is, in the browser tab. Several of these are
+        // open at once in any demo worth running, and they are otherwise
+        // indistinguishable but for a port number.
+        const first = list[0]
+        if (first) document.title = `${first.displayName} — connector admin`
       })
       .catch(() => signOut())
   }, [session, signOut])
@@ -176,7 +181,22 @@ export function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-3">
-          <h1 className="text-sm font-semibold">Connector admin</h1>
+          {/*
+            The organisation first, the surface second. `displayName` is a
+            label from configuration and the DID beneath it is the identity —
+            renaming an organisation does not move its DID, and showing both
+            makes that visible rather than something to explain.
+          */}
+          <div>
+            <h1 className="text-sm font-semibold" data-testid="admin-participant">
+              {participants[0]?.displayName ?? 'Connector'} — admin
+            </h1>
+            {participants.length === 1 && participants[0] && (
+              <p className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                {participants[0].did}
+              </p>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             {participants.length > 1 && (
               <select
@@ -629,7 +649,7 @@ function Connections({ session, participantId }: { session: string; participantI
           <Field label="Peer DID">
             <input
               className={inputClass}
-              placeholder="did:web:vanmoer.example"
+              placeholder="did:web:org-b.example"
               value={form.peerDid}
               onChange={(e) => setForm({ ...form, peerDid: e.target.value })}
             />
@@ -637,7 +657,7 @@ function Connections({ session, participantId }: { session: string; participantI
           <Field label="Peer base URL">
             <input
               className={inputClass}
-              placeholder="https://vanmoer.example"
+              placeholder="https://org-b.example"
               value={form.peerBaseUrl}
               onChange={(e) => setForm({ ...form, peerBaseUrl: e.target.value })}
             />
@@ -767,7 +787,7 @@ function Connections({ session, participantId }: { session: string; participantI
         <div className="flex gap-2">
           <input
             className={inputClass}
-            placeholder="did:web:vanmoer.example"
+            placeholder="did:web:org-b.example"
             value={allow}
             onChange={(e) => setAllow(e.target.value)}
           />

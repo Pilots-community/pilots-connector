@@ -8,31 +8,31 @@
 import { Problem, verifyAuditChain, type AuditEntry } from '@pilots/protocol'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildTestApp, provision, type TestApp } from './helpers/app.js'
 
-const PARTICIPANTS = { shipper: ACME.did, weigher: VANMOER.did }
+const PARTICIPANTS = { shipper: ORG_A.did, weigher: ORG_B.did }
 const CERTIFICATE_SHA = `sha256:${'a'.repeat(64)}`
 
 let testApp: TestApp
-let acmeKey: string
-let vanmoerKey: string
+let orgAKey: string
+let orgBKey: string
 let session: string
 
 beforeEach(async () => {
   testApp = await buildTestApp()
-  const acme = await provision(testApp, 'acme')
-  const vanmoer = await provision(testApp, 'vanmoer')
-  acmeKey = acme.apiKey
-  vanmoerKey = vanmoer.apiKey
-  session = acme.session
+  const orgA = await provision(testApp, 'org-a')
+  const orgB = await provision(testApp, 'org-b')
+  orgAKey = orgA.apiKey
+  orgBKey = orgB.apiKey
+  session = orgA.session
 })
 
 afterEach(async () => {
   await testApp.close()
 })
 
-function local(apiKey: string, actorRef = 'alice@acme.example') {
+function local(apiKey: string, actorRef = 'alice@org-a.example') {
   return {
     authorization: `ApiKey ${apiKey}`,
     'x-actor-ref': actorRef,
@@ -44,7 +44,7 @@ async function createWeighing(): Promise<{ id: string; etag: string }> {
   const response = await testApp.app.inject({
     method: 'POST',
     url: '/api/local/v1/instances',
-    headers: local(acmeKey),
+    headers: local(orgAKey),
     payload: {
       definition: 'container-weighing@1.0.0',
       participants: PARTICIPANTS,
@@ -81,15 +81,15 @@ describe('the well-known DID document', () => {
     expect(response.statusCode).toBe(200)
 
     const document = response.json()
-    expect(document.id).toBe(ACME.did)
+    expect(document.id).toBe(ORG_A.did)
     expect(document.verificationMethod).toHaveLength(1)
     expect(response.body).not.toContain('"d"')
   })
 
   it('resolves a hosted tenant by its did:web path segments', async () => {
-    const response = await testApp.app.inject({ method: 'GET', url: '/t/vanmoer/did.json' })
+    const response = await testApp.app.inject({ method: 'GET', url: '/t/org-b/did.json' })
     expect(response.statusCode).toBe(200)
-    expect(response.json().id).toBe(VANMOER.did)
+    expect(response.json().id).toBe(ORG_B.did)
 
     const missing = await testApp.app.inject({ method: 'GET', url: '/t/nobody/did.json' })
     expect(missing.statusCode).toBe(404)
@@ -117,7 +117,7 @@ describe('the auth boundary is visible in the URL', () => {
     const response = await testApp.app.inject({
       method: 'GET',
       url: '/api/admin/v1/apikeys',
-      headers: { authorization: `ApiKey ${acmeKey}` },
+      headers: { authorization: `ApiKey ${orgAKey}` },
     })
     expect(response.statusCode).toBe(401)
   })
@@ -133,7 +133,7 @@ describe('the auth boundary is visible in the URL', () => {
   })
 
   it('refuses a key that lacks the scope for the call', async () => {
-    const readOnly = await provision(testApp, 'acme', ['instances:read'])
+    const readOnly = await provision(testApp, 'org-a', ['instances:read'])
     const response = await testApp.app.inject({
       method: 'POST',
       url: '/api/local/v1/instances',
@@ -145,18 +145,18 @@ describe('the auth boundary is visible in the URL', () => {
   })
 
   it('refuses a revoked key', async () => {
-    const doomed = await provision(testApp, 'acme')
+    const doomed = await provision(testApp, 'org-a')
     const id = (
       await testApp.app.inject({
         method: 'GET',
-        url: '/api/admin/v1/apikeys?participantId=acme',
+        url: '/api/admin/v1/apikeys?participantId=org-a',
         headers: { authorization: `Session ${session}` },
       })
     ).json()
 
     await testApp.app.inject({
       method: 'DELETE',
-      url: `/api/admin/v1/apikeys/${id.apiKeys.at(-1)!.id}?participantId=acme`,
+      url: `/api/admin/v1/apikeys/${id.apiKeys.at(-1)!.id}?participantId=org-a`,
       headers: { authorization: `Session ${session}` },
     })
 
@@ -175,7 +175,7 @@ describe('S1 over the local API', () => {
     expect(etag).toBe('"1"')
 
     const announced = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
@@ -184,7 +184,7 @@ describe('S1 over the local API', () => {
     expect(announced.headers['etag']).toBe('"2"')
 
     const weighed = await transition(
-      vanmoerKey,
+      orgBKey,
       id,
       {
         transition: 'weigh',
@@ -198,7 +198,7 @@ describe('S1 over the local API', () => {
     const asShipper = await testApp.app.inject({
       method: 'GET',
       url: `/api/local/v1/instances/${id}`,
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     expect(asShipper.headers['etag']).toBe('"3"')
     const shipperView = asShipper.json()
@@ -206,7 +206,7 @@ describe('S1 over the local API', () => {
     expect(shipperView.redacted).toBe(true)
 
     await transition(
-      vanmoerKey,
+      orgBKey,
       id,
       { transition: 'recordPayment', patch: { paymentReference: 'PAY-1' } },
       3,
@@ -216,12 +216,12 @@ describe('S1 over the local API', () => {
     const released = await testApp.app.inject({
       method: 'GET',
       url: `/api/local/v1/instances/${id}`,
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     expect(released.json().data).toHaveProperty('grossMass')
 
     const issued = await transition(
-      vanmoerKey,
+      orgBKey,
       id,
       {
         transition: 'issueVgm',
@@ -239,7 +239,7 @@ describe('S1 over the local API', () => {
     const response = await testApp.app.inject({
       method: 'GET',
       url: `/api/local/v1/instances/${id}/events`,
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     const { events } = response.json()
     expect(events).toHaveLength(1)
@@ -251,7 +251,7 @@ describe('S1 over the local API', () => {
     const response = await testApp.app.inject({
       method: 'GET',
       url: '/api/local/v1/definitions/container-weighing@1.0.0',
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     expect(response.statusCode).toBe(200)
     expect(response.json().contentHash).toMatch(/^sha256:[0-9a-f]{64}$/)
@@ -262,7 +262,7 @@ describe('concurrency and idempotency are separate mechanisms', () => {
   it('demands If-Match on a mutating call', async () => {
     const { id } = await createWeighing()
     const response = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       undefined,
@@ -273,10 +273,10 @@ describe('concurrency and idempotency are separate mechanisms', () => {
 
   it('reports a stale If-Match as 409 carrying the real seq', async () => {
     const { id } = await createWeighing()
-    await transition(acmeKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
+    await transition(orgAKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
 
     const stale = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'cancel', patch: { cancellationReason: 'oops' } },
       1,
@@ -292,14 +292,14 @@ describe('concurrency and idempotency are separate mechanisms', () => {
     const key = 'e2b7c0de-0000-4000-8000-000000000001'
 
     const first = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
       { 'idempotency-key': key },
     )
     const second = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
@@ -314,7 +314,7 @@ describe('concurrency and idempotency are separate mechanisms', () => {
     const events = await testApp.app.inject({
       method: 'GET',
       url: `/api/local/v1/instances/${id}/events`,
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     expect(events.json().events).toHaveLength(2)
   })
@@ -324,7 +324,7 @@ describe('concurrency and idempotency are separate mechanisms', () => {
     const key = 'e2b7c0de-0000-4000-8000-000000000002'
 
     const refused = await transition(
-      acmeKey,
+      orgAKey,
       id,
       {
         transition: 'weigh',
@@ -336,7 +336,7 @@ describe('concurrency and idempotency are separate mechanisms', () => {
     expect(refused.statusCode).toBe(403)
 
     const retried = await transition(
-      acmeKey,
+      orgAKey,
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
@@ -350,7 +350,7 @@ describe('refusals leave a trail — S4d in miniature', () => {
   async function auditEntries(): Promise<AuditEntry[]> {
     const response = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/v1/audit?participantId=acme&limit=1000',
+      url: '/api/admin/v1/audit?participantId=org-a&limit=1000',
       headers: { authorization: `Session ${session}` },
     })
     return response.json<{ entries: AuditEntry[] }>().entries
@@ -358,10 +358,10 @@ describe('refusals leave a trail — S4d in miniature', () => {
 
   it('records a role refusal with no event to show for it', async () => {
     const { id } = await createWeighing()
-    await transition(acmeKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
+    await transition(orgAKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
 
     const refused = await transition(
-      acmeKey,
+      orgAKey,
       id,
       {
         transition: 'weigh',
@@ -378,13 +378,13 @@ describe('refusals leave a trail — S4d in miniature', () => {
     expect(denial?.problem).toBe(Problem.roleNotPermitted)
     expect(denial?.subject.instance).toBe(id)
     expect(denial?.actor.kind).toBe('apiKey')
-    expect(denial?.actor.actorRef).toBe('alice@acme.example')
+    expect(denial?.actor.actorRef).toBe('alice@org-a.example')
 
     // The event log is silent about all of it, by design.
     const events = await testApp.app.inject({
       method: 'GET',
       url: `/api/local/v1/instances/${id}/events`,
-      headers: local(acmeKey),
+      headers: local(orgAKey),
     })
     expect(events.json().events).toHaveLength(2)
   })
@@ -407,9 +407,9 @@ describe('refusals leave a trail — S4d in miniature', () => {
 
   it('keeps the audit chain unbroken across every one of them', async () => {
     const { id } = await createWeighing()
-    await transition(acmeKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
-    await transition(acmeKey, id, { transition: 'weigh', patch: {} }, 2)
-    await transition(acmeKey, id, { transition: 'cancel' }, 99)
+    await transition(orgAKey, id, { transition: 'announceTruck', patch: { truckPlate: 'A' } }, 1)
+    await transition(orgAKey, id, { transition: 'weigh', patch: {} }, 2)
+    await transition(orgAKey, id, { transition: 'cancel' }, 99)
 
     const entries = await auditEntries()
     expect(entries.length).toBeGreaterThanOrEqual(4)
@@ -417,7 +417,7 @@ describe('refusals leave a trail — S4d in miniature', () => {
 
     const verified = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/v1/audit/verify?participantId=acme',
+      url: '/api/admin/v1/audit/verify?participantId=org-a',
       headers: { authorization: `Session ${session}` },
     })
     expect(verified.json().ok).toBe(true)
@@ -425,7 +425,7 @@ describe('refusals leave a trail — S4d in miniature', () => {
 
   it('detects a tampered audit entry', async () => {
     await createWeighing()
-    const entries = await testApp.runtime.store.audit.read('acme')
+    const entries = await testApp.runtime.store.audit.read('org-a')
     expect(entries.length).toBeGreaterThan(1)
 
     // Rewrite one entry's outcome, exactly as S4b rewrites a stored event.
@@ -446,7 +446,7 @@ describe('the admin surface', () => {
       method: 'POST',
       url: '/api/admin/v1/apikeys',
       headers: { authorization: `Session ${session}` },
-      payload: { label: 'once', scopes: ['instances:read'], participantId: 'acme' },
+      payload: { label: 'once', scopes: ['instances:read'], participantId: 'org-a' },
     })
     expect(created.statusCode).toBe(201)
     const minted = created.json()
@@ -454,7 +454,7 @@ describe('the admin surface', () => {
 
     const listed = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/v1/apikeys?participantId=acme',
+      url: '/api/admin/v1/apikeys?participantId=org-a',
       headers: { authorization: `Session ${session}` },
     })
     expect(listed.body).not.toContain(minted.secret)
@@ -467,13 +467,13 @@ describe('the admin surface', () => {
       url: '/api/admin/v1/offerings',
       headers: { authorization: `Session ${session}` },
       payload: {
-        id: 'urn:offering:vanmoer:container-weighing',
+        id: 'urn:offering:org-b:container-weighing',
         title: 'Container weighing, Antwerp 869',
         quotationDefinition: 'container-weighing-quotation@1.0.0',
         serviceDefinition: 'container-weighing@1.0.0',
         conditions: { terminal: ['869'] },
         price: { value: 45, currency: 'EUR' },
-        participantId: 'vanmoer',
+        participantId: 'org-b',
       },
     })
     expect(published.statusCode).toBe(201)
@@ -481,20 +481,20 @@ describe('the admin surface', () => {
     const browsable = await testApp.app.inject({
       method: 'GET',
       url: '/api/local/v1/offerings',
-      headers: local(vanmoerKey),
+      headers: local(orgBKey),
     })
     expect(browsable.json().offerings).toHaveLength(1)
 
     // Withdrawing stops discovery without touching anything already running.
     await testApp.app.inject({
       method: 'DELETE',
-      url: '/api/admin/v1/offerings/urn:offering:vanmoer:container-weighing?participantId=vanmoer',
+      url: '/api/admin/v1/offerings/urn:offering:org-b:container-weighing?participantId=org-b',
       headers: { authorization: `Session ${session}` },
     })
     const afterWithdrawal = await testApp.app.inject({
       method: 'GET',
       url: '/api/local/v1/offerings',
-      headers: local(vanmoerKey),
+      headers: local(orgBKey),
     })
     expect(afterWithdrawal.json().offerings).toHaveLength(0)
   })
@@ -502,7 +502,7 @@ describe('the admin surface', () => {
   it('registers a notification subscription without ever storing the secret', async () => {
     const created = await testApp.app.inject({
       method: 'POST',
-      url: '/api/admin/v1/subscriptions?participantId=vanmoer',
+      url: '/api/admin/v1/subscriptions?participantId=org-b',
       headers: { authorization: `Session ${session}` },
       payload: {
         label: 'backoffice-prod',
@@ -522,7 +522,7 @@ describe('the admin surface', () => {
 
     const listed = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/v1/subscriptions?participantId=vanmoer',
+      url: '/api/admin/v1/subscriptions?participantId=org-b',
       headers: { authorization: `Session ${session}` },
     })
     expect(listed.json().subscriptions).toHaveLength(1)

@@ -134,8 +134,8 @@ async function adminKey(port, participantId, service) {
 const WEIGHING = {
   definition: 'container-weighing@1.0.0',
   participants: {
-    shipper: 'did:web:acme-shipping.example',
-    weigher: 'did:web:vanmoer.example',
+    shipper: 'did:web:org-a.example',
+    weigher: 'did:web:org-b.example',
   },
   data: { containerNumber: 'MSCU0000000', terminal: '869' },
 }
@@ -191,7 +191,7 @@ async function throughTheUi() {
 
   const signedIn = await call('/api/auth/sign-in/email', {
     method: 'POST',
-    body: JSON.stringify({ email: 'alice@acme.example', password: 'demo-password-acme' }),
+    body: JSON.stringify({ email: 'alice@org-a.example', password: 'demo-password-org-a' }),
   })
   if (signedIn.status !== 200) {
     throw new Error(`sign-in failed: ${signedIn.status} ${JSON.stringify(signedIn.body)}`)
@@ -211,7 +211,7 @@ async function throughTheUi() {
 
 /** An integrator's route: the local API, with a key. */
 async function throughTheApi() {
-  const key = await adminKey(3000, 'acme', 'acme')
+  const key = await adminKey(3000, 'org-a', 'org-a')
   const created = await json('http://localhost:3000/api/local/v1/instances', {
     method: 'POST',
     body: WEIGHING,
@@ -227,7 +227,7 @@ results.push(
   await measure({
     title: 'Headless integrator — a connector, own systems on the local API',
     selfRun: 1,
-    services: ['acme', 'vanmoer'],
+    services: ['org-a', 'org-b'],
     firstTransaction: throughTheApi,
   }),
 )
@@ -237,7 +237,7 @@ results.push(
     title: 'Automated party — one side clicks, the other runs a backoffice',
     selfRun: '1 + a backoffice',
     files: ['docker-compose.automated.yml'],
-    services: ['acme', 'acme-ui', 'vanmoer', 'backoffice'],
+    services: ['org-a', 'org-a-ui', 'org-b', 'backoffice'],
     firstTransaction: throughTheUi,
   }),
 )
@@ -246,7 +246,7 @@ results.push(
   await measure({
     title: 'Full self-hosting — a connector and a process UI, both parties',
     selfRun: 2,
-    services: ['acme', 'acme-ui', 'vanmoer', 'vanmoer-ui'],
+    services: ['org-a', 'org-a-ui', 'org-b', 'org-b-ui'],
     firstTransaction: throughTheUi,
   }),
 )

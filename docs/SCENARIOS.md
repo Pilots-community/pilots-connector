@@ -13,28 +13,28 @@ Two participants throughout:
 
 | | DID | Profile |
 |---|---|---|
-| **Acme Shipping** (small) | `did:web:acme-shipping.example` | File store, no database container, local key, `stream` peer delivery, no public endpoint. Driven by a person in the **process UI**. |
-| **Van Moer** (large) | `did:web:vanmoer.example` | Managed document store, public endpoint. **Also runs the process UI**, and additionally subscribes a mock backoffice to `action.required`. |
+| **Org A** (small) | `did:web:org-a.example` | File store, no database container, local key, `stream` peer delivery, no public endpoint. Driven by a person in the **process UI**. |
+| **Org B** (large) | `did:web:org-b.example` | Managed document store, public endpoint. **Also runs the process UI**, and additionally subscribes a mock backoffice to `action.required`. |
 
 Same connector image, two configuration files. That difference is the entire "one stack fits a one-truck
 haulier and a terminal operator" claim, and it should be visible in the demo rather than argued in a slide.
 
-**The two profiles differ in deployment, not in role.** Acme consumes and Van Moer supplies throughout
+**The two profiles differ in deployment, not in role.** Org A consumes and Org B supplies throughout
 S0–S4 because one direction is enough to exercise the protocol — not because either connector is built
-for its side. Neither has a supplier mode; Van Moer is a supplier because it published an offering, which
+for its side. Neither has a supplier mode; Org B is a supplier because it published an offering, which
 is a runtime record. **S5 proves the symmetry as a scenario test**, so the property does not rest on a
 demo that only ever runs one way.
 
 **Both sides run the process UI.** That is a deliberate choice for the first real demo: every step can be
-driven and verified by hand, on either side, without reading logs or curling anything. Van Moer's mock
+driven and verified by hand, on either side, without reading logs or curling anything. Org B's mock
 backoffice sits alongside its UI rather than instead of it, so the same scenario can be run twice — once
 clicked through, once unattended — and the connector cannot tell the difference. Where a step below says
-*Van Moer*, either the person or the backoffice may have done it.
+*Org B*, either the person or the backoffice may have done it.
 
 Container count for the full demo: **four** — two connectors, two process UIs, and **no database**.
 
-**How to read the `Call` column.** Acme's process UI never addresses Van Moer. It calls Acme's connector
-on `/api/local/v1`, and Acme's connector relays to Van Moer's `/api/peer/v1` because the definitions are
+**How to read the `Call` column.** Org A's process UI never addresses Org B. It calls Org A's connector
+on `/api/local/v1`, and Org A's connector relays to Org B's `/api/peer/v1` because the definitions are
 `hostedBy: weigher` / `transporter`. Written as `local → peer` below. See
 [PROTOCOL.md §4.1](PROTOCOL.md#41-relay-by-hostedby).
 
@@ -46,17 +46,17 @@ Prerequisite for everything else. Runs once, and it is **operator** work rather 
 
 | # | Actor | Surface | Call | Result |
 |---|---|---|---|---|
-| 1 | Acme operator | admin | `POST /api/admin/v1/connections` `{ toDid, delivery: "stream" }` | Acme's connector sends the request |
-| 2 | Acme connector | peer | `POST vanmoer/api/peer/v1/connections/requests` | `202`, Van Moer holds it `PENDING_INBOUND` |
-| 3 | Van Moer connector | — | resolves `did:web:acme-shipping.example`, checks the DID document's host matches `fromBaseUrl`, verifies the request JWS | trust established; audited |
-| 4 | Van Moer operator | admin | `POST /api/admin/v1/connections/{id}/accept` | audited with the admin session |
-| 5 | Van Moer connector | peer | `POST acme/api/peer/v1/connections/{id}/accepted` `{ delivery: "webhook", deliveryUrl }` | both sides `ACTIVE` |
-| 6 | Acme connector | peer | opens `GET vanmoer/api/peer/v1/stream` (SSE) | events now flow |
+| 1 | Org A operator | admin | `POST /api/admin/v1/connections` `{ toDid, delivery: "stream" }` | Org A's connector sends the request |
+| 2 | Org A connector | peer | `POST org-b/api/peer/v1/connections/requests` | `202`, Org B holds it `PENDING_INBOUND` |
+| 3 | Org B connector | — | resolves `did:web:org-a.example`, checks the DID document's host matches `fromBaseUrl`, verifies the request JWS | trust established; audited |
+| 4 | Org B operator | admin | `POST /api/admin/v1/connections/{id}/accept` | audited with the admin session |
+| 5 | Org B connector | peer | `POST org-a/api/peer/v1/connections/{id}/accepted` `{ delivery: "webhook", deliveryUrl }` | both sides `ACTIVE` |
+| 6 | Org A connector | peer | opens `GET org-b/api/peer/v1/stream` (SSE) | events now flow |
 
-**Note what Acme never needed:** a domain with an inbound route, a TLS certificate, a firewall rule, or
+**Note what Org A never needed:** a domain with an inbound route, a TLS certificate, a firewall rule, or
 a callback URL per request. It publishes one static `did.json` and holds one outbound connection.
 
-**Note what Acme's UI never needed:** any knowledge of this. Connections are operator state, exposed to
+**Note what Org A's UI never needed:** any knowledge of this. Connections are operator state, exposed to
 integrators read-only via `GET /api/local/v1/connections`.
 
 Demo deployments may seed steps 1–5 from configuration. The handshake must still work when they do not.
@@ -69,41 +69,41 @@ Proves: standing quotations need no negotiation code path; state-dependent field
 by the runtime; attachments are content-addressed; the relay is invisible to the caller.
 
 Definitions: [`container-weighing-quotation`](definitions/container-weighing-quotation.json) (standing),
-[`container-weighing`](definitions/container-weighing.json). Both `hostedBy: weigher`, so **Van Moer
-hosts both instances** and Acme holds verified replicas.
+[`container-weighing`](definitions/container-weighing.json). Both `hostedBy: weigher`, so **Org B
+hosts both instances** and Org A holds verified replicas.
 
 | # | Actor | Surface | Action | State after |
 |---|---|---|---|---|
-| 1 | Acme UI | local → peer | `GET /api/local/v1/offerings?peer=vanmoer` | sees `container-weighing` at a fixed price, conditions `terminal`, `containerType` |
-| 2 | Acme UI | local → peer | `POST /instances` with the quotation definition and the offering URI | creation is `seq 1`; the quotation's `agree` fires automatically (`auto: true`) → **`AGREED`** at `seq 2` |
-| 3 | Acme UI | local → peer | `POST /instances` with the service definition + `quotationId` | service **`ORDERED`** |
-| 4 | Acme UI | local → peer | `POST …/transitions` `announceTruck` `{ truckPlate, expectedAt }`, `If-Match: 1` | **`TRUCK_ANNOUNCED`** |
-| 5 | Van Moer *(UI or backoffice)* | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
-| 6 | Acme UI | local | reads the instance | `grossMass` is **absent** — no grant matches `shipper` in `WEIGHED`. The event header still verifies; only the value is withheld. |
-| 7 | Van Moer *(UI or backoffice)* | local | `recordPayment` `{ paymentReference }` | **`PAID`** |
-| 8 | Acme UI | local | reads the instance | `grossMass` is **now present** — the `whenState: ["PAID","VGM_ISSUED"]` grant matches. |
-| 9 | Van Moer *(UI or backoffice)* | local | `issueVgm` with a PDF attachment `{ sha256, mime, size }` | **`VGM_ISSUED`** (terminal) |
-| 10 | Acme UI | local | `GET /api/local/v1/attachments/{sha256}` | certificate bytes, hash checked against the event header |
+| 1 | Org A UI | local → peer | `GET /api/local/v1/offerings?peer=org-b` | sees `container-weighing` at a fixed price, conditions `terminal`, `containerType` |
+| 2 | Org A UI | local → peer | `POST /instances` with the quotation definition and the offering URI | creation is `seq 1`; the quotation's `agree` fires automatically (`auto: true`) → **`AGREED`** at `seq 2` |
+| 3 | Org A UI | local → peer | `POST /instances` with the service definition + `quotationId` | service **`ORDERED`** |
+| 4 | Org A UI | local → peer | `POST …/transitions` `announceTruck` `{ truckPlate, expectedAt }`, `If-Match: 1` | **`TRUCK_ANNOUNCED`** |
+| 5 | Org B *(UI or backoffice)* | local | `weigh` `{ grossMass: { value, unit, measuredAt } }` | **`WEIGHED`** |
+| 6 | Org A UI | local | reads the instance | `grossMass` is **absent** — no grant matches `shipper` in `WEIGHED`. The event header still verifies; only the value is withheld. |
+| 7 | Org B *(UI or backoffice)* | local | `recordPayment` `{ paymentReference }` | **`PAID`** |
+| 8 | Org A UI | local | reads the instance | `grossMass` is **now present** — the `whenState: ["PAID","VGM_ISSUED"]` grant matches. |
+| 9 | Org B *(UI or backoffice)* | local | `issueVgm` with a PDF attachment `{ sha256, mime, size }` | **`VGM_ISSUED`** (terminal) |
+| 10 | Org A UI | local | `GET /api/local/v1/attachments/{sha256}` | certificate bytes, hash checked against the event header |
 
 Step 6→8 is the point of the scenario. The withheld field is a genuine commercial rule, and it is
 enforced in one place in the runtime rather than by whoever assembled the message.
 
 **One connector and two differ here, and the difference is worth stating.** Within a single connector
 nothing is re-sent: the same stored event is simply filtered differently before and after payment.
-Across connectors that is impossible — Acme was never sent the bytes, and no amount of re-filtering
+Across connectors that is impossible — Org A was never sent the bytes, and no amount of re-filtering
 conjures them. Enforcing visibility *on the way out* is the right call (a replica must not hold what it
 may not read), so entitlement beginning is what puts the value on the wire: the home node sends the
-released payload alongside the event that released it, and Acme accepts it only because it hashes to
+released payload alongside the event that released it, and Org A accepts it only because it hashes to
 the `payloadHash` its already-verified header commits to. Header, signature and chain are untouched.
 See [PROTOCOL.md §7.3](PROTOCOL.md#73-verification).
 
-Two things the surface column makes visible. Van Moer's backoffice and Acme's UI use **the same API**,
+Two things the surface column makes visible. Org B's backoffice and Org A's UI use **the same API**,
 authenticated the same way — one is a person clicking and one is a machine reacting, and the connector
-cannot tell the difference. And Acme's UI made every call to its own connector; the relay to Van Moer
+cannot tell the difference. And Org A's UI made every call to its own connector; the relay to Org B
 never appears in its code.
 
-**Where the notification fits.** At step 4 Acme announces the truck, and the instance enters
-`TRUCK_ANNOUNCED` — a state where `weigh` is available to `weigher` and to nobody else. Van Moer's
+**Where the notification fits.** At step 4 Org A announces the truck, and the instance enters
+`TRUCK_ANNOUNCED` — a state where `weigh` is available to `weigher` and to nobody else. Org B's
 connector therefore emits **`action.required`** to its subscription, carrying the signed event and
 `available: [{ transition: "weigh", role: "weigher" }]`. Its backoffice posts that transition id back
 without consulting the definition, and its process UI lights up the same button from the same rule.
@@ -121,17 +121,17 @@ Definitions: [`container-transport-quotation`](definitions/container-transport-q
 
 | # | Actor | Surface | Action | Quotation | Service |
 |---|---|---|---|---|---|
-| 1 | Acme UI | local → peer | `POST /instances` — quotation, with pickup, dropoff, container type | `REQUESTED` | — |
-| 2 | Acme UI | local → peer | `POST /instances` — service, referencing `quotationId` | `REQUESTED` | **`PENDING_CONTRACT`** |
-| 3 | Van Moer *(UI or backoffice)* | local | `action.required` fires (`REQUESTED`, `offer` is ours); auto-quotes: `offer` `{ price: 320 EUR, pickup.earliest +1d }` | `OFFERED` | `PENDING_CONTRACT` |
-| 4 | Acme UI | local → peer | `counter` `{ pickup.earliest: original, notes }` | `COUNTERED` | `PENDING_CONTRACT` |
-| 5 | Van Moer *(UI or backoffice)* | local | `offer` `{ price: 355 EUR }` | `OFFERED` | `PENDING_CONTRACT` |
-| 6 | Acme UI | local → peer | `accept` | **`AGREED`** | — |
+| 1 | Org A UI | local → peer | `POST /instances` — quotation, with pickup, dropoff, container type | `REQUESTED` | — |
+| 2 | Org A UI | local → peer | `POST /instances` — service, referencing `quotationId` | `REQUESTED` | **`PENDING_CONTRACT`** |
+| 3 | Org B *(UI or backoffice)* | local | `action.required` fires (`REQUESTED`, `offer` is ours); auto-quotes: `offer` `{ price: 320 EUR, pickup.earliest +1d }` | `OFFERED` | `PENDING_CONTRACT` |
+| 4 | Org A UI | local → peer | `counter` `{ pickup.earliest: original, notes }` | `COUNTERED` | `PENDING_CONTRACT` |
+| 5 | Org B *(UI or backoffice)* | local | `offer` `{ price: 355 EUR }` | `OFFERED` | `PENDING_CONTRACT` |
+| 6 | Org A UI | local → peer | `accept` | **`AGREED`** | — |
 | 7 | *runtime* | — | link `quotation:AGREED → startExecution` fires on the service instance | `AGREED` | **`CONTRACTED`** |
-| 8 | Van Moer *(UI or backoffice)* | local | `assign` `{ vehiclePlate, driverName, plannedPickupAt }` | | **`ASSIGNED`** |
-| 9 | Acme UI | local | reads | | `driverName` absent — granted to `shipper` only from `PICKED_UP` |
-| 10 | Van Moer *(UI or backoffice)* | local | `pickup` `{ actualPickupAt, containerNumber }` | | **`PICKED_UP`**, `driverName` now visible |
-| 11 | Van Moer *(UI or backoffice)* | local | `deliver` `{ deliveredAt, proofOfDelivery }` + PDF | | **`DELIVERED`** (terminal) |
+| 8 | Org B *(UI or backoffice)* | local | `assign` `{ vehiclePlate, driverName, plannedPickupAt }` | | **`ASSIGNED`** |
+| 9 | Org A UI | local | reads | | `driverName` absent — granted to `shipper` only from `PICKED_UP` |
+| 10 | Org B *(UI or backoffice)* | local | `pickup` `{ actualPickupAt, containerNumber }` | | **`PICKED_UP`**, `driverName` now visible |
+| 11 | Org B *(UI or backoffice)* | local | `deliver` `{ deliveredAt, proofOfDelivery }` + PDF | | **`DELIVERED`** (terminal) |
 
 All of this runs as a scenario test and across two containers as of M4. Three things demonstrated
 explicitly alongside the happy path:
@@ -139,7 +139,7 @@ explicitly alongside the happy path:
 - **The service instance exists from step 2**, sitting in `PENDING_CONTRACT` while the quotation is
   still being negotiated. This is IDEA.md's "the quotation process does not block execution", made
   concrete: the instance is real and addressable, it simply cannot advance yet.
-- **Concurrency**: have Acme send `counter` twice with the same `If-Match`. The second returns `409`
+- **Concurrency**: have Org A send `counter` twice with the same `If-Match`. The second returns `409`
   with the current `seq` — **passed through the relay unchanged**, not rewritten into a `502`. Then
   repeat with the same `Idempotency-Key` and confirm the original result comes back rather than a second
   transition.
@@ -177,8 +177,8 @@ was a mistake: they are the two most important behaviours in the design.
 
 ### S4a — Offline catch-up
 
-Stop Acme's connector mid-process. Van Moer continues, advancing the instance two or three steps.
-Restart Acme.
+Stop Org A's connector mid-process. Org B continues, advancing the instance two or three steps.
+Restart Org A.
 
 Expected: the connector reconnects, sends `Last-Event-ID`, receives everything it missed, verifies the
 chain, and converges. **No operator action, no resync tool, no lost process.** Contrast with holding
@@ -189,10 +189,10 @@ convergence and a fully verified chain.
 
 ### S4b — Tamper detection
 
-With the process running, edit an event directly in Van Moer's store — change a price, or drop an event.
+With the process running, edit an event directly in Org B's store — change a price, or drop an event.
 With the file adapter this is literally editing a JSON file, which makes the demo better, not worse.
 
-Expected: Acme's next verification fails at the `prev` hash or the `from` state, the UI says so plainly
+Expected: Org A's next verification fails at the `prev` hash or the `from` state, the UI says so plainly
 and in red, and the audit log carries a `chain.verify` / `failed` entry.
 
 Do not make this failure recoverable by resyncing. It is a hard error and must look like one.
@@ -221,7 +221,7 @@ event, so before the audit log there was no record any of it happened.
 | Attempt | Expected |
 |---|---|
 | An API key without `instances:write` fires a transition | `403`, audit entry `outcome: "denied"`, no event |
-| Acme fires a transition whose `by` lists only `weigher` | `403`, audit entry, no event |
+| Org A fires a transition whose `by` lists only `weigher` | `403`, audit entry, no event |
 | A peer presents a JWS that fails verification | `401`, audit entry with the peer DID, application log warning |
 | A connection request is rejected by the operator | connection `REJECTED`, audit entry with the admin session |
 | The relay target is unreachable | `502 peer-unreachable` — **not** a `409` — audit entry, retryable |

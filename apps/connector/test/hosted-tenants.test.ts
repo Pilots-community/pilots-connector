@@ -24,7 +24,7 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
 import type { ParticipantConfig } from '../src/config/config.js'
 import type { ServiceResult } from '../src/instances/instance.service.js'
-import { VANMOER } from './helpers/core.js'
+import { ORG_B } from './helpers/core.js'
 import { buildScenario, type Scenario } from './helpers/network.js'
 
 /** Two customers of one hosting provider. Separate participants, one process. */
@@ -47,7 +47,7 @@ beforeEach(async () => {
   scenario = await buildScenario({
     // One node, two participants: that is what "hosted" means here.
     provider: { participants: [TENANT_A, TENANT_B] },
-    vanmoer: { participants: [VANMOER] },
+    'org-b': { participants: [ORG_B] },
   })
 })
 
@@ -150,12 +150,12 @@ describe('two tenants on one connector', () => {
 
     // An instance only B takes part in — with an outside peer, so A has no
     // business with it at all. Note whose connection this is: B's. A's
-    // relationship with Van Moer, if any, is a different record.
-    await scenario.connect('provider', 'vanmoer', { fromParticipant: 'tenant-b' })
+    // relationship with Org B, if any, is a different record.
+    await scenario.connect('provider', 'org-b', { fromParticipant: 'tenant-b' })
     const shared = unwrap(
       await provider.runtime.instances.create(provider.caller('tenant-b'), {
         definition: WEIGHING,
-        participants: { shipper: TENANT_B.did, weigher: VANMOER.did },
+        participants: { shipper: TENANT_B.did, weigher: ORG_B.did },
         data: { containerNumber: 'MSCU7654321', terminal: '869' },
       }),
     )
@@ -175,15 +175,15 @@ describe('two tenants on one connector', () => {
 
   it('gives each tenant its own connection, so one cannot ride on another’s', async () => {
     const provider = scenario.node('provider')
-    await scenario.connect('provider', 'vanmoer', { fromParticipant: 'tenant-b' })
+    await scenario.connect('provider', 'org-b', { fromParticipant: 'tenant-b' })
 
     // B connected. A did not, and sharing a process does not change that.
-    expect(await provider.runtime.connections.between(TENANT_B.id, VANMOER.did)).toBeDefined()
-    expect(await provider.runtime.connections.between(TENANT_A.id, VANMOER.did)).toBeUndefined()
+    expect(await provider.runtime.connections.between(TENANT_B.id, ORG_B.did)).toBeDefined()
+    expect(await provider.runtime.connections.between(TENANT_A.id, ORG_B.did)).toBeUndefined()
 
     const refused = await provider.runtime.instances.create(provider.caller('tenant-a'), {
       definition: WEIGHING,
-      participants: { shipper: TENANT_A.did, weigher: VANMOER.did },
+      participants: { shipper: TENANT_A.did, weigher: ORG_B.did },
       data: { containerNumber: 'MSCU3333333', terminal: '869' },
     })
     expect(refused.ok).toBe(false)
@@ -193,7 +193,7 @@ describe('two tenants on one connector', () => {
 
   it('resolves hosting per instance, even for two instances of one definition', async () => {
     const provider = scenario.node('provider')
-    await scenario.connect('provider', 'vanmoer', { fromParticipant: 'tenant-a' })
+    await scenario.connect('provider', 'org-b', { fromParticipant: 'tenant-a' })
 
     // B is the weigher here, so the provider hosts it.
     const hosted = unwrap(
@@ -204,12 +204,12 @@ describe('two tenants on one connector', () => {
       }),
     )
 
-    // Van Moer is the weigher here, so the provider hosts neither side —
+    // Org B is the weigher here, so the provider hosts neither side —
     // same definition, same process, opposite answer.
     const external = unwrap(
       await provider.runtime.instances.create(provider.caller('tenant-a'), {
         definition: WEIGHING,
-        participants: { shipper: TENANT_A.did, weigher: VANMOER.did },
+        participants: { shipper: TENANT_A.did, weigher: ORG_B.did },
         data: { containerNumber: 'MSCU2222222', terminal: '869' },
       }),
     )
@@ -222,7 +222,7 @@ describe('two tenants on one connector', () => {
       (await provider.runtime.store.instances.get(TENANT_A.id, external.instance.id))?.home,
     ).toBe(false)
     expect(
-      (await scenario.node('vanmoer').runtime.store.instances.get(VANMOER.id, external.instance.id))
+      (await scenario.node('org-b').runtime.store.instances.get(ORG_B.id, external.instance.id))
         ?.home,
     ).toBe(true)
   })

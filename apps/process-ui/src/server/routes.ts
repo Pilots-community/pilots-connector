@@ -121,8 +121,13 @@ export function registerRoutes(
 
   fastify.get('/api/ui/session', async (request, reply) => {
     const user = await userOf(request)
-    // Whose connector this is, asked rather than configured twice.
-    const me = user ? await client.me().catch(() => undefined) : undefined
+    /*
+     * Whose connector this is, asked rather than configured twice — and asked
+     * before anybody signs in, because "which organisation is this screen?" is a
+     * question the sign-in page has to answer too. A participant's DID is public
+     * by construction: it is what peers resolve to check its signatures.
+     */
+    const me = await client.me().catch(() => undefined)
     return reply.send({
       user: user ?? null,
       participant: config.displayName,

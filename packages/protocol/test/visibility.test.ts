@@ -22,7 +22,7 @@ function weighingInstance(state: string): Instance {
     id: '01J0000000000000000000000A',
     kind: 'service',
     definition: 'container-weighing@1.0.0',
-    participants: { shipper: 'did:web:acme-shipping.example', weigher: 'did:web:vanmoer.example' },
+    participants: { shipper: 'did:web:org-a.example', weigher: 'did:web:org-b.example' },
     quotationId: null,
     offering: null,
     state,

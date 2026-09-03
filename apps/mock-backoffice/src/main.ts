@@ -2,7 +2,7 @@
  * The mock backoffice, as a container.
  *
  * It exists so that "one side automates, the other clicks" is a **deployment
- * difference** rather than a slide: Van Moer runs this instead of a UI, Acme
+ * difference** rather than a slide: Org B runs this instead of a UI, Org A
  * runs a UI, and the connectors cannot tell the difference. Same image, same
  * API, same key — one is a person clicking and one is a machine reacting.
  *

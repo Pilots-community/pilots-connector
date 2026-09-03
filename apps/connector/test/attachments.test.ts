@@ -14,20 +14,20 @@ import { sha256 } from '@pilots/protocol'
 import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 
 import type { ServiceResult } from '../src/instances/instance.service.js'
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildScenario, type Scenario } from './helpers/network.js'
 
-const PARTICIPANTS = { shipper: ACME.did, weigher: VANMOER.did }
+const PARTICIPANTS = { shipper: ORG_A.did, weigher: ORG_B.did }
 const CERTIFICATE = new TextEncoder().encode('%PDF-1.7 a verified gross mass certificate')
 
 let scenario: Scenario
 
 beforeEach(async () => {
   scenario = await buildScenario({
-    acme: { participants: [ACME] },
-    vanmoer: { participants: [VANMOER] },
+    'org-a': { participants: [ORG_A] },
+    'org-b': { participants: [ORG_B] },
   })
-  await scenario.connect('acme', 'vanmoer')
+  await scenario.connect('org-a', 'org-b')
 })
 
 afterEach(async () => {
@@ -41,11 +41,11 @@ function unwrap<T>(result: ServiceResult<T>): T {
 
 /** Run S1 up to the point where the certificate is issued. */
 async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sha: string }> {
-  const acme = scenario.node('acme')
-  const vanmoer = scenario.node('vanmoer')
+  const orgA = scenario.node('org-a')
+  const orgB = scenario.node('org-b')
 
   const created = unwrap(
-    await acme.runtime.instances.create(acme.caller(), {
+    await orgA.runtime.instances.create(orgA.caller(), {
       definition: 'container-weighing@1.0.0',
       participants: PARTICIPANTS,
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
@@ -54,8 +54,8 @@ async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sh
   const id = created.instance.id
 
   unwrap(
-    await acme.runtime.instances.applyTransition(
-      acme.caller(),
+    await orgA.runtime.instances.applyTransition(
+      orgA.caller(),
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
@@ -63,8 +63,8 @@ async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sh
   )
   await scenario.settle()
   unwrap(
-    await vanmoer.runtime.instances.applyTransition(
-      vanmoer.caller(),
+    await orgB.runtime.instances.applyTransition(
+      orgB.caller(),
       id,
       {
         transition: 'weigh',
@@ -74,8 +74,8 @@ async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sh
     ),
   )
   unwrap(
-    await vanmoer.runtime.instances.applyTransition(
-      vanmoer.caller(),
+    await orgB.runtime.instances.applyTransition(
+      orgB.caller(),
       id,
       { transition: 'recordPayment', patch: { paymentReference: 'PMT-1' } },
       3,
@@ -83,15 +83,13 @@ async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sh
   )
   await scenario.settle()
 
-  // Van Moer uploads the certificate to its own connector, then references it.
-  const stored = unwrap(
-    await vanmoer.runtime.attachments.put(VANMOER, CERTIFICATE, 'application/pdf'),
-  )
+  // Org B uploads the certificate to its own connector, then references it.
+  const stored = unwrap(await orgB.runtime.attachments.put(ORG_B, CERTIFICATE, 'application/pdf'))
   if (to === 'PAID') return { id, sha: stored.sha256 }
 
   unwrap(
-    await vanmoer.runtime.instances.applyTransition(
-      vanmoer.caller(),
+    await orgB.runtime.instances.applyTransition(
+      orgB.caller(),
       id,
       {
         transition: 'issueVgm',
@@ -109,10 +107,8 @@ async function weighThrough(to: 'PAID' | 'VGM_ISSUED'): Promise<{ id: string; sh
 
 describe('a document is addressed by its content', () => {
   it('computes the hash itself rather than believing the uploader', async () => {
-    const vanmoer = scenario.node('vanmoer')
-    const stored = unwrap(
-      await vanmoer.runtime.attachments.put(VANMOER, CERTIFICATE, 'application/pdf'),
-    )
+    const orgB = scenario.node('org-b')
+    const stored = unwrap(await orgB.runtime.attachments.put(ORG_B, CERTIFICATE, 'application/pdf'))
 
     expect(stored.sha256).toBe(sha256(CERTIFICATE))
     expect(stored.size).toBe(CERTIFICATE.byteLength)
@@ -120,31 +116,23 @@ describe('a document is addressed by its content', () => {
   })
 
   it('treats a repeat upload of identical bytes as a no-op', async () => {
-    const vanmoer = scenario.node('vanmoer')
-    const first = unwrap(
-      await vanmoer.runtime.attachments.put(VANMOER, CERTIFICATE, 'application/pdf'),
-    )
-    const second = unwrap(
-      await vanmoer.runtime.attachments.put(VANMOER, CERTIFICATE, 'application/pdf'),
-    )
+    const orgB = scenario.node('org-b')
+    const first = unwrap(await orgB.runtime.attachments.put(ORG_B, CERTIFICATE, 'application/pdf'))
+    const second = unwrap(await orgB.runtime.attachments.put(ORG_B, CERTIFICATE, 'application/pdf'))
 
     expect(second.sha256).toBe(first.sha256)
-    expect(await vanmoer.runtime.store.attachments.list(VANMOER.id)).toHaveLength(1)
+    expect(await orgB.runtime.store.attachments.list(ORG_B.id)).toHaveLength(1)
   })
 
   it('refuses an empty document and one over the limit', async () => {
-    const vanmoer = scenario.node('vanmoer')
+    const orgB = scenario.node('org-b')
 
-    const empty = await vanmoer.runtime.attachments.put(
-      VANMOER,
-      new Uint8Array(),
-      'application/pdf',
-    )
+    const empty = await orgB.runtime.attachments.put(ORG_B, new Uint8Array(), 'application/pdf')
     expect(empty.ok).toBe(false)
 
-    const huge = await vanmoer.runtime.attachments.put(
-      VANMOER,
-      new Uint8Array(vanmoer.runtime.config.maxAttachmentBytes + 1),
+    const huge = await orgB.runtime.attachments.put(
+      ORG_B,
+      new Uint8Array(orgB.runtime.config.maxAttachmentBytes + 1),
       'application/pdf',
     )
     expect(huge.ok).toBe(false)
@@ -155,40 +143,40 @@ describe('a document is addressed by its content', () => {
 
 describe('who may read a document follows the field that describes it', () => {
   it('withholds the certificate from the shipper until it is issued', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
     const { sha } = await weighThrough('PAID')
 
-    // Van Moer uploaded them, so they are its own to read back — visibility
+    // Org B uploaded them, so they are its own to read back — visibility
     // governs what we hand to others, not what we hold.
-    expect(await vanmoer.runtime.attachments.read(VANMOER, VANMOER.did, sha)).toBeDefined()
+    expect(await orgB.runtime.attachments.read(ORG_B, ORG_B.did, sha)).toBeDefined()
 
-    // Acme may not — the document is not referenced by any event yet, so there
+    // Org A may not — the document is not referenced by any event yet, so there
     // is nothing entitling it to anything.
-    expect(await vanmoer.runtime.attachments.read(VANMOER, ACME.did, sha)).toBeUndefined()
-    expect(await acme.runtime.attachments.read(ACME, ACME.did, sha)).toBeUndefined()
+    expect(await orgB.runtime.attachments.read(ORG_B, ORG_A.did, sha)).toBeUndefined()
+    expect(await orgA.runtime.attachments.read(ORG_A, ORG_A.did, sha)).toBeUndefined()
   })
 
   it('releases it to the shipper once the instance reaches VGM_ISSUED', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
     const { id, sha } = await weighThrough('VGM_ISSUED')
 
-    expect((await acme.runtime.store.instances.get(ACME.id, id))?.state).toBe('VGM_ISSUED')
+    expect((await orgA.runtime.store.instances.get(ORG_A.id, id))?.state).toBe('VGM_ISSUED')
 
     // The grant is `certificate → shipper whenState VGM_ISSUED`, so now the
-    // hash is in Acme's filtered view and the bytes follow.
-    const forShipper = await vanmoer.runtime.attachments.read(VANMOER, ACME.did, sha)
+    // hash is in Org A's filtered view and the bytes follow.
+    const forShipper = await orgB.runtime.attachments.read(ORG_B, ORG_A.did, sha)
     expect(forShipper).toBeDefined()
     expect(new TextDecoder().decode(forShipper!.bytes)).toContain('gross mass certificate')
   })
 
   it('refuses a participant of another instance entirely', async () => {
-    const vanmoer = scenario.node('vanmoer')
+    const orgB = scenario.node('org-b')
     const { sha } = await weighThrough('VGM_ISSUED')
 
     expect(
-      await vanmoer.runtime.attachments.read(VANMOER, 'did:web:interloper.example', sha),
+      await orgB.runtime.attachments.read(ORG_B, 'did:web:interloper.example', sha),
     ).toBeUndefined()
   })
 })
@@ -199,20 +187,20 @@ describe('bytes follow the reference to the home node', () => {
    * the host issued the document, and a replica wants it.
    */
   it('lets a replica pull a document it is entitled to from the host', async () => {
-    const acme = scenario.node('acme')
+    const orgA = scenario.node('org-a')
     const { sha } = await weighThrough('VGM_ISSUED')
 
-    // Acme holds the reference in a verified event, but not the bytes: an
+    // Org A holds the reference in a verified event, but not the bytes: an
     // attachment is not replicated with the log, by design — the log stays small
     // and a peer downloads a document only when it wants one.
-    expect(await acme.runtime.store.attachments.has(ACME.id, sha)).toBe(false)
+    expect(await orgA.runtime.store.attachments.has(ORG_A.id, sha)).toBe(false)
 
-    const pulled = await acme.runtime.attachments.pull(ACME, VANMOER.did, [
+    const pulled = await orgA.runtime.attachments.pull(ORG_A, ORG_B.did, [
       { sha256: sha, mime: 'application/pdf', size: CERTIFICATE.byteLength },
     ])
     expect(pulled).toBe(1)
 
-    const held = await acme.runtime.store.attachments.get(ACME.id, sha)
+    const held = await orgA.runtime.store.attachments.get(ORG_A.id, sha)
     expect(held).toBeDefined()
     // Re-hashed on arrival. Content addressing is worth nothing if the address
     // is taken on trust.
@@ -226,36 +214,36 @@ describe('bytes follow the reference to the home node', () => {
    * through a scenario that would have to be invented to reach it.
    */
   it('pulls a document held by a peer, in either direction', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
 
     const note = new TextEncoder().encode('a scan of the transport order')
-    const stored = unwrap(await acme.runtime.attachments.put(ACME, note, 'application/pdf'))
+    const stored = unwrap(await orgA.runtime.attachments.put(ORG_A, note, 'application/pdf'))
 
-    // Acme is the holder, so it serves its own document to a peer that asks —
+    // Org A is the holder, so it serves its own document to a peer that asks —
     // subject, as ever, to whether that peer may read it.
-    expect(await vanmoer.runtime.store.attachments.has(VANMOER.id, stored.sha256)).toBe(false)
-    const pulled = await vanmoer.runtime.attachments.pull(VANMOER, ACME.did, [stored])
+    expect(await orgB.runtime.store.attachments.has(ORG_B.id, stored.sha256)).toBe(false)
+    const pulled = await orgB.runtime.attachments.pull(ORG_B, ORG_A.did, [stored])
 
-    // Nothing references it in any instance, so Van Moer is not entitled and
-    // Acme serves nothing. Holding a document is not the same as sharing it.
+    // Nothing references it in any instance, so Org B is not entitled and
+    // Org A serves nothing. Holding a document is not the same as sharing it.
     expect(pulled).toBe(0)
-    expect(await vanmoer.runtime.store.attachments.has(VANMOER.id, stored.sha256)).toBe(false)
+    expect(await orgB.runtime.store.attachments.has(ORG_B.id, stored.sha256)).toBe(false)
   })
 
   it('refuses bytes from a peer that do not hash to what was claimed', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
 
-    // A reference to something Van Moer will never be given honestly.
+    // A reference to something Org B will never be given honestly.
     const claimed = sha256(new TextEncoder().encode('the real document'))
-    const pulled = await vanmoer.runtime.attachments.pull(VANMOER, ACME.did, [
+    const pulled = await orgB.runtime.attachments.pull(ORG_B, ORG_A.did, [
       { sha256: claimed, mime: 'application/pdf', size: 17 },
     ])
 
-    // Acme does not hold it, so nothing arrives — and nothing is invented.
+    // Org A does not hold it, so nothing arrives — and nothing is invented.
     expect(pulled).toBe(0)
-    expect(await vanmoer.runtime.store.attachments.has(VANMOER.id, claimed)).toBe(false)
-    void acme
+    expect(await orgB.runtime.store.attachments.has(ORG_B.id, claimed)).toBe(false)
+    void orgA
   })
 })

@@ -56,7 +56,7 @@ function scripted(answer: ScriptedAnswer | (() => never)): {
   return { fetch, calls }
 }
 
-function client(fetch: typeof globalThis.fetch, actorRef = 'alice@acme.example'): PilotsClient {
+function client(fetch: typeof globalThis.fetch, actorRef = 'alice@org-a.example'): PilotsClient {
   return new PilotsClient({
     baseUrl: 'https://connector.example/',
     apiKey: 'ak_TEST.secret',
@@ -74,7 +74,7 @@ describe('every call carries the credential and the actor', () => {
     expect(calls[0]?.headers['authorization']).toBe('ApiKey ak_TEST.secret')
     // Asserted and unproven: an audit hint, never an identity claim, and never
     // part of the signed header.
-    expect(calls[0]?.headers['x-actor-ref']).toBe('alice@acme.example')
+    expect(calls[0]?.headers['x-actor-ref']).toBe('alice@org-a.example')
   })
 
   it('omits the actor when nobody in particular is acting', async () => {
@@ -92,18 +92,18 @@ describe('every call carries the credential and the actor', () => {
     const { fetch, calls } = scripted({ status: 200, body: { instances: [] } })
     // Keys are per participant, not per user: a BFF holds one and says who is
     // driving each call.
-    await client(fetch).as('bob@acme.example').instances()
-    expect(calls[0]?.headers['x-actor-ref']).toBe('bob@acme.example')
+    await client(fetch).as('bob@org-a.example').instances()
+    expect(calls[0]?.headers['x-actor-ref']).toBe('bob@org-a.example')
   })
 
   it('never addresses a peer, even when browsing one’s offerings', async () => {
     const { fetch, calls } = scripted({ status: 200, body: { offerings: [] } })
-    await client(fetch).offerings('did:web:vanmoer.example')
+    await client(fetch).offerings('did:web:org-b.example')
 
     // The peer is a query parameter on *our own* connector. The client holds no
     // peer address and resolves nothing.
     expect(calls[0]?.url).toBe(
-      'https://connector.example/api/local/v1/offerings?peer=did%3Aweb%3Avanmoer.example',
+      'https://connector.example/api/local/v1/offerings?peer=did%3Aweb%3Aorg-b.example',
     )
   })
 })

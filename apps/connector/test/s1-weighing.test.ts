@@ -9,9 +9,9 @@ import { Problem, verifyChain } from '@pilots/protocol'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { WriteOutcome, ServiceResult } from '../src/instances/instance.service.js'
-import { ACME, VANMOER, buildCore, type TestCore } from './helpers/core.js'
+import { ORG_A, ORG_B, buildCore, type TestCore } from './helpers/core.js'
 
-const PARTICIPANTS = { shipper: ACME.did, weigher: VANMOER.did }
+const PARTICIPANTS = { shipper: ORG_A.did, weigher: ORG_B.did }
 const CERTIFICATE_SHA = `sha256:${'a'.repeat(64)}`
 
 let core: TestCore
@@ -27,7 +27,7 @@ function unwrap<T>(result: ServiceResult<T>): T {
 
 async function orderWeighing(): Promise<WriteOutcome> {
   return unwrap(
-    await core.instances.create(core.caller('acme'), {
+    await core.instances.create(core.caller('org-a'), {
       definition: 'container-weighing@1.0.0',
       participants: PARTICIPANTS,
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
@@ -38,11 +38,11 @@ async function orderWeighing(): Promise<WriteOutcome> {
 describe('S1 step 2 — the standing quotation is born agreed', () => {
   it('fires its `auto` transition on creation, with no special case in code', async () => {
     const created = unwrap(
-      await core.instances.create(core.caller('acme'), {
+      await core.instances.create(core.caller('org-a'), {
         definition: 'container-weighing-quotation@1.0.0',
         participants: PARTICIPANTS,
         data: {
-          offering: 'urn:offering:vanmoer:container-weighing',
+          offering: 'urn:offering:org-b:container-weighing',
           price: { value: 45, currency: 'EUR' },
           conditions: { terminal: '869' },
         },
@@ -53,16 +53,16 @@ describe('S1 step 2 — the standing quotation is born agreed', () => {
     // Creation is seq 1 and `agree` is seq 2: the log alone rebuilds the instance.
     expect(created.instance.seq).toBe(2)
     expect(created.events.map((e) => e.header.transition)).toEqual(['create', 'agree'])
-    // The runtime fired it, and the runtime is the **home node** — Van Moer
-    // hosts this definition. Acme could not have signed it: it did not act.
-    expect(created.events[1]?.header.actor).toBe(VANMOER.did)
+    // The runtime fired it, and the runtime is the **home node** — Org B
+    // hosts this definition. Org A could not have signed it: it did not act.
+    expect(created.events[1]?.header.actor).toBe(ORG_B.did)
   })
 
   it('leaves a negotiated quotation waiting, because its definition says so', async () => {
     const created = unwrap(
-      await core.instances.create(core.caller('acme'), {
+      await core.instances.create(core.caller('org-a'), {
         definition: 'container-transport-quotation@1.0.0',
-        participants: { shipper: ACME.did, transporter: VANMOER.did },
+        participants: { shipper: ORG_A.did, transporter: ORG_B.did },
         data: {
           pickup: { location: 'Antwerp 869' },
           dropoff: { location: 'Ghent' },
@@ -84,7 +84,7 @@ describe('S1 steps 3–9 — the weighing runs', () => {
     // Step 4 — the shipper announces the truck.
     const announced = unwrap(
       await core.instances.applyTransition(
-        core.caller('acme', 'alice@acme.example'),
+        core.caller('org-a', 'alice@org-a.example'),
         id,
         {
           transition: 'announceTruck',
@@ -98,7 +98,7 @@ describe('S1 steps 3–9 — the weighing runs', () => {
     // Step 5 — the weigher records the weighing.
     const weighed = unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer', 'backoffice'),
+        core.caller('org-b', 'backoffice'),
         id,
         {
           transition: 'weigh',
@@ -114,7 +114,7 @@ describe('S1 steps 3–9 — the weighing runs', () => {
     // Step 7 — payment.
     unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         { transition: 'recordPayment', patch: { paymentReference: 'PAY-2026-0042' } },
         3,
@@ -124,7 +124,7 @@ describe('S1 steps 3–9 — the weighing runs', () => {
     // Step 9 — the certificate, with its content-addressed attachment.
     const issued = unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         {
           transition: 'issueVgm',
@@ -151,7 +151,7 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
     const id = ordered.instance.id
     unwrap(
       await core.instances.applyTransition(
-        core.caller('acme'),
+        core.caller('org-a'),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -159,7 +159,7 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
     )
     unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         {
           transition: 'weigh',
@@ -176,11 +176,11 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
   it('withholds grossMass from the shipper in WEIGHED, and shows it to the weigher', async () => {
     const id = await weighed()
 
-    const asShipper = await core.instances.read(core.caller('acme'), id)
+    const asShipper = await core.instances.read(core.caller('org-a'), id)
     expect(asShipper?.instance.data).not.toHaveProperty('grossMass')
     expect(asShipper?.redacted).toBe(true)
 
-    const asWeigher = await core.instances.read(core.caller('vanmoer'), id)
+    const asWeigher = await core.instances.read(core.caller('org-b'), id)
     expect(asWeigher?.instance.data.grossMass).toEqual({
       value: 24000,
       unit: 'kg',
@@ -190,19 +190,19 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
 
   it('releases it to the shipper once payment is recorded — nothing re-sent, nothing re-signed', async () => {
     const id = await weighed()
-    const before = await core.instances.read(core.caller('acme'), id)
+    const before = await core.instances.read(core.caller('org-a'), id)
     expect(before?.instance.data).not.toHaveProperty('grossMass')
 
     unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         { transition: 'recordPayment', patch: { paymentReference: 'PAY-1' } },
         3,
       ),
     )
 
-    const after = await core.instances.read(core.caller('acme'), id)
+    const after = await core.instances.read(core.caller('org-a'), id)
     expect(after?.instance.data.grossMass).toBeDefined()
     // …and the payment reference stays the weigher's business, always.
     expect(after?.instance.data).not.toHaveProperty('paymentReference')
@@ -211,7 +211,7 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
   it('applies the same rule to the event log the shipper replays', async () => {
     const id = await weighed()
 
-    const beforePayment = await core.instances.events(core.caller('acme'), id)
+    const beforePayment = await core.instances.events(core.caller('org-a'), id)
     const weighEvent = beforePayment?.find((e) => e.header.transition === 'weigh')
     expect(weighEvent?.redacted).toBe(true)
     // Withheld in full, so `null` rather than `{}` — see docs/PROTOCOL.md §7.3.
@@ -219,14 +219,14 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
 
     unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         { transition: 'recordPayment', patch: { paymentReference: 'PAY-1' } },
         3,
       ),
     )
 
-    const afterPayment = await core.instances.events(core.caller('acme'), id)
+    const afterPayment = await core.instances.events(core.caller('org-a'), id)
     const released = afterPayment?.find((e) => e.header.transition === 'weigh')
     expect(released?.redacted).toBe(false)
     expect(released?.payload).toHaveProperty('grossMass')
@@ -236,7 +236,7 @@ describe('S1 steps 6 and 8 — the point of the scenario', () => {
 
   it('still verifies as a chain when the shipper cannot see a payload', async () => {
     const id = await weighed()
-    const asShipper = (await core.instances.events(core.caller('acme'), id))!
+    const asShipper = (await core.instances.events(core.caller('org-a'), id))!
 
     const verified = await verifyChain(asShipper, {
       resolver: core.resolver,
@@ -256,17 +256,17 @@ describe('home-node resolution is per instance', () => {
   it('marks the weigher’s copy authoritative and the shipper’s a replica', async () => {
     const ordered = await orderWeighing()
 
-    const asWeigher = await core.instances.read(core.caller('vanmoer'), ordered.instance.id)
-    const asShipper = await core.instances.read(core.caller('acme'), ordered.instance.id)
+    const asWeigher = await core.instances.read(core.caller('org-b'), ordered.instance.id)
+    const asShipper = await core.instances.read(core.caller('org-a'), ordered.instance.id)
 
     expect(asWeigher?.home).toBe(true)
     expect(asShipper?.home).toBe(false)
   })
 
   it('refuses an instance whose home node is nobody this connector holds', async () => {
-    const result = await core.instances.create(core.caller('acme'), {
+    const result = await core.instances.create(core.caller('org-a'), {
       definition: 'container-weighing@1.0.0',
-      participants: { shipper: ACME.did, weigher: 'did:web:someone-else.example' },
+      participants: { shipper: ORG_A.did, weigher: 'did:web:someone-else.example' },
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
     })
 
@@ -283,17 +283,17 @@ describe('what each participant may do next', () => {
     const ordered = await orderWeighing()
     const id = ordered.instance.id
 
-    expect((await core.instances.read(core.caller('acme'), id))?.available).toEqual([
+    expect((await core.instances.read(core.caller('org-a'), id))?.available).toEqual([
       { transition: 'announceTruck', role: 'shipper' },
       { transition: 'cancel', role: 'shipper' },
     ])
-    expect((await core.instances.read(core.caller('vanmoer'), id))?.available).toEqual([
+    expect((await core.instances.read(core.caller('org-b'), id))?.available).toEqual([
       { transition: 'cancel', role: 'weigher' },
     ])
 
     unwrap(
       await core.instances.applyTransition(
-        core.caller('acme'),
+        core.caller('org-a'),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -302,10 +302,10 @@ describe('what each participant may do next', () => {
 
     // Now it is the weigher's turn, and only the weigher's.
     expect(
-      (await core.instances.read(core.caller('vanmoer'), id))?.available.map((a) => a.transition),
+      (await core.instances.read(core.caller('org-b'), id))?.available.map((a) => a.transition),
     ).toContain('weigh')
     expect(
-      (await core.instances.read(core.caller('acme'), id))?.available.map((a) => a.transition),
+      (await core.instances.read(core.caller('org-a'), id))?.available.map((a) => a.transition),
     ).not.toContain('weigh')
   })
 })
@@ -315,7 +315,7 @@ describe('refusals', () => {
     const ordered = await orderWeighing()
     unwrap(
       await core.instances.applyTransition(
-        core.caller('acme'),
+        core.caller('org-a'),
         ordered.instance.id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -323,7 +323,7 @@ describe('refusals', () => {
     )
 
     const refused = await core.instances.applyTransition(
-      core.caller('acme'),
+      core.caller('org-a'),
       ordered.instance.id,
       {
         transition: 'weigh',
@@ -336,14 +336,14 @@ describe('refusals', () => {
     if (!refused.ok) expect(refused.errors[0]?.type).toBe(Problem.roleNotPermitted)
 
     // And no event was produced — which is exactly why the audit log exists.
-    expect(await core.store.events.read('vanmoer', ordered.instance.id)).toHaveLength(2)
+    expect(await core.store.events.read('org-b', ordered.instance.id)).toHaveLength(2)
   })
 
   it('reports a stale If-Match as a conflict carrying the real seq', async () => {
     const ordered = await orderWeighing()
     unwrap(
       await core.instances.applyTransition(
-        core.caller('acme'),
+        core.caller('org-a'),
         ordered.instance.id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -351,7 +351,7 @@ describe('refusals', () => {
     )
 
     const stale = await core.instances.applyTransition(
-      core.caller('acme'),
+      core.caller('org-a'),
       ordered.instance.id,
       { transition: 'cancel', patch: { cancellationReason: 'changed my mind' } },
       1,
@@ -365,7 +365,7 @@ describe('refusals', () => {
   })
 
   it('refuses data that fails the definition’s schema at creation', async () => {
-    const result = await core.instances.create(core.caller('acme'), {
+    const result = await core.instances.create(core.caller('org-a'), {
       definition: 'container-weighing@1.0.0',
       participants: PARTICIPANTS,
       data: { containerNumber: 'not-a-container-number', terminal: '869' },
@@ -376,8 +376,8 @@ describe('refusals', () => {
 
   it('refuses a caller who holds no role in the instance', async () => {
     const stranger = await buildCore([
-      ACME,
-      VANMOER,
+      ORG_A,
+      ORG_B,
       {
         id: 'stranger',
         did: 'did:web:stranger.example',
@@ -386,7 +386,7 @@ describe('refusals', () => {
       },
     ])
     const ordered = unwrap(
-      await stranger.instances.create(stranger.caller('acme'), {
+      await stranger.instances.create(stranger.caller('org-a'), {
         definition: 'container-weighing@1.0.0',
         participants: PARTICIPANTS,
         data: { containerNumber: 'MSCU1234567', terminal: '869' },
@@ -406,7 +406,7 @@ describe('the whole chain verifies for the home node', () => {
     const id = ordered.instance.id
     unwrap(
       await core.instances.applyTransition(
-        core.caller('acme'),
+        core.caller('org-a'),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -414,7 +414,7 @@ describe('the whole chain verifies for the home node', () => {
     )
     unwrap(
       await core.instances.applyTransition(
-        core.caller('vanmoer'),
+        core.caller('org-b'),
         id,
         {
           transition: 'weigh',
@@ -426,7 +426,7 @@ describe('the whole chain verifies for the home node', () => {
       ),
     )
 
-    const events = (await core.instances.events(core.caller('vanmoer'), id))!
+    const events = (await core.instances.events(core.caller('org-b'), id))!
     const verified = await verifyChain(events, {
       resolver: core.resolver,
       definition: core.registry.require('container-weighing@1.0.0').definition,

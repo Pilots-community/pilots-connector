@@ -78,7 +78,7 @@ export function findVerificationMethod(
 }
 
 /**
- * `did:web:example.com:t:acme` → `https://example.com/t/acme/did.json`;
+ * `did:web:example.com:t:org-a` → `https://example.com/t/org-a/did.json`;
  * `did:web:example.com` → `https://example.com/.well-known/did.json`.
  *
  * Exported from the core because the **domain-binding check** needs it: a

@@ -13,17 +13,17 @@ import type { SignedEvent } from '../src/schemas/event.js'
 import { shipped } from './helpers/definitions.js'
 import { instanceGenesis } from '../src/schemas/instance.js'
 import {
-  ACME,
+  ORG_A,
   ChainBuilder,
   DEFAULT_GENESIS,
-  VANMOER,
+  ORG_B,
   twoParties,
   type TwoParties,
 } from './helpers/chain.js'
 
 const weighing = shipped('container-weighing.json')
 const INSTANCE = '01J0000000000000000000000A'
-const participants = { shipper: ACME, weigher: VANMOER }
+const participants = { shipper: ORG_A, weigher: ORG_B }
 
 let parties: TwoParties
 let events: SignedEvent[]
@@ -32,8 +32,8 @@ let events: SignedEvent[]
 async function weighingChain(): Promise<SignedEvent[]> {
   const chain = new ChainBuilder(parties, INSTANCE)
   await chain.append({
-    participantId: 'acme',
-    actor: ACME,
+    participantId: 'org-a',
+    actor: ORG_A,
     transition: 'create',
     from: null,
     to: 'ORDERED',
@@ -41,8 +41,8 @@ async function weighingChain(): Promise<SignedEvent[]> {
     payload: { containerNumber: 'MSCU1234567', terminal: '869' },
   })
   await chain.append({
-    participantId: 'acme',
-    actor: ACME,
+    participantId: 'org-a',
+    actor: ORG_A,
     transition: 'announceTruck',
     from: 'ORDERED',
     to: 'TRUCK_ANNOUNCED',
@@ -50,8 +50,8 @@ async function weighingChain(): Promise<SignedEvent[]> {
     payload: { truckPlate: '1-ABC-123' },
   })
   await chain.append({
-    participantId: 'vanmoer',
-    actor: VANMOER,
+    participantId: 'org-b',
+    actor: ORG_B,
     transition: 'weigh',
     from: 'TRUCK_ANNOUNCED',
     to: 'WEIGHED',
@@ -102,8 +102,8 @@ describe('a well-formed chain', () => {
   it('uses the empty-payload hash for a transition that carries none', async () => {
     const chain = new ChainBuilder(parties, INSTANCE)
     const event = await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'ORDERED',
@@ -149,8 +149,8 @@ describe('S4b — tamper detection', () => {
     // event 3's `prev` pointing at the original. This is the host rewriting.
     const chain = new ChainBuilder(parties, INSTANCE)
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'ORDERED',
@@ -158,8 +158,8 @@ describe('S4b — tamper detection', () => {
       payload: { containerNumber: 'MSCU1234567', terminal: '869' },
     })
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'announceTruck',
       from: 'ORDERED',
       to: 'TRUCK_ANNOUNCED',
@@ -176,16 +176,16 @@ describe('S4b — tamper detection', () => {
   it('catches a state that does not follow from the event before it', async () => {
     const chain = new ChainBuilder(parties, INSTANCE)
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'ORDERED',
       at: '2026-08-24T09:00:00.000Z',
     })
     await chain.append({
-      participantId: 'vanmoer',
-      actor: VANMOER,
+      participantId: 'org-b',
+      actor: ORG_B,
       transition: 'weigh',
       from: 'TRUCK_ANNOUNCED', // never entered
       to: 'WEIGHED',
@@ -201,16 +201,16 @@ describe('S4b — tamper detection', () => {
   it('catches a participant acting outside its role', async () => {
     const chain = new ChainBuilder(parties, INSTANCE)
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'ORDERED',
       at: '2026-08-24T09:00:00.000Z',
     })
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'announceTruck',
       from: 'ORDERED',
       to: 'TRUCK_ANNOUNCED',
@@ -219,8 +219,8 @@ describe('S4b — tamper detection', () => {
     })
     // The shipper signs a weighing. The signature is genuine; the authority is not.
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'weigh',
       from: 'TRUCK_ANNOUNCED',
       to: 'WEIGHED',
@@ -335,16 +335,16 @@ describe('a partially redacted payload', () => {
   // rather than an absent one.
   const threeParty = shipped('container-transport-with-terminal.json')
   const threeWay = {
-    shipper: ACME,
-    transporter: VANMOER,
+    shipper: ORG_A,
+    transporter: ORG_B,
     terminal: 'did:web:terminal869.example',
   }
 
   async function assignChain(): Promise<SignedEvent[]> {
     const chain = new ChainBuilder(parties, INSTANCE)
     await chain.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'PENDING_CONTRACT',
@@ -352,16 +352,16 @@ describe('a partially redacted payload', () => {
       payload: { containerType: '40HC' },
     })
     await chain.append({
-      participantId: 'vanmoer',
-      actor: VANMOER,
+      participantId: 'org-b',
+      actor: ORG_B,
       transition: 'startExecution',
       from: 'PENDING_CONTRACT',
       to: 'CONTRACTED',
       at: '2026-08-24T09:05:00.000Z',
     })
     await chain.append({
-      participantId: 'vanmoer',
-      actor: VANMOER,
+      participantId: 'org-b',
+      actor: ORG_B,
       transition: 'assign',
       from: 'CONTRACTED',
       to: 'ASSIGNED',
@@ -446,11 +446,11 @@ describe('every event commits to the instance it belongs to', () => {
     const swapped = await verifyChain(events, {
       resolver: parties.resolver,
       definition: weighing,
-      participants: { shipper: THIRD, weigher: VANMOER },
+      participants: { shipper: THIRD, weigher: ORG_B },
       genesis: instanceGenesis({
         kind: 'service',
         definition: 'container-weighing@1.0.0',
-        participants: { shipper: THIRD, weigher: VANMOER },
+        participants: { shipper: THIRD, weigher: ORG_B },
       }),
     })
 
@@ -481,12 +481,12 @@ describe('every event commits to the instance it belongs to', () => {
       instanceGenesis({
         kind: 'service',
         definition: 'container-weighing@1.0.0',
-        participants: { shipper: THIRD, weigher: VANMOER },
+        participants: { shipper: THIRD, weigher: ORG_B },
       }),
     )
     await other.append({
-      participantId: 'acme',
-      actor: ACME,
+      participantId: 'org-a',
+      actor: ORG_A,
       transition: 'create',
       from: null,
       to: 'ORDERED',
@@ -519,7 +519,7 @@ describe('every event commits to the instance it belongs to', () => {
     ).toBe(
       genesisHash(
         instanceGenesis({
-          participants: { weigher: VANMOER, shipper: ACME },
+          participants: { weigher: ORG_B, shipper: ORG_A },
           definition: 'container-weighing@1.0.0',
           kind: 'service',
         }),

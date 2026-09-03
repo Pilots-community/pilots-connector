@@ -14,15 +14,15 @@
 import { PilotsClient, ProblemError } from '@pilots/client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildTestApp, provision, type TestApp } from './helpers/app.js'
 
-const PARTICIPANTS = { shipper: ACME.did, weigher: VANMOER.did }
+const PARTICIPANTS = { shipper: ORG_A.did, weigher: ORG_B.did }
 
 let testApp: TestApp
 let baseUrl: string
-let acme: PilotsClient
-let vanmoer: PilotsClient
+let orgA: PilotsClient
+let orgB: PilotsClient
 
 beforeAll(async () => {
   testApp = await buildTestApp()
@@ -31,7 +31,7 @@ beforeAll(async () => {
   const address = testApp.app.getHttpServer().address() as { port: number }
   baseUrl = `http://127.0.0.1:${address.port}`
 
-  const acmeKey = await provision(testApp, 'acme', [
+  const orgAKey = await provision(testApp, 'org-a', [
     'instances:read',
     'instances:write',
     'events:read',
@@ -40,7 +40,7 @@ beforeAll(async () => {
     'attachments:read',
     'attachments:write',
   ])
-  const vanmoerKey = await provision(testApp, 'vanmoer', [
+  const orgBKey = await provision(testApp, 'org-b', [
     'instances:read',
     'instances:write',
     'events:read',
@@ -50,11 +50,11 @@ beforeAll(async () => {
     'attachments:write',
   ])
 
-  acme = new PilotsClient({ baseUrl, apiKey: acmeKey.apiKey, actorRef: 'alice@acme.example' })
-  vanmoer = new PilotsClient({
+  orgA = new PilotsClient({ baseUrl, apiKey: orgAKey.apiKey, actorRef: 'alice@org-a.example' })
+  orgB = new PilotsClient({
     baseUrl,
-    apiKey: vanmoerKey.apiKey,
-    actorRef: 'bram@vanmoer.example',
+    apiKey: orgBKey.apiKey,
+    actorRef: 'bram@org-b.example',
   })
 })
 
@@ -63,7 +63,7 @@ afterAll(async () => {
 })
 
 async function order(): Promise<{ id: string; seq: number }> {
-  const created = await acme.createInstance({
+  const created = await orgA.createInstance({
     definition: 'container-weighing@1.0.0',
     participants: PARTICIPANTS,
     data: { containerNumber: 'MSCU1234567', terminal: '869' },
@@ -73,19 +73,19 @@ async function order(): Promise<{ id: string; seq: number }> {
 
 describe('the client drives the whole local API', () => {
   it('reads the definition registry', async () => {
-    const definitions = await acme.definitions()
+    const definitions = await orgA.definitions()
     expect(definitions.map((one) => one.ref)).toContain('container-weighing@1.0.0')
     // A content hash, so a client can tell that two connectors hold the same
     // bytes rather than the same version number.
     expect(definitions[0]?.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/)
 
-    const one = await acme.definition('container-weighing@1.0.0')
+    const one = await orgA.definition('container-weighing@1.0.0')
     expect(one.definition.hostedBy).toBe('weigher')
   })
 
   it('creates an instance and reports what this participant may do next', async () => {
     const { id } = await order()
-    const instance = await acme.instance(id)
+    const instance = await orgA.instance(id)
 
     expect(instance.state).toBe('ORDERED')
     // The field a UI renders buttons from. It is the same answer the permission
@@ -97,14 +97,14 @@ describe('the client drives the whole local API', () => {
   it('runs S1 through to VGM_ISSUED, one participant at a time', async () => {
     const { id } = await order()
 
-    const announced = await acme.applyTransition(
+    const announced = await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
     )
     expect(announced.instance.state).toBe('TRUCK_ANNOUNCED')
 
-    const weighed = await vanmoer.applyTransition(
+    const weighed = await orgB.applyTransition(
       id,
       {
         transition: 'weigh',
@@ -114,29 +114,29 @@ describe('the client drives the whole local API', () => {
     )
     expect(weighed.instance.state).toBe('WEIGHED')
 
-    // Acme reads. `grossMass` is withheld until payment, and the client reports
+    // Org A reads. `grossMass` is withheld until payment, and the client reports
     // that the view is incomplete rather than letting it look whole.
-    const beforePayment = await acme.instance(id)
+    const beforePayment = await orgA.instance(id)
     expect(beforePayment.data['grossMass']).toBeUndefined()
     expect(beforePayment.redacted).toBe(true)
 
-    await vanmoer.applyTransition(
+    await orgB.applyTransition(
       id,
       { transition: 'recordPayment', patch: { paymentReference: 'PMT-1' } },
       3,
     )
-    const afterPayment = await acme.instance(id)
+    const afterPayment = await orgA.instance(id)
     expect(afterPayment.data['grossMass']).toMatchObject({ value: 24000 })
   })
 
   it('uploads a document, references it, and fetches the bytes back', async () => {
     const { id } = await order()
-    await acme.applyTransition(
+    await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
     )
-    await vanmoer.applyTransition(
+    await orgB.applyTransition(
       id,
       {
         transition: 'weigh',
@@ -144,20 +144,20 @@ describe('the client drives the whole local API', () => {
       },
       2,
     )
-    await vanmoer.applyTransition(
+    await orgB.applyTransition(
       id,
       { transition: 'recordPayment', patch: { paymentReference: 'PMT-1' } },
       3,
     )
 
     const pdf = new TextEncoder().encode('%PDF-1.7 verified gross mass')
-    const ref = await vanmoer.uploadAttachment(pdf, 'application/pdf')
+    const ref = await orgB.uploadAttachment(pdf, 'application/pdf')
     // The connector hashed it. The client sent bytes and a content type, nothing
     // that could have made the address disagree with the content.
     expect(ref.sha256).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(ref.size).toBe(pdf.byteLength)
 
-    await vanmoer.applyTransition(
+    await orgB.applyTransition(
       id,
       {
         transition: 'issueVgm',
@@ -167,38 +167,38 @@ describe('the client drives the whole local API', () => {
       4,
     )
 
-    const bytes = new Uint8Array(await (await acme.attachment(ref.sha256)).arrayBuffer())
+    const bytes = new Uint8Array(await (await orgA.attachment(ref.sha256)).arrayBuffer())
     expect(new TextDecoder().decode(bytes)).toContain('verified gross mass')
   })
 
   it('returns the signed log for the caller to verify itself', async () => {
     const { id } = await order()
-    await acme.applyTransition(
+    await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
     )
 
-    const events = await acme.events(id)
+    const events = await orgA.events(id)
     expect(events).toHaveLength(2)
     expect(events[0]?.header.transition).toBe('create')
     expect(events[1]?.sig).toBeTruthy()
 
     // `since` is a seq, not a cursor.
-    expect(await acme.events(id, 1)).toHaveLength(1)
+    expect(await orgA.events(id, 1)).toHaveLength(1)
   })
 })
 
 describe('the failures a client has to tell apart', () => {
   it('reports a stale If-Match as a conflict carrying the real seq', async () => {
     const { id } = await order()
-    await acme.applyTransition(
+    await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
     )
 
-    const error = await acme
+    const error = await orgA
       .applyTransition(id, { transition: 'announceTruck', patch: { truckPlate: '9-XYZ-999' } }, 1)
       .catch((cause: unknown) => cause)
 
@@ -213,8 +213,8 @@ describe('the failures a client has to tell apart', () => {
   it('reports a role refusal as forbidden, not as a validation failure', async () => {
     const { id } = await order()
 
-    // `weigh` is the weigher's move; Acme is the shipper.
-    const error = (await acme
+    // `weigh` is the weigher's move; Org A is the shipper.
+    const error = (await orgA
       .applyTransition(id, { transition: 'weigh', patch: {} }, 1)
       .catch((cause: unknown) => cause)) as ProblemError
 
@@ -226,8 +226,8 @@ describe('the failures a client has to tell apart', () => {
   it('reports an unreachable peer as retryable, and never as a conflict', async () => {
     // This connector has no peer transport at all, so browsing a peer's
     // offerings is exactly the "I could not ask" case.
-    const error = (await acme
-      .offerings('did:web:vanmoer.example')
+    const error = (await orgA
+      .offerings('did:web:org-b.example')
       .catch((cause: unknown) => cause)) as ProblemError
 
     expect(error.status).toBeGreaterThanOrEqual(400)
@@ -240,13 +240,13 @@ describe('the failures a client has to tell apart', () => {
     const { id } = await order()
     const key = 'e2b7c0de-0000-4000-8000-000000000042'
 
-    const first = await acme.applyTransition(
+    const first = await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
       { idempotencyKey: key },
     )
-    const second = await acme.applyTransition(
+    const second = await orgA.applyTransition(
       id,
       { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
       1,
@@ -255,11 +255,11 @@ describe('the failures a client has to tell apart', () => {
 
     expect(second).toEqual(first)
     // And exactly one event, not two. That is the whole point.
-    expect(await acme.events(id)).toHaveLength(2)
+    expect(await orgA.events(id)).toHaveLength(2)
   })
 
   it('refuses a key that lacks the scope, without leaking why to the caller', async () => {
-    const limited = await provision(testApp, 'acme', ['instances:read'])
+    const limited = await provision(testApp, 'org-a', ['instances:read'])
     const readOnly = new PilotsClient({ baseUrl, apiKey: limited.apiKey })
 
     const error = (await readOnly

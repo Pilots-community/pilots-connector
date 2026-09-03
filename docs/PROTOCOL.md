@@ -36,9 +36,9 @@ participant's key:
 ```
 Authorization: Bearer <compact JWS>
 
-header  { "alg": "EdDSA", "kid": "did:web:acme-shipping.example#key-1", "typ": "JWT" }
-claims  { "iss": "did:web:acme-shipping.example",
-          "aud": "did:web:vanmoer.example",
+header  { "alg": "EdDSA", "kid": "did:web:org-a.example#key-1", "typ": "JWT" }
+claims  { "iss": "did:web:org-a.example",
+          "aud": "did:web:org-b.example",
           "iat": 1756032842, "exp": 1756033142, "jti": "…" }
 ```
 
@@ -63,7 +63,7 @@ An integrator authenticates with a key scoped to one participant:
 
 ```
 Authorization: ApiKey ak_live_7f3c…
-X-Actor-Ref:   alice@acme.example
+X-Actor-Ref:   alice@org-a.example
 ```
 
 A key record holds `participantId`, a label, the **hashed** secret, scopes, created-by, created-at,
@@ -114,7 +114,7 @@ Signing goes through a `Signer` interface keyed by participant:
 ```ts
 interface Signer {
   did(participantId: string): Promise<string>
-  /** The DID URL of the verification method, e.g. `did:web:acme.example#key-1`. */
+  /** The DID URL of the verification method, e.g. `did:web:org-a.example#key-1`. */
   keyId(participantId: string): Promise<string>
   /** A raw EdDSA (Ed25519) signature over exactly the bytes given. */
   sign(participantId: string, signingInput: Uint8Array): Promise<Uint8Array>
@@ -226,13 +226,13 @@ node hosts what.
 
 ```
 POST  /api/local/v1/instances
-      Authorization: ApiKey …      X-Actor-Ref: alice@acme.example
+      Authorization: ApiKey …      X-Actor-Ref: alice@org-a.example
       { "definition": "container-transport@1.0.0",
-        "participants": { "shipper": "did:web:acme…", "transporter": "did:web:vanmoer…" }, … }
+        "participants": { "shipper": "did:web:org-a…", "transporter": "did:web:org-b…" }, … }
 
   → definition's hostedBy names the ROLE `transporter`
-  → participants.transporter = did:web:vanmoer… — not one of ours
-  → relay to  vanmoer/api/peer/v1/instances,  signed JWS, ACTIVE connection required
+  → participants.transporter = did:web:org-b… — not one of ours
+  → relay to  org-b/api/peer/v1/instances,  signed JWS, ACTIVE connection required
   → return the peer's 201 Created as our own
 ```
 
@@ -443,7 +443,7 @@ Append-only, **locally hash-chained**, unsigned, and **never replicated**.
   "action":  "apiKey.create" | "connection.accept" | "instance.create" |
              "transition.apply" | "chain.verify" | "delivery.fail" | …,
   "actor":   { "kind": "adminSession" | "apiKey" | "peer" | "runtime",
-               "id": "…", "actorRef": "alice@acme.example" },
+               "id": "…", "actorRef": "alice@org-a.example" },
   "subject": { "instance": "018f2c…" },
   "outcome": "ok" | "denied" | "failed",
   "problem": "urn:pilots:problem:…",
@@ -471,7 +471,7 @@ represents a refusal.
     "instance":    "018f2c…",
     "seq":         4,
     "transition":  "quote",
-    "actor":       "did:web:vanmoer.example",
+    "actor":       "did:web:org-b.example",
     "from":        "REQUESTED",
     "to":          "OFFERED",
     "at":          "2026-08-24T09:14:02.000Z",
@@ -669,9 +669,9 @@ the **home node**, because the runtime that fired them is the home node.
 ```jsonc
 // local surface — what an integrator sends. Relayed by hostedBy (§4.1).
 { "definition": "container-transport-quotation@1.0.0",
-  "participants": { "shipper": "did:web:acme-shipping.example",
-                    "transporter": "did:web:vanmoer.example" },
-  "offering": "urn:offering:vanmoer:container-transport",
+  "participants": { "shipper": "did:web:org-a.example",
+                    "transporter": "did:web:org-b.example" },
+  "offering": "urn:offering:org-b:container-transport",
   "data": { "pickup": { … }, "dropoff": { … }, "window": { … } } }
 
 // 201 Created, Location: …/instances/018f2b…, ETag: "1"

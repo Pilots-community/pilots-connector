@@ -129,8 +129,8 @@ same 111-case conformance suite as memory and file, against a real replica set.
 Then, across containers: `docker compose up` brings up **two connectors and zero databases**, both
 healthy in ~5.7 s, first relayed transaction at ~6.0 s against a 60 s target, ~82–86 MiB each against a
 1 GB limit. S1 runs end to end across both — including `grossMass` withheld before payment and
-released after — and Acme's replica verifies independently against Van Moer's published key. S4a was
-run against the containers too: Acme stopped mid-process, Van Moer advanced two steps, Acme restarted
+released after — and Org A's replica verifies independently against Org B's published key. S4a was
+run against the containers too: Org A stopped mid-process, Org B advanced two steps, Org A restarted
 and converged with no operator action.
 
 **Two things changed in the spec while building this**, both recorded in
@@ -196,9 +196,9 @@ UI already shipped incrementally in M2 and M3.
   the audit log, see a red chain). Wiring and UI only.
 
 **Exit — met, with one part carried to M6.** S1 runs end to end through the process UI on **both**
-sides: two UIs, two user accounts, two connectors, and a person clicking. Acme never types a DID — the
+sides: two UIs, two user accounts, two connectors, and a person clicking. Org A never types a DID — the
 role selects come from the definition and "Us" is resolved by the BFF. And the split holds: with
-`acme-ui` stopped, Van Moer issued the VGM, Acme's *connector* replicated it, and the UI came back
+`org-a-ui` stopped, Org B issued the VGM, Org A's *connector* replicated it, and the UI came back
 showing `VGM_ISSUED` having held no state at all.
 
 `pnpm demo:env && docker compose up` now gives the full demo: **four containers, zero databases**, all
@@ -211,7 +211,7 @@ same variables come from a secret manager, and `PILOTS_SEED_API_KEY` is refused 
 `NODE_ENV=production` regardless, because a key whose value was decided outside the connector is a
 demo convenience rather than a deployment pattern.
 
-**Carried to M6:** the same run with Van Moer's UI idle and a mock backoffice driving over a
+**Carried to M6:** the same run with Org B's UI idle and a mock backoffice driving over a
 notification subscription. The behaviour is proven — an automated participant runs S1 in the scenario
 tier with no UI and no human — but not yet as a container in the demo.
 
@@ -248,16 +248,16 @@ tier with no UI and no human — but not yet as a container in the demo.
 [ARCHITECTURE.md §12.1](ARCHITECTURE.md#121-measured-at-m6) and the targets in `AGENT.md` now say
 *measured* rather than *target*. S1, S2, S4a, S4b and S4c all run from one command.
 
-The automated participant became a container: Acme clicks in a browser while Van Moer's backoffice
+The automated participant became a container: Org A clicks in a browser while Org B's backoffice
 applies `weigh`, `recordPayment` and `issueVgm` unattended, over an ordinary API key with an ordinary
-`X-Actor-Ref` — Van Moer's audit log says `weighbridge-controller`, and neither connector can tell which
+`X-Actor-Ref` — Org B's audit log says `weighbridge-controller`, and neither connector can tell which
 side had a person on it.
 
 Both new shapes are **overlays**, not modes: `docker-compose.automated.yml` adds the backoffice and the
 subscription that feeds it, `docker-compose.mongo.yml` adds the document store. `docker compose up`
 stays the four-container two-party demo, because a party's own back-office system is that party's fifth
 container rather than the demo's — a distinction Playwright made for us, by failing when the backoffice
-started answering for Van Moer before the test could click.
+started answering for Org B before the test could click.
 
 **Four things this milestone found**, three of them bugs that only a harder look would surface.
 
@@ -376,7 +376,7 @@ public.** Git history cannot be un-leaked. So from the first milestone:
   data — before any of those exist.
 - No account id, ARN, VPC or subnet id, real hostname or internal URL is ever committed. Secret *names*
   are fine; secret *values* and infrastructure identifiers are not.
-- The demo DIDs use the reserved `.example` TLD (`did:web:acme-shipping.example`), so the scenarios and
+- The demo DIDs use the reserved `.example` TLD (`did:web:org-a.example`), so the scenarios and
   definitions are publishable as they stand. Keep it that way.
 - **Secret scanning runs in CI from M1**, when CI first exists — not from M7, when it would be too late.
 

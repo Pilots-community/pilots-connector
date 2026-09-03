@@ -155,6 +155,11 @@ remote signer remains possible, but nothing is blocked on it.
   history cannot be un-leaked**, so the discipline starts now, not at M7: no account ids, ARNs, VPC or
   subnet ids, real hostnames or internal URLs in any commit. Secret *names* are fine; secret *values* and
   infrastructure identifiers are not. Demo DIDs stay on the reserved `.example` TLD.
+- **The demo's two organisations are `org-a` and `org-b`, and nothing else.** Identifiers
+  (`org-a`, `did:web:org-a.example`, the compose services) are neutral and committed; the **names on
+  screen** are `ORG_A_NAME` / `ORG_B_NAME` in the gitignored `.env`, defaulting to `Org A` / `Org B`.
+  Never put a real company's name into code, config, tests or a definition — a demo for a particular
+  audience sets two environment variables, and both that party's screens and its browser tabs follow.
 - **`packages/protocol` is the spec.** If behaviour is not expressed there as a schema or a function
   with tests, it is not decided. Documentation and code must not be allowed to drift apart.
 - **Nothing is set in stone until it is implemented, and barely then.** We are in ideation heading for a

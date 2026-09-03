@@ -1,11 +1,11 @@
 # `docker compose up` → the full two-party demo: **four containers, zero
 # databases**.
 #
-# Acme (the shipper) and Van Moer (the weigher), each with its own connector and
+# Org A (the shipper) and Org B (the weigher), each with its own connector and
 # its own process UI. Every container is an application process; nothing here is
 # a database, a queue or a broker, which is the claim the count is making.
 #
-# The two UIs are deliberately dispensable. `docker compose stop acme-ui` and the
+# The two UIs are deliberately dispensable. `docker compose stop org-a-ui` and the
 # process carries on — peers keep delivering, subscriptions keep firing, and the
 # other side notices nothing. That is the whole point of the split, and it is
 # worth doing once in front of an audience.
@@ -20,9 +20,9 @@
 #
 # For the headless profile, run only the two connectors:
 #
-#     docker compose up acme vanmoer
+#     docker compose up org-a org-b
 #
-# For the automated party — Van Moer driven by a backoffice instead of a person —
+# For the automated party — Org B driven by a backoffice instead of a person —
 # add the overlay, which brings a fifth container and the subscription that feeds
 # it:
 #
@@ -33,30 +33,33 @@
 # The handshake still works without it, and S0 in the test suite is what proves
 # that; seeding is a shortcut, never a replacement.
 services:
-  acme:
+  org-a:
     build:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
       - '3000:3000'
     environment:
-      PILOTS_PARTICIPANT_ID: acme
-      PILOTS_PARTICIPANT_DID: did:web:acme-shipping.example
-      PILOTS_PARTICIPANT_NAME: Acme Shipping
-      PILOTS_BASE_URL: http://acme:3000
+      PILOTS_PARTICIPANT_ID: org-a
+      PILOTS_PARTICIPANT_DID: did:web:org-a.example
+      # The name people see. `org-a` is the identity; this is the label, and the
+      # two are separate on purpose — a demo for a particular audience sets
+      # ORG_A_NAME in `.env` and nothing else changes.
+      PILOTS_PARTICIPANT_NAME: ${ORG_A_NAME:-Org A}
+      PILOTS_BASE_URL: http://org-a:3000
       PILOTS_LOG_LEVEL: info
       # This demo *is* development, and has to say so. The image defaults to
       # NODE_ENV=production, and the connector refuses to start with
       # PILOTS_DEV_DID_DIRECTORY under it — which is the point of that guard.
       NODE_ENV: development
-      # Acme dials out and holds the line: `stream` inbound. It needs no route
+      # Org A dials out and holds the line: `stream` inbound. It needs no route
       # in, no DNS entry and no certificate — the profile a one-truck haulier
-      # runs. Van Moer is delivered to the same way for symmetry.
+      # runs. Org B is delivered to the same way for symmetry.
       PILOTS_CONNECTIONS: >-
-        [{"participantId":"acme",
-          "peerDid":"did:web:vanmoer.example",
-          "peerBaseUrl":"http://vanmoer:3000",
-          "displayName":"Van Moer",
+        [{"participantId":"org-a",
+          "peerDid":"did:web:org-b.example",
+          "peerBaseUrl":"http://org-b:3000",
+          "displayName":"Org B",
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
       # Development only, and the connector refuses it under NODE_ENV=production.
@@ -69,11 +72,11 @@ services:
       # it comes from `.env`, which `pnpm demo:env` generates and .gitignore
       # excludes. Remotely the same variable comes from a secret manager, and the
       # connector refuses this setting under NODE_ENV=production anyway.
-      PILOTS_SEED_API_KEY: ${ACME_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_SEED_API_KEY: ${ORG_A_API_KEY:?run `pnpm demo:env` first}
       # The signing key, the API-key pepper and the admin token are generated on
       # first boot into the volume below. None of them appears here either.
     volumes:
-      - acme-data:/data
+      - org-a-data:/data
     # The claim, enforced rather than asserted: if a connector stops fitting in a
     # 1 GB container, `docker compose up` fails instead of the number quietly
     # going stale in a document.
@@ -90,30 +93,30 @@ services:
       timeout: 3s
       retries: 12
 
-  vanmoer:
+  org-b:
     build:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
       - '3001:3000'
     environment:
-      PILOTS_PARTICIPANT_ID: vanmoer
-      PILOTS_PARTICIPANT_DID: did:web:vanmoer.example
-      PILOTS_PARTICIPANT_NAME: Van Moer
-      PILOTS_BASE_URL: http://vanmoer:3000
+      PILOTS_PARTICIPANT_ID: org-b
+      PILOTS_PARTICIPANT_DID: did:web:org-b.example
+      PILOTS_PARTICIPANT_NAME: ${ORG_B_NAME:-Org B}
+      PILOTS_BASE_URL: http://org-b:3000
       PILOTS_LOG_LEVEL: info
       NODE_ENV: development
       PILOTS_CONNECTIONS: >-
-        [{"participantId":"vanmoer",
-          "peerDid":"did:web:acme-shipping.example",
-          "peerBaseUrl":"http://acme:3000",
-          "displayName":"Acme Shipping",
+        [{"participantId":"org-b",
+          "peerDid":"did:web:org-a.example",
+          "peerBaseUrl":"http://org-a:3000",
+          "displayName":"Org A",
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
       PILOTS_DEV_DID_DIRECTORY: 'true'
-      PILOTS_SEED_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_SEED_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
     volumes:
-      - vanmoer-data:/data
+      - org-b-data:/data
     mem_limit: 1g
     healthcheck:
       test:
@@ -134,21 +137,23 @@ services:
   # an audit hint — it has no idea who these users are, and that is exactly what
   # lets somebody replace this UI with their own.
 
-  acme-ui:
+  org-a-ui:
     build:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
       - '4000:4000'
     depends_on:
-      acme:
+      org-a:
         condition: service_healthy
     environment:
-      PILOTS_CONNECTOR_URL: http://acme:3000
+      PILOTS_CONNECTOR_URL: http://org-a:3000
       # The same value the connector registered. One key, one participant.
-      PILOTS_API_KEY: ${ACME_API_KEY:?run `pnpm demo:env` first}
-      PILOTS_UI_AUTH_SECRET: ${ACME_UI_AUTH_SECRET:?run `pnpm demo:env` first}
-      PILOTS_UI_NAME: Acme Shipping
+      PILOTS_API_KEY: ${ORG_A_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_UI_AUTH_SECRET: ${ORG_A_UI_AUTH_SECRET:?run `pnpm demo:env` first}
+      # The same label as its connector's, so the two screens in a side-by-side
+      # demo are never ambiguous about which organisation they belong to.
+      PILOTS_UI_NAME: ${ORG_A_NAME:-Org A}
       PILOTS_UI_BASE_URL: http://localhost:4000
       NODE_ENV: development
       # A demo account, so `up` reaches a usable screen. Deliberately readable:
@@ -156,8 +161,8 @@ services:
       # mean going to look it up. It grants access to nothing but this
       # throwaway UI, and `loadConfig` refuses the whole seeding mechanism under
       # NODE_ENV=production. Override from `.env` if you would rather.
-      PILOTS_UI_SEED_EMAIL: ${ACME_UI_EMAIL:-alice@acme.example}
-      PILOTS_UI_SEED_PASSWORD: ${ACME_UI_PASSWORD:-demo-password-acme}
+      PILOTS_UI_SEED_EMAIL: ${ORG_A_UI_EMAIL:-alice@org-a.example}
+      PILOTS_UI_SEED_PASSWORD: ${ORG_A_UI_PASSWORD:-demo-password-org-a}
     mem_limit: 512m
     healthcheck:
       test:
@@ -171,24 +176,24 @@ services:
       timeout: 3s
       retries: 12
 
-  vanmoer-ui:
+  org-b-ui:
     build:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
       - '4001:4000'
     depends_on:
-      vanmoer:
+      org-b:
         condition: service_healthy
     environment:
-      PILOTS_CONNECTOR_URL: http://vanmoer:3000
-      PILOTS_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
-      PILOTS_UI_AUTH_SECRET: ${VANMOER_UI_AUTH_SECRET:?run `pnpm demo:env` first}
-      PILOTS_UI_NAME: Van Moer
+      PILOTS_CONNECTOR_URL: http://org-b:3000
+      PILOTS_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_UI_AUTH_SECRET: ${ORG_B_UI_AUTH_SECRET:?run `pnpm demo:env` first}
+      PILOTS_UI_NAME: ${ORG_B_NAME:-Org B}
       PILOTS_UI_BASE_URL: http://localhost:4001
       NODE_ENV: development
-      PILOTS_UI_SEED_EMAIL: ${VANMOER_UI_EMAIL:-bram@vanmoer.example}
-      PILOTS_UI_SEED_PASSWORD: ${VANMOER_UI_PASSWORD:-demo-password-vanmoer}
+      PILOTS_UI_SEED_EMAIL: ${ORG_B_UI_EMAIL:-bram@org-b.example}
+      PILOTS_UI_SEED_PASSWORD: ${ORG_B_UI_PASSWORD:-demo-password-org-b}
     mem_limit: 512m
     healthcheck:
       test:
@@ -203,5 +208,5 @@ services:
       retries: 12
 
 volumes:
-  acme-data:
-  vanmoer-data:
+  org-a-data:
+  org-b-data:

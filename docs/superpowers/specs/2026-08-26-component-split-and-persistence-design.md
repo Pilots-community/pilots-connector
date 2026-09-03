@@ -37,7 +37,7 @@ Three of the four broke a stated non-negotiable. None of them required a redesig
 | D8 | Persistence is a port with memory / file / mongo adapters and one conformance suite. Mongo lands at M3. | Mongo at M6. Rejected: memory and file are both single-writer and in-process, so they hide precisely the contracts a networked store differs on. |
 | D9 | Hermetic tests are a non-negotiable. `Clock`, `IdGenerator`, `Signer` and peer `Transport` are injectable ports. Two connectors run in one test process. | Proving scenarios only through Playwright. Rejected: it puts all confidence in the slowest, flakiest tier. |
 | D10 | Playwright covers wiring and UI only, and most likely runs against local processes rather than containers. | Playwright as the primary scenario proof. Rejected, see D9. |
-| D11 | **Both parties run the demo process UI in the first real demo.** The mock backoffice sits alongside Van Moer's UI, not instead of it. | Only the small party getting a UI. Rejected: the first demo has to be verifiable by hand on both sides, and a UI-less party is harder to demonstrate than to build. |
+| D11 | **Both parties run the demo process UI in the first real demo.** The mock backoffice sits alongside Org B's UI, not instead of it. | Only the small party getting a UI. Rejected: the first demo has to be verifiable by hand on both sides, and a UI-less party is harder to demonstrate than to build. |
 | D12 | **Notification subscriptions** are how a party with no UI participates. `action.required` is computed from the definition. `channel` is a port: `webhook` + `sse` now, queues later. | Leaving "register a webhook" underspecified. Rejected: an internal system needs to know *when it is its turn*, and deriving that from a raw event firehose would force every integrator to reimplement the state machine. |
 | D13 | **No participant is typed.** Supplier/consumer is a role in one instance. Home node resolves **per instance**; offerings are runtime store records. Proven by scenario test S5, not by the demo. | Treating supplier and consumer as deployment profiles. Rejected: it would make subcontracting — a transporter supplying a forwarder while consuming from another transporter — a redesign rather than ordinary use. |
 
@@ -109,7 +109,7 @@ The M0 documents conflated these. They are separate:
 - **Peer delivery** — connection-level, `webhook` or `stream`, connector ↔ connector. Protocol.
 - **Local delivery** — integration-level, `webhook` or SSE, connector → your own systems. Configuration.
 
-Van Moer's mock backoffice in S1 and S2 is the *second* kind. `ARCHITECTURE.md §3` previously drew it on the
+Org B's mock backoffice in S1 and S2 is the *second* kind. `ARCHITECTURE.md §3` previously drew it on the
 same line as connection delivery, which implied a protocol role it does not have.
 
 ### 4.2 Relay error semantics
@@ -177,7 +177,7 @@ threshold.
   "category": "admin" | "local" | "peer",
   "action":  "apiKey.create" | "connection.accept" | "transition.apply" | "chain.verify" | …,
   "actor":   { "kind": "adminSession" | "apiKey" | "peer" | "runtime",
-               "id": "…", "actorRef": "alice@acme.example" },
+               "id": "…", "actorRef": "alice@org-a.example" },
   "subject": { "instance": "018f2c…" },
   "outcome": "ok" | "denied" | "failed",
   "problem": "urn:pilots:problem:…",
@@ -324,11 +324,11 @@ Two additions after the first review. Neither changes the model; both make it de
 
 ### 12.1 Both parties run the process UI (D11)
 
-The first cut had Acme clicking and Van Moer automated, to dramatise "small consumer, large supplier, one
+The first cut had Org A clicking and Org B automated, to dramatise "small consumer, large supplier, one
 stack". Good slide, bad first demo: half of it could only be verified by reading logs.
 
 So the demo runs **four containers** — two connectors, two process UIs, still zero databases — and every
-step is drivable by hand on either side. Van Moer's mock backoffice then sits *alongside* its UI, which
+step is drivable by hand on either side. Org B's mock backoffice then sits *alongside* its UI, which
 turns out to be the better demonstration anyway: run the same scenario twice, once clicked and once
 unattended, and show that the connector cannot tell the difference. The claim survives, and it is now
 something you watch rather than something you are told.
@@ -430,7 +430,7 @@ ends up conflated in the *code*.
 
 ### 13.3 Why this is a test and not a demo
 
-The demo runs one direction — Acme consumes, Van Moer supplies — which is enough to exercise the
+The demo runs one direction — Org A consumes, Org B supplies — which is enough to exercise the
 protocol and is the right scope. But it means **a per-definition hosting shortcut passes every demo and
 every happy path.** An implementation could cache "we host `container-transport`" and nothing in S0–S4
 would notice.

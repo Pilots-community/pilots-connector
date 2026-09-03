@@ -17,7 +17,7 @@
 export interface Signer {
   /** The DID of the participant this signer signs for. */
   did(participantId: string): Promise<string>
-  /** The DID URL of the verification method, e.g. `did:web:acme.example#key-1`. */
+  /** The DID URL of the verification method, e.g. `did:web:org-a.example#key-1`. */
   keyId(participantId: string): Promise<string>
   /** A raw EdDSA (Ed25519) signature over exactly the bytes given. */
   sign(participantId: string, signingInput: Uint8Array): Promise<Uint8Array>

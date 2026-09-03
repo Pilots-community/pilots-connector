@@ -27,7 +27,7 @@ beforeEach(() => {
 
 async function mint(overrides: Partial<Parameters<ApiKeyService['mint']>[0]> = {}) {
   return keys.mint({
-    participantId: 'acme',
+    participantId: 'org-a',
     label: 'backoffice-prod',
     scopes: ['instances:read', 'instances:write'],
     createdBy: 'admin-session-1',
@@ -42,14 +42,14 @@ describe('minting', () => {
     expect(secret.startsWith(`${record.id}.`)).toBe(true)
     expect(record.secretHash).toMatch(/^[0-9a-f]{64}$/)
 
-    const stored = await store.apiKeys.get('acme', record.id)
+    const stored = await store.apiKeys.get('org-a', record.id)
     expect(JSON.stringify(stored)).not.toContain(secret.split('.')[1]!)
   })
 
   it('never returns the hash on the API projection', () => {
     const redacted = ApiKeyService.redact({
       id: 'ak_x',
-      participantId: 'acme',
+      participantId: 'org-a',
       label: 'l',
       secretHash: 'f'.repeat(64),
       scopes: ['instances:read'],
@@ -77,7 +77,7 @@ describe('verifying', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.key.id).toBe(record.id)
-      expect(result.key.participantId).toBe('acme')
+      expect(result.key.participantId).toBe('org-a')
       expect(hasScope(result.key, 'transitions.apply')).toBe(true)
       expect(hasScope(result.key, 'attachments.write')).toBe(false)
     }
@@ -112,14 +112,14 @@ describe('verifying', () => {
 
   it('rejects a revoked key', async () => {
     const { record, secret } = await mint()
-    expect(await keys.revoke('acme', record.id)).toBe(true)
+    expect(await keys.revoke('org-a', record.id)).toBe(true)
 
     const result = await keys.verify(secret)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toBe('revoked')
 
     // Revoking twice is not an error, but it is not a second revocation either.
-    expect(await keys.revoke('acme', record.id)).toBe(false)
+    expect(await keys.revoke('org-a', record.id)).toBe(false)
   })
 
   it('rejects an expired key once the clock passes it', async () => {
@@ -134,7 +134,7 @@ describe('verifying', () => {
 
   it('is useless against a store dump, because the pepper is not in the store', async () => {
     const { secret } = await mint()
-    const dumped = await store.apiKeys.find('acme')
+    const dumped = await store.apiKeys.find('org-a')
 
     // An attacker with the store but not the pepper cannot verify anything.
     const withoutPepper = new ApiKeyService(
@@ -157,15 +157,15 @@ describe('bookkeeping', () => {
     const result = await keys.verify(secret)
     if (result.ok) await keys.touch(result.key)
 
-    expect((await store.apiKeys.get('acme', record.id))?.lastUsedAt).toBe(
+    expect((await store.apiKeys.get('org-a', record.id))?.lastUsedAt).toBe(
       '2026-08-24T10:00:00.000Z',
     )
   })
 
   it('lists a participant’s keys and nobody else’s', async () => {
     await mint()
-    await mint({ participantId: 'vanmoer' })
-    expect(await keys.list('acme')).toHaveLength(1)
-    expect(await keys.list('vanmoer')).toHaveLength(1)
+    await mint({ participantId: 'org-b' })
+    expect(await keys.list('org-a')).toHaveLength(1)
+    expect(await keys.list('org-b')).toHaveLength(1)
   })
 })

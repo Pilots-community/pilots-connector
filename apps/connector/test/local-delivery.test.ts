@@ -17,19 +17,19 @@ import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import type { NotificationEnvelope } from '@pilots/protocol'
 
 import type { ServiceResult } from '../src/instances/instance.service.js'
-import { ACME, VANMOER } from './helpers/core.js'
+import { ORG_A, ORG_B } from './helpers/core.js'
 import { buildScenario, type Scenario, type ScenarioNode } from './helpers/network.js'
 
-const PARTICIPANTS = { shipper: ACME.did, weigher: VANMOER.did }
+const PARTICIPANTS = { shipper: ORG_A.did, weigher: ORG_B.did }
 
 let scenario: Scenario
 
 beforeEach(async () => {
   scenario = await buildScenario({
-    acme: { participants: [ACME] },
-    vanmoer: { participants: [VANMOER] },
+    'org-a': { participants: [ORG_A] },
+    'org-b': { participants: [ORG_B] },
   })
-  await scenario.connect('acme', 'vanmoer')
+  await scenario.connect('org-a', 'org-b')
 })
 
 afterEach(async () => {
@@ -42,9 +42,9 @@ function unwrap<T>(result: ServiceResult<T>): T {
 }
 
 async function order(): Promise<string> {
-  const acme = scenario.node('acme')
+  const orgA = scenario.node('org-a')
   const created = unwrap(
-    await acme.runtime.instances.create(acme.caller(), {
+    await orgA.runtime.instances.create(orgA.caller(), {
       definition: 'container-weighing@1.0.0',
       participants: PARTICIPANTS,
       data: { containerNumber: 'MSCU1234567', terminal: '869' },
@@ -56,14 +56,14 @@ async function order(): Promise<string> {
 
 describe('action.required is computed, not configured', () => {
   it('carries the transition id and the role that permits it', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
-    await vanmoer.subscribe({ notify: ['action.required'] })
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    await orgB.subscribe({ notify: ['action.required'] })
 
     const id = await order()
     unwrap(
-      await acme.runtime.instances.applyTransition(
-        acme.caller(),
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -71,9 +71,7 @@ describe('action.required is computed, not configured', () => {
     )
     await scenario.settle()
 
-    const required = vanmoer.channel
-      .ofType('action.required')
-      .filter((one) => one.instance.id === id)
+    const required = orgB.channel.ofType('action.required').filter((one) => one.instance.id === id)
     const last = required.at(-1)
 
     expect(last?.instance.state).toBe('TRUCK_ANNOUNCED')
@@ -87,14 +85,14 @@ describe('action.required is computed, not configured', () => {
   })
 
   it('is visibility-filtered exactly as a read would be', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
-    await acme.subscribe({ notify: ['event'] })
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    await orgA.subscribe({ notify: ['event'] })
 
     const id = await order()
     unwrap(
-      await acme.runtime.instances.applyTransition(
-        acme.caller(),
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -102,8 +100,8 @@ describe('action.required is computed, not configured', () => {
     )
     await scenario.settle()
     unwrap(
-      await vanmoer.runtime.instances.applyTransition(
-        vanmoer.caller(),
+      await orgB.runtime.instances.applyTransition(
+        orgB.caller(),
         id,
         {
           transition: 'weigh',
@@ -116,8 +114,8 @@ describe('action.required is computed, not configured', () => {
     )
     await scenario.settle()
 
-    // Acme's own backoffice must not be told something Acme could not read.
-    const weighEvent = acme.channel
+    // Org A's own backoffice must not be told something Org A could not read.
+    const weighEvent = orgA.channel
       .ofType('event')
       .find((one) => one.event.header.transition === 'weigh')
     expect(weighEvent).toBeDefined()
@@ -128,8 +126,8 @@ describe('action.required is computed, not configured', () => {
   })
 
   it('respects a filter, and an absent key matches everything', async () => {
-    const vanmoer = scenario.node('vanmoer')
-    await vanmoer.subscribe({
+    const orgB = scenario.node('org-b')
+    await orgB.subscribe({
       label: 'weighing-only',
       notify: ['state.changed'],
       filter: { transitions: ['weigh'] },
@@ -138,9 +136,9 @@ describe('action.required is computed, not configured', () => {
     const id = await order()
     unwrap(
       await scenario
-        .node('acme')
+        .node('org-a')
         .runtime.instances.applyTransition(
-          scenario.node('acme').caller(),
+          scenario.node('org-a').caller(),
           id,
           { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
           1,
@@ -149,11 +147,11 @@ describe('action.required is computed, not configured', () => {
     await scenario.settle()
 
     // `announceTruck` changed state, but the filter names `weigh`.
-    expect(vanmoer.channel.received).toHaveLength(0)
+    expect(orgB.channel.received).toHaveLength(0)
 
     unwrap(
-      await vanmoer.runtime.instances.applyTransition(
-        vanmoer.caller(),
+      await orgB.runtime.instances.applyTransition(
+        orgB.caller(),
         id,
         {
           transition: 'weigh',
@@ -166,8 +164,8 @@ describe('action.required is computed, not configured', () => {
     )
     await scenario.settle()
 
-    expect(vanmoer.channel.received).toHaveLength(1)
-    expect(vanmoer.channel.received[0]?.envelope.event.header.transition).toBe('weigh')
+    expect(orgB.channel.received).toHaveLength(1)
+    expect(orgB.channel.received[0]?.envelope.event.header.transition).toBe('weigh')
   })
 })
 
@@ -184,22 +182,22 @@ describe('delivery guarantees', () => {
    * continue was never written down.
    */
   it('keeps recording while degraded, and delivers the backlog on recovery', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
-    const subscriptionId = await vanmoer.subscribe({ notify: ['action.required'] })
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    const subscriptionId = await orgB.subscribe({ notify: ['action.required'] })
 
     // The backoffice is down before anything happens, so the very first
     // notification fails and the subscription degrades.
-    vanmoer.channel.failures = 99
+    orgB.channel.failures = 99
     const id = await order()
-    expect(
-      (await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId))?.status,
-    ).toBe('DEGRADED')
+    expect((await orgB.runtime.store.subscriptions.get(ORG_B.id, subscriptionId))?.status).toBe(
+      'DEGRADED',
+    )
 
     // The process carries on while the backoffice is unreachable.
     unwrap(
-      await acme.runtime.instances.applyTransition(
-        acme.caller(),
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -209,7 +207,7 @@ describe('delivery guarantees', () => {
 
     // The notification for "it is your turn to weigh" exists, even though
     // nothing could be delivered.
-    const recorded = await vanmoer.runtime.notifications.replay(VANMOER.id)
+    const recorded = await orgB.runtime.notifications.replay(ORG_B.id)
     const turns = recorded.filter((one) => one.notification === 'action.required')
     expect(
       turns.some(
@@ -220,30 +218,30 @@ describe('delivery guarantees', () => {
 
     // The backoffice comes back. The backlog goes out, in order, and the
     // subscription recovers on its own.
-    vanmoer.channel.failures = 0
+    orgB.channel.failures = 0
     scenario.clock.advance('PT1M')
-    await vanmoer.runtime.notifications.pump()
+    await orgB.runtime.notifications.pump()
 
-    const delivered = vanmoer.channel.ofType('action.required')
+    const delivered = orgB.channel.ofType('action.required')
     expect(delivered.map((one) => one.instance.state)).toContain('TRUCK_ANNOUNCED')
-    expect(
-      (await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId))?.status,
-    ).toBe('ACTIVE')
+    expect((await orgB.runtime.store.subscriptions.get(ORG_B.id, subscriptionId))?.status).toBe(
+      'ACTIVE',
+    )
   })
 
   it('stops recording only when an operator pauses the subscription', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
-    const subscriptionId = await vanmoer.subscribe({ notify: ['action.required'] })
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    const subscriptionId = await orgB.subscribe({ notify: ['action.required'] })
 
     const id = await order()
-    const paused = await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId)
-    await vanmoer.runtime.store.subscriptions.replace({ ...paused!, status: 'PAUSED' })
+    const paused = await orgB.runtime.store.subscriptions.get(ORG_B.id, subscriptionId)
+    await orgB.runtime.store.subscriptions.replace({ ...paused!, status: 'PAUSED' })
 
-    const before = (await vanmoer.runtime.notifications.replay(VANMOER.id)).length
+    const before = (await orgB.runtime.notifications.replay(ORG_B.id)).length
     unwrap(
-      await acme.runtime.instances.applyTransition(
-        acme.caller(),
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -253,57 +251,57 @@ describe('delivery guarantees', () => {
 
     // Paused is a decision somebody made, and it is the one state where
     // dropping the notification is what was asked for.
-    expect((await vanmoer.runtime.notifications.replay(VANMOER.id)).length).toBe(before)
+    expect((await orgB.runtime.notifications.replay(ORG_B.id)).length).toBe(before)
   })
 
   it('retries with backoff, degrades, dead-letters, and replays from a cursor', async () => {
-    const vanmoer = scenario.node('vanmoer')
-    const subscriptionId = await vanmoer.subscribe({ notify: ['event'] })
+    const orgB = scenario.node('org-b')
+    const subscriptionId = await orgB.subscribe({ notify: ['event'] })
 
     // The backoffice is down. Five attempts is the whole ladder.
-    vanmoer.channel.failures = 99
+    orgB.channel.failures = 99
     const id = await order()
-    await vanmoer.runtime.notifications.pump()
+    await orgB.runtime.notifications.pump()
 
-    let subscription = await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId)
+    let subscription = await orgB.runtime.store.subscriptions.get(ORG_B.id, subscriptionId)
     expect(subscription?.status).toBe('DEGRADED')
 
     // Nothing is retried before it is due: the pump is a scan over a timestamp,
     // never a timer.
-    const before = await vanmoer.runtime.notifications.pump()
+    const before = await orgB.runtime.notifications.pump()
     expect(before.failed).toBe(0)
 
     for (const wait of [1_000, 5_000, 30_000, 120_000, 600_000]) {
       scenario.clock.advance(wait)
-      await vanmoer.runtime.notifications.pump()
+      await orgB.runtime.notifications.pump()
     }
 
-    const dead = await vanmoer.runtime.notifications.deadLetters(VANMOER.id)
+    const dead = await orgB.runtime.notifications.deadLetters(ORG_B.id)
     expect(dead.length).toBeGreaterThan(0)
     expect(dead[0]?.lastError).toContain('told to fail')
 
     // The business process is unaffected by any of it.
-    expect((await vanmoer.runtime.store.instances.get(VANMOER.id, id))?.state).toBe('ORDERED')
+    expect((await orgB.runtime.store.instances.get(ORG_B.id, id))?.state).toBe('ORDERED')
 
     // `delivery.fail` is audited, because none of this produced an event.
-    const audit = await vanmoer.runtime.store.audit.read(VANMOER.id)
+    const audit = await orgB.runtime.store.audit.read(ORG_B.id)
     expect(audit.some((entry) => entry.action === 'delivery.fail')).toBe(true)
 
     // Replay is authoritative: a backoffice that was down catches up without
     // anyone deciding whether a delivery "really" happened.
-    const replayed = await vanmoer.runtime.notifications.replay(VANMOER.id)
+    const replayed = await orgB.runtime.notifications.replay(ORG_B.id)
     expect(replayed.length).toBeGreaterThan(0)
-    const after = await vanmoer.runtime.notifications.replay(VANMOER.id, replayed[0]!.id)
+    const after = await orgB.runtime.notifications.replay(ORG_B.id, replayed[0]!.id)
     expect(after.length).toBe(replayed.length - 1)
 
     // And an operator can requeue what was dead-lettered. Never automatic.
-    vanmoer.channel.failures = 0
-    expect(await vanmoer.runtime.notifications.retryDeadLetters(VANMOER.id)).toBe(dead.length)
-    await vanmoer.runtime.notifications.pump()
+    orgB.channel.failures = 0
+    expect(await orgB.runtime.notifications.retryDeadLetters(ORG_B.id)).toBe(dead.length)
+    await orgB.runtime.notifications.pump()
 
-    subscription = await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId)
+    subscription = await orgB.runtime.store.subscriptions.get(ORG_B.id, subscriptionId)
     expect(subscription?.status).toBe('ACTIVE')
-    expect(vanmoer.channel.received.length).toBeGreaterThan(0)
+    expect(orgB.channel.received.length).toBeGreaterThan(0)
   })
 })
 
@@ -365,14 +363,14 @@ class Backoffice {
 
 describe('an automated participant', () => {
   it('runs its whole half of S1 with no UI and no human', async () => {
-    const acme = scenario.node('acme')
-    const vanmoer = scenario.node('vanmoer')
-    await vanmoer.subscribe({ notify: ['action.required'] })
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    await orgB.subscribe({ notify: ['action.required'] })
 
     // Everything the backoffice knows: its own business data, keyed by the
     // transition ids it might be asked for. No definition, no states, no order.
     const certificate = `sha256:${'a'.repeat(64)}`
-    const backoffice = new Backoffice(vanmoer, {
+    const backoffice = new Backoffice(orgB, {
       weigh: {
         patch: {
           grossMass: { value: 24000, unit: 'kg', measuredAt: '2026-08-24T09:19:00.000Z' },
@@ -386,11 +384,11 @@ describe('an automated participant', () => {
     })
 
     const id = await order()
-    // Acme does the one thing that is genuinely the shipper's: it announces a
-    // truck. Everything after that is Van Moer's, and nobody at Van Moer acts.
+    // Org A does the one thing that is genuinely the shipper's: it announces a
+    // truck. Everything after that is Org B's, and nobody at Org B acts.
     unwrap(
-      await acme.runtime.instances.applyTransition(
-        acme.caller(),
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
         id,
         { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
         1,
@@ -405,9 +403,9 @@ describe('an automated participant', () => {
 
     expect(backoffice.refused).toEqual([])
     expect(backoffice.applied).toEqual(['weigh', 'recordPayment', 'issueVgm'])
-    expect((await vanmoer.runtime.store.instances.get(VANMOER.id, id))?.state).toBe('VGM_ISSUED')
-    // And Acme's replica converged to the same terminal state, without Acme
+    expect((await orgB.runtime.store.instances.get(ORG_B.id, id))?.state).toBe('VGM_ISSUED')
+    // And Org A's replica converged to the same terminal state, without Org A
     // knowing a machine was on the other end.
-    expect((await acme.runtime.store.instances.get(ACME.id, id))?.state).toBe('VGM_ISSUED')
+    expect((await orgA.runtime.store.instances.get(ORG_A.id, id))?.state).toBe('VGM_ISSUED')
   })
 })

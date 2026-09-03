@@ -21,7 +21,7 @@ import {
   type StreamSubscription,
 } from './transport.js'
 
-/** `https://vanmoer.example/` and `https://vanmoer.example` are one node. */
+/** `https://org-b.example/` and `https://org-b.example` are one node. */
 function nodeKey(baseUrl: string): string {
   try {
     return new URL(baseUrl).origin
@@ -48,7 +48,7 @@ export class InProcessNetwork implements PeerTransport {
   /**
    * Take a node off the network: requests to it fail as unreachable and every
    * stream it is serving drops, exactly as a stopped process would look from
-   * outside. The node keeps running — S4a stops *Acme* while Van Moer carries
+   * outside. The node keeps running — S4a stops *Org A* while Org B carries
    * on, so the test needs one side gone rather than both frozen.
    */
   partition(baseUrl: string): this {

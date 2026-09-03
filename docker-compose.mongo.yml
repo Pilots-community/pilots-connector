@@ -2,8 +2,8 @@
 #
 #     docker compose -f docker-compose.yml -f docker-compose.mongo.yml up
 #
-# One overlay, one changed service. Van Moer is the terminal operator in this
-# demo, so Van Moer is the one that runs a document store; Acme stays on the file
+# One overlay, one changed service. Org B is the terminal operator in this
+# demo, so Org B is the one that runs a document store; Org A stays on the file
 # store, which is the one-truck haulier's profile. **Same image, different
 # configuration** — that is the claim this file exists to make checkable, and it
 # would be worth nothing if the two parties ran different builds.
@@ -31,7 +31,7 @@ services:
     image: mongo:7
     command: ['--replSet', 'rs0', '--bind_ip_all']
     volumes:
-      - vanmoer-mongo:/data/db
+      - org-b-mongo:/data/db
     healthcheck:
       # Idempotent: `rs.status()` throws until the set exists, and initiating an
       # already-initiated set is an error we would rather not race on.
@@ -48,7 +48,7 @@ services:
       retries: 20
     mem_limit: 1g
 
-  vanmoer:
+  org-b:
     environment:
       PILOTS_STORE: mongo
       PILOTS_MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
@@ -62,4 +62,4 @@ services:
         condition: service_healthy
 
 volumes:
-  vanmoer-mongo:
+  org-b-mongo:

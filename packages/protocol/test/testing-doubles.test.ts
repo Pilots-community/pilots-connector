@@ -42,18 +42,20 @@ describe('deterministicIdGenerator', () => {
 describe('testParticipants', () => {
   it('generates a key and a resolvable DID document per participant', async () => {
     const { signer, resolver } = await testParticipants({
-      acme: 'did:web:acme-shipping.example',
-      vanmoer: 'did:web:vanmoer.example',
+      'org-a': 'did:web:org-a.example',
+      'org-b': 'did:web:org-b.example',
     })
-    expect(await signer.did('acme')).toBe('did:web:acme-shipping.example')
-    const document = await resolver.resolve('did:web:vanmoer.example')
-    expect(document?.id).toBe('did:web:vanmoer.example')
+    expect(await signer.did('org-a')).toBe('did:web:org-a.example')
+    const document = await resolver.resolve('did:web:org-b.example')
+    expect(document?.id).toBe('did:web:org-b.example')
     expect(await resolver.resolve('did:web:stranger.example')).toBeNull()
   })
 
   it('generates fresh keys every time, so nothing can become a fixture', async () => {
-    const first = await testParticipants({ acme: 'did:web:acme-shipping.example' })
-    const second = await testParticipants({ acme: 'did:web:acme-shipping.example' })
-    expect(await first.signer.publicJwk('acme')).not.toEqual(await second.signer.publicJwk('acme'))
+    const first = await testParticipants({ 'org-a': 'did:web:org-a.example' })
+    const second = await testParticipants({ 'org-a': 'did:web:org-a.example' })
+    expect(await first.signer.publicJwk('org-a')).not.toEqual(
+      await second.signer.publicJwk('org-a'),
+    )
   })
 })

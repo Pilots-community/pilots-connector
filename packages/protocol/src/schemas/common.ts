@@ -12,14 +12,14 @@ import { isDuration, DURATION_SUBSET } from '../duration.js'
 
 /**
  * A `did:web` DID, optionally with path segments — `did:web:example` or
- * `did:web:connectors.example:t:acme`. Path segments are what give a hosted
+ * `did:web:connectors.example:t:org-a`. Path segments are what give a hosted
  * tenant a real, resolvable identity of its own.
  */
 export const Did = z
   .string()
   .regex(
     /^did:web:[a-z0-9]([a-z0-9._%-]*[a-z0-9])?(:[A-Za-z0-9._%-]+)*$/,
-    'expected a did:web DID, e.g. did:web:acme-shipping.example',
+    'expected a did:web DID, e.g. did:web:org-a.example',
   )
 
 /** Role ids, transition ids, subscription ids: a lowercase-first identifier. */
