@@ -20,7 +20,8 @@
     "openapi:export": "pnpm --filter @pilots/client openapi:export",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
-    "demo:env": "node scripts/make-demo-env.mjs"
+    "demo:env": "node scripts/make-demo-env.mjs",
+    "bench:topologies": "node scripts/bench-topologies.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

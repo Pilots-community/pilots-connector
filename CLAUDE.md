@@ -11,11 +11,13 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M5 complete** — the process UI and the integration surface.
-`packages/client` ships a typed client and an OpenAPI document; `apps/process-ui` is its own container
-with a BFF that holds the API key and owns its own users. S0–S5 run as tests in ~3 s with no
-containers, and `docker compose up` gives **four containers, zero databases**, first transaction ~12 s
-in through the UI. M6 (measure and harden) is the next milestone.
+Current status: **M6 complete** — measured and hardened. Every topology is started cold and counted by
+`pnpm bench:topologies` (2 containers headless, 4 with a UI, 4 with a backoffice, **0 databases** in all
+of them, first transaction 5.6–11.4 s). A party with no UI is a container of its own
+(`apps/mock-backoffice`); a large party adds one overlay file for a managed document store; a host that
+loses its store re-hosts from the replicas of the peers it was hosting for. 506 tests, ~4 s, no
+containers. M7 (publish and deploy) is **event-triggered** — it starts on the supervisor's word, not on
+M6 finishing.
 
 ## What we're building
 
@@ -54,7 +56,7 @@ Deployment topologies (`[…]` is one container):
 - [docs/STACK.md](docs/STACK.md) — the finalised tech stack, and what each dependency buys
 - [docs/TESTING.md](docs/TESTING.md) — the four test tiers and why scenario tests are hermetic
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) — end-to-end walkthroughs (S0–S4)
-- [docs/ROADMAP.md](docs/ROADMAP.md) — milestones M1–M6 from empty repo to running demo
+- [docs/ROADMAP.md](docs/ROADMAP.md) — milestones M1–M7 from empty repo to running demo
 - [docs/definitions/](docs/definitions/) — five real example process definitions
 - [docs/superpowers/specs/](docs/superpowers/specs/) — design decision records, with the reasoning
 
@@ -143,9 +145,13 @@ pilots-service/
     src/deadlines/       The deadline scan loop. Driven by Clock, never setTimeout.
     src/attachments/     Content-addressed documents: upload, cross-connector pull, and read
                          permission derived from `visibility` rather than declared again.
+    src/recovery/        `rebuild` (refold from our own log, refuse an edited one) and `recover`
+                         (pull an instance back from a peer). The re-hosting path.
     src/store/           Repository port, memory/file/mongo adapters, conformance suite.
                          Connector-internal by design — do not promote to a shared package.
     src/admin-ui/        Minimal admin UI: connections, API keys, offerings, subscriptions, audit log.
+  apps/mock-backoffice/  A participant with no UI, as a container. One API key, no definition,
+                         no state machine — it posts back the transition id it was offered.
   apps/process-ui/       Demo process management, its own container.
     src/server/          The BFF: holds the one API key, owns its own user accounts
                          (better-auth), turns a signed-in user into an `X-Actor-Ref`, and
@@ -190,6 +196,12 @@ node apps/connector/scripts/bench.mjs        # measured cold start, RSS, first t
 pnpm demo:env                                # writes a gitignored .env with fresh credentials
 docker compose up                            # 4 containers (2 connectors + 2 UIs), 0 databases
 docker compose up acme vanmoer               # the headless profile: connectors only
+pnpm bench:topologies                        # every topology, started cold and counted (S4c)
+
+# two overlays, each adding one container. Always pass the same -f files to
+# `down` as to `up`, or the overlay's containers and volumes outlive the demo.
+docker compose -f docker-compose.yml -f docker-compose.automated.yml up   # +backoffice
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml up       # +document store
 pnpm --filter @pilots/process-ui dev         # BFF on :4000
 pnpm --filter @pilots/process-ui dev:web     # SPA on :5175, proxying the BFF
 
@@ -212,20 +224,28 @@ transitions from a terminal state; and warnings that do not fail a definition.
 
 ## Measured, not claimed
 
-**The full two-party demo** — `docker compose up`: two connectors and two process UIs, file store,
-`mem_limit` on every container.
+**Every topology** — `pnpm bench:topologies` starts each one cold and counts what is running. The
+container count *is* the argument, so it is counted rather than asserted.
 
-| | |
-|---|---|
-| Containers | **4** (0 databases) |
-| All four healthy | ~11.3 s from `up` |
-| **First transaction** | **~11.6 s from `up`** — started in the UI, relayed to the peer, against a 60 s target |
-| Cold start | connector ~340 ms · UI ~190 ms |
-| Memory in use | connector ~51 MiB / 1 GB · UI ~45 MiB / 512 MB |
-| Image size | connector 236 MB · UI 264 MB |
+| Topology | Self-run per party | Containers | Databases | Healthy | First transaction |
+|---|---|---|---|---|---|
+| Headless integrator | 1 | 2 | **0** | 5.5 s | 5.6 s |
+| Automated party | 1 + a backoffice | 4 | **0** | 11.2 s | 11.4 s |
+| Full self-hosting | 2 | 4 | **0** | 11.1 s | 11.3 s |
+| Fully hosted | **0** | 0 | **0** | — | — |
 
-Connectors only (`docker compose up acme vanmoer`) is the headless profile: **2 containers**, both
-healthy ~5.7 s, first relayed transaction ~6.0 s, ~82–86 MiB each after S1 has run across both.
+Against a 60 s target. Memory as the cgroup reports it: connector ~80–86 MiB / 1 GB · UI ~44 MiB /
+512 MB · backoffice ~33 MiB / 256 MB. Image size: connector 236 MB · UI 264 MB.
+
+*Fully hosted* has nothing to time — the hosted party runs no containers, which is the claim rather
+than a gap; the shape is proven in the scenario tier (`hosted-tenants.test.ts`). *Automated party* and
+*full self-hosting* cost the same, which is the point of the split: a backoffice instead of a UI is a
+different container, not a different connector.
+
+**The managed document-store profile** — `docker compose -f docker-compose.yml -f
+docker-compose.mongo.yml up`: connector on Mongo ~91 MiB, file-store connector ~84 MiB, database
+**~127 MiB in a container of its own**. That container is one party's honest price; the headline
+*0 databases* belongs to the small profile and stays true there.
 
 The limit lives in `docker-compose.yml`, not only in this table, so a connector that outgrows 1 GB
 fails `up` instead of quietly making the number stale. The image grew 14 MB at M3 for the Mongo
@@ -267,8 +287,8 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M3** — two connectors ✅ **done** | Scenario harness + in-process transport **first**, connection handshake, peer + local delivery, the relay, replication, node-to-node auth on, signing on, Mongo adapter + conformance | Met: S0, S1, S4a, S4b, S4d, S5 as scenario tests (412 tests, ~2.6 s, no containers); an automated participant runs S1 with no human; Mongo passes the same conformance suite; two containers, 0 databases, S1 end to end, both replicas verify |
 | **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
 | **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `acme-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
-| **M6** — measure and harden *(current target)* | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Cost targets measured, not claimed; S1, S2, S4a–c from one command |
-| **M7** — publish and deploy *(event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
+| **M6** — measure and harden ✅ **done** | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Met: every topology started cold and counted — 2/4/4/0 containers, **0 databases** in all of them, first transaction 5.6–11.4 s against 60 s; 506 tests, ~4 s. Found three real bugs, including a large party regenerating its signing key on every restart |
+| **M7** — publish and deploy *(current target, event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
 ## Working agreements
 

@@ -429,7 +429,74 @@ single-writer, so they hide precisely the contracts a networked store differs on
 against them would need a signature change the first time a real store appeared — which is the retrofit
 this design exists to prevent.
 
-### 7.2 Stated limitation
+### 7.2 The managed document-store profile
+
+Two overlays sit beside the base compose file, each adding one container to a base that has none of it:
+`docker-compose.automated.yml` (a party's own back-office system) and `docker-compose.mongo.yml` (this
+section). Neither is a mode or a build flag — each is a different container beside the same image, which
+is what keeps "the two profiles differ in deployment only" checkable rather than asserted. Pass the same
+`-f` files to `down` as to `up`, or the overlay's containers and volumes outlive the demo.
+
+`docker-compose.mongo.yml` is the large party's deployment:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.mongo.yml up
+```
+
+One changed service. Van Moer is the terminal operator, so Van Moer runs the document store; Acme
+stays on the file store, which is the one-truck haulier's profile. **Same image, different
+configuration** — that is the deployment claim the overlay exists to make checkable, and it would be
+worth nothing if the two parties ran different builds. Measured, running the two side by side: the
+connector on Mongo ~91 MiB, the file-store connector ~84 MiB, and the database **~127 MiB in a
+container of its own**. That container is the honest cost of the profile, and it is one party's cost,
+not the demo's: the headline *0 databases* belongs to the small profile and stays true there.
+
+A replica set is **required, not preferred**. `appendEvent` is all-or-nothing across several
+participants' copies, and a standalone `mongod` cannot do the transaction that guarantees it. The
+adapter refuses to start without one rather than silently offering a weaker promise.
+
+**The signing key does not follow the documents.** `SecretStore` is a separate port, and which one a
+connector uses is a function of *durability*, not of which document store is configured — a party that
+outgrows a file store does not thereby hand its key to a database. This was wrong once, in exactly the
+way that matters: the choice read `adapter === 'file'`, so the managed profile — the party most likely
+to restart — kept its key in memory, minted a new one on every restart, republished a new DID document,
+and left every event it had ever signed unverifiable while looking perfectly healthy. `chooseSecretStore`
+is now a named function with a test.
+
+### 7.3 Recovering a copy, and re-hosting a host
+
+Two operations on the admin surface, for two different problems. Both exist because §5.2 says the
+materialised instance is a cache of the log, and a claim of that kind is worth exactly as much as the
+operation that exercises it.
+
+| | `POST /instances/{id}/rebuild` | `POST /instances/{id}/recover` |
+|---|---|---|
+| Problem | the document disagrees with the log | the log itself is short or gone |
+| Reaches | nothing — local only | one peer, over `GET /instances/{id}/events?since=` |
+| On success | refolds, repairs, names what differed | applies through the normal replication path |
+| On a broken chain | **refuses**, and audits the refusal | the peer's events never verify, so nothing lands |
+
+`rebuild` verifies the chain before it folds. A rebuild that quietly folded an edited log would launder
+the edit into the cache and call it recovery — so a log somebody edited on disk is refused, not
+repaired from. On the file adapter that is a text edit to a `.jsonl` file, which is a test in
+`recovery.test.ts` rather than a thought experiment.
+
+`recover` is the **re-hosting** path. A connector whose store died gets its hosted processes back from
+the replicas of the peers it was hosting *for*, verifying every signature on the way in — including the
+ones it made itself. It adds no protocol: it is the delivery layer's own `?since=` recovery call, made
+deliberately by an operator instead of automatically by a stream that noticed a gap, so a peer cannot
+use a recovery request to hand over a chain that would not otherwise be accepted.
+
+What re-hosting is **not** is a change of host. `hostedBy` is a role, resolved through `participants`,
+and `participants` lives inside `genesis`, which every event commits to — so moving hosting to a
+different participant would break the chain by construction. Re-hosting means the *same participant on
+new infrastructure*, which is why the identity has to survive the disk (§7.2) for any of it to work.
+
+The honest limit, which the response states rather than hides: a peer can only return what it was
+allowed to see, so a recovered log may carry redacted payloads and `recover` counts them. The host lost
+those fields with its disk. What it did not lose is the ability to prove what happened.
+
+### 7.4 Stated limitation
 
 The file adapter is **single-writer, single-process**. No horizontal scaling, no replicas. Correct for
 the small profile, and a footgun if left unwritten.
@@ -561,33 +628,38 @@ infrastructure at all.
 
 These are acceptance criteria. Measure them; do not assert them.
 
-### 12.1 Measured at M5
+### 12.1 Measured at M6
 
-Four ways, because they answer different questions.
+**Every topology in §11, measured** — `pnpm bench:topologies` starts each shape cold, counts what is
+running, and times a first transaction through it. The container count *is* the argument, so it is
+counted rather than asserted: a topology that grows a database container has broken a promise, and the
+script would say so.
 
-**The full two-party demo**, `docker compose up`: two connectors and two process UIs, file store,
-`mem_limit` on every container, S1 driven through the UI on both sides.
+| Topology | Self-run per party | Containers | Databases | Healthy | First transaction |
+|---|---|---|---|---|---|
+| Headless integrator | 1 | 2 | **0** | 5.5 s | 5.6 s |
+| Automated party | 1 + a backoffice | 4 | **0** | 11.2 s | 11.4 s |
+| Full self-hosting | 2 | 4 | **0** | 11.1 s | 11.3 s |
+| Fully hosted | **0** | 0 | **0** | — | — |
 
-| | |
-|---|---|
-| Containers | **4** (0 databases) |
-| All four healthy | ~11.3 s from `up` |
-| **First transaction** | **~11.6 s from `up`** — started in a browser, relayed to the peer, against a 60 s target |
-| Cold start | connector ~340 ms · UI ~190 ms |
-| Memory in use | connector ~51 MiB / 1 GB · UI ~45 MiB / 512 MB |
-| Image size | connector 236 MB · UI 264 MB |
+Against a 60 s target. Memory as the cgroup reports it, against the limit each container runs under:
+connector ~80–86 MiB / 1 GB (~8 %) · process UI ~44 MiB / 512 MB (~9 %) · mock backoffice
+~33 MiB / 256 MB (~13 %). Image size: connector 236 MB · UI 264 MB.
 
-**The headless profile**, `docker compose up acme vanmoer` — connectors only, no UI:
+Three rows deserve a note.
 
-| | |
-|---|---|
-| Containers | **2** (0 databases) |
-| Both healthy | ~5.7 s from `up` |
-| **First transaction** | **~6.0 s from `up`** — relayed Acme → Van Moer |
-| Memory in use, each | **~82–86 MiB — 8 % of a 1 GB limit**, after S1 has run across both |
+**Headless and full self-hosting are the same command with a different argument**, which is the
+deployment claim: the UI is a client, so removing it removes a container rather than a capability.
 
-That the two rows exist as one command with a different argument is the deployment claim: the UI is a
-client, and removing it removes a container rather than a capability.
+**Automated party and full self-hosting cost the same.** Swapping a process UI for a backoffice is a
+different container, not a different connector, a different API or a different key — one side clicks and
+one does not, and neither connector can tell.
+
+**Fully hosted has nothing to time**, and that is the claim rather than a gap: the hosted party runs no
+containers, so there is nothing to start. What a *provider* runs for them is a row above. The shape
+itself — several participants on one connector, each with its own store, log, audit chain and
+connections — is proven in the scenario tier (`hosted-tenants.test.ts`), because it needs no containers
+to be true.
 
 The limit is written into `docker-compose.yml` rather than only into this table, so a connector that
 stops fitting in a 1 GB container fails `up` instead of quietly making this number stale.
@@ -625,4 +697,3 @@ is the record, and it is paid deliberately: the event log and the audit log are 
 materialised instance is not, because §5.2 already says it is a cache the log rebuilds. Reopening
 reconciles any instance found behind its own log.
 
-The fully-hosted topology (0 self-run containers) is measured at M6.

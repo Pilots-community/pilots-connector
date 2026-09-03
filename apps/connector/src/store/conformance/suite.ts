@@ -13,6 +13,7 @@
 import {
   EMPTY_PAYLOAD_HASH,
   hashJson,
+  verifyAuditChain,
   type StoredEvent,
   type StoredInstance,
 } from '@pilots/protocol'
@@ -542,6 +543,93 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
           problem: 'urn:pilots:problem:role-not-permitted',
         })
         expect((await store.audit.read(ACME))[0]?.outcome).toBe('denied')
+      })
+    })
+
+    // ─────────────────────────────────────────────────────────────────────────
+    describe('audit retention — keeping less without proving less', () => {
+      const entry = (action: string) => ({
+        at: AT,
+        participantId: ACME,
+        category: 'admin' as const,
+        action,
+        actor: { kind: 'adminSession' as const, id: 'op', actorRef: null },
+        subject: {
+          instance: null,
+          connection: null,
+          apiKey: null,
+          subscription: null,
+          offering: null,
+          definition: null,
+        },
+        outcome: 'ok' as const,
+        problem: null,
+        detail: null,
+        request: null,
+      })
+
+      it('discards a prefix without renumbering what remains', async () => {
+        for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
+
+        expect(await store.audit.prune(ACME, 2)).toBe(2)
+
+        const kept = await store.audit.read(ACME)
+        // Still 3, 4, 5 — not 1, 2, 3. Renumbering would make retention
+        // indistinguishable from rewriting, and the chain worthless.
+        expect(kept.map((one) => one.seq)).toEqual([3, 4, 5])
+        expect(kept[0]?.action).toBe('c')
+      })
+
+      it('leaves the retained segment verifiable from where it now starts', async () => {
+        for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
+        await store.audit.prune(ACME, 2)
+
+        const kept = await store.audit.read(ACME)
+        // A chain whose earlier links are elsewhere is not a broken chain, and
+        // `from` is how a verifier is told so.
+        expect(verifyAuditChain(kept, { from: 3 }).ok).toBe(true)
+        // Told nothing, it correctly complains: seq 3 is not the first entry of
+        // a whole log.
+        expect(verifyAuditChain(kept).ok).toBe(false)
+      })
+
+      it('still detects tampering inside what was kept', async () => {
+        for (const action of ['a', 'b', 'c', 'd', 'e']) await store.audit.append(entry(action))
+        await store.audit.prune(ACME, 2)
+
+        const kept = await store.audit.read(ACME)
+        const tampered = kept.map((one, index) =>
+          index === 1 ? { ...one, action: 'something-else' } : one,
+        )
+        // Pruning removes entries; it must not remove the property that the
+        // remaining ones cannot be edited.
+        expect(verifyAuditChain(tampered, { from: 3 }).ok).toBe(false)
+      })
+
+      it('appends after a prune without a gap in the chain', async () => {
+        for (const action of ['a', 'b', 'c']) await store.audit.append(entry(action))
+        await store.audit.prune(ACME, 1)
+
+        const appended = await store.audit.append(entry('d'))
+        expect(appended.seq).toBe(4)
+
+        const kept = await store.audit.read(ACME)
+        expect(verifyAuditChain(kept, { from: 2 }).ok).toBe(true)
+      })
+
+      it('survives a reopen', async () => {
+        if (!context.persistent) return
+        for (const action of ['a', 'b', 'c', 'd']) await store.audit.append(entry(action))
+        await store.audit.prune(ACME, 2)
+
+        const reopened = await context.reopen(store)
+        try {
+          const kept = await reopened.audit.read(ACME)
+          expect(kept.map((one) => one.seq)).toEqual([3, 4])
+          expect(verifyAuditChain(kept, { from: 3 }).ok).toBe(true)
+        } finally {
+          await reopened.close()
+        }
       })
     })
 

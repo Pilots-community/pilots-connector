@@ -38,12 +38,26 @@ export interface AuditChainVerification {
 }
 
 /** Confirm nobody has edited, reordered or removed an entry. */
-export function verifyAuditChain(entries: readonly AuditEntry[]): AuditChainVerification {
+export function verifyAuditChain(
+  entries: readonly AuditEntry[],
+  options: { from?: number } = {},
+): AuditChainVerification {
   const failures: AuditChainVerification['failures'] = []
   let previous: AuditEntry | null = null
 
+  /*
+   * Where this run of entries is expected to start.
+   *
+   * Defaults to 1 — a whole log, from the beginning. `from` exists for an
+   * **exported segment**: a retained log that begins at, say, `seq` 4001 is not
+   * a broken chain, it is a chain whose earlier links are elsewhere. Without
+   * this, retention and verification would be mutually exclusive, and one of
+   * them would have to be abandoned.
+   */
+  const start = options.from ?? 1
+
   for (const [index, entry] of entries.entries()) {
-    const expectedSeq = index + 1
+    const expectedSeq = index + start
     if (entry.seq !== expectedSeq) {
       failures.push({
         seq: entry.seq,
@@ -54,6 +68,15 @@ export function verifyAuditChain(entries: readonly AuditEntry[]): AuditChainVeri
       })
       break
     }
+    if (previous === null && start > 1) {
+      // The first entry of an exported segment chains to something that is not
+      // in front of us. Its `prev` is unverifiable here by construction, and
+      // saying so beats either failing a valid export or pretending to have
+      // checked it.
+      previous = entry
+      continue
+    }
+
     const expectedPrev = previous === null ? null : auditEntryHash(previous)
     if (entry.prev !== expectedPrev) {
       failures.push({

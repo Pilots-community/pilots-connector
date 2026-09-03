@@ -1,0 +1,65 @@
+# The **managed document-store profile** — the large party's deployment.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.mongo.yml up
+#
+# One overlay, one changed service. Van Moer is the terminal operator in this
+# demo, so Van Moer is the one that runs a document store; Acme stays on the file
+# store, which is the one-truck haulier's profile. **Same image, different
+# configuration** — that is the claim this file exists to make checkable, and it
+# would be worth nothing if the two parties ran different builds.
+#
+# What this costs, stated rather than buried: **one database container**, for one
+# of the two parties. The headline "0 databases" belongs to the small profile and
+# stays true there. Nothing else moves — same connectors, same UIs, same
+# protocol, same first-transaction path.
+#
+# Tear it down with **both** files, or the database volume outlives the demo:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.mongo.yml down -v
+#
+# In a real large-party deployment this service is not here at all: it is a
+# managed cluster, and `PILOTS_MONGO_URI` is a secret from a secret manager. The
+# container below exists so the profile can be run and measured locally.
+#
+# **A replica set is required, not preferred.** `appendEvent` is all-or-nothing
+# across several participants' copies, and a standalone `mongod` cannot do the
+# transaction that guarantees it. The adapter refuses to start without one rather
+# than silently offering a weaker promise, so this single-node set is initiated
+# by the healthcheck below.
+services:
+  mongo:
+    image: mongo:7
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    volumes:
+      - vanmoer-mongo:/data/db
+    healthcheck:
+      # Idempotent: `rs.status()` throws until the set exists, and initiating an
+      # already-initiated set is an error we would rather not race on.
+      test:
+        [
+          'CMD',
+          'mongosh',
+          '--quiet',
+          '--eval',
+          'try { rs.status().ok } catch (e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"mongo:27017"}]}).ok }',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+
+  vanmoer:
+    environment:
+      PILOTS_STORE: mongo
+      PILOTS_MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
+      PILOTS_MONGO_DB: pilots
+    # The volume stays, and not as a leftover: the **signing key** lives in the
+    # `SecretStore`, which is a file here, never in the document store. Moving
+    # the store does not move the key, and a party that outgrows a file store
+    # does not thereby hand its key to a database.
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  vanmoer-mongo:

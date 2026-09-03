@@ -230,7 +230,7 @@ tier with no UI and no human — but not yet as a container in the demo.
   rather than through the admin controller, so it appeared with no record of where it came from —
   which is the one thing the audit log exists to prevent.
 
-## M6 — Measure and harden
+## M6 — Measure and harden ✅ done
 
 - The managed document-store profile for the large party; the file store stays the small-party default.
 - The mock backoffice as a separate tiny service, so "one side automates, the other clicks" is a real
@@ -242,8 +242,47 @@ tier with no UI and no human — but not yet as a container in the demo.
 - Multi-participant-per-connector exercised at least once in a test, to keep the hosted path honest.
 - Audit log retention and export.
 
-**Exit:** the cost targets in `AGENT.md` are measured, not claimed. S1, S2, S4a, S4b and S4c all run
-from one command.
+**Exit — met.** `pnpm bench:topologies` starts each topology cold and counts what is actually running:
+2 containers headless, 4 with a UI, 4 with a backoffice, **0 databases** in every one, first transaction
+5.6–11.4 s against a 60 s target. The numbers are in
+[ARCHITECTURE.md §12.1](ARCHITECTURE.md#121-measured-at-m6) and the targets in `AGENT.md` now say
+*measured* rather than *target*. S1, S2, S4a, S4b and S4c all run from one command.
+
+The automated participant became a container: Acme clicks in a browser while Van Moer's backoffice
+applies `weigh`, `recordPayment` and `issueVgm` unattended, over an ordinary API key with an ordinary
+`X-Actor-Ref` — Van Moer's audit log says `weighbridge-controller`, and neither connector can tell which
+side had a person on it.
+
+Both new shapes are **overlays**, not modes: `docker-compose.automated.yml` adds the backoffice and the
+subscription that feeds it, `docker-compose.mongo.yml` adds the document store. `docker compose up`
+stays the four-container two-party demo, because a party's own back-office system is that party's fifth
+container rather than the demo's — a distinction Playwright made for us, by failing when the backoffice
+started answering for Van Moer before the test could click.
+
+**Four things this milestone found**, three of them bugs that only a harder look would surface.
+
+- **A large party regenerated its signing key on every restart.** The secret store was chosen by
+  `adapter === 'file'`, so the *managed* profile — the party most likely to restart — kept its key in
+  memory. Every restart minted a new key, republished a new DID document, and left every event it had
+  ever signed unverifiable, while the connector came up looking healthy. The rule is now durability,
+  not adapter, in a named function with a test. Found by running the profile rather than by reading it.
+- **A degraded subscription lost its notifications permanently.** Only `ACTIVE` subscriptions were
+  recorded, so the moment a backoffice had a bad minute, everything it had not yet received was dropped
+  rather than delayed. `PAUSED` is the only status that should stop the recording, because an operator
+  asked for it.
+- **`action.required` fired on the wrong edge.** It announced the transition from nothing-available to
+  something-available, rather than *entering a state where something is available*, so a party that was
+  already able to act was told nothing when its turn came round again.
+- **Recovery had to be split in two.** "Rebuild from the log" and "recover from a peer" look like one
+  operation and are not: one needs the instance identity the log commits to by hash but does not
+  contain, and the other is handed it by the peer. Conflating them would have made a wiped store
+  unrecoverable and a corrupt cache a network call.
+
+Re-hosting is the part worth demonstrating in person. Destroy the host's document store, leave its
+signing key where it belongs — in a secret manager, not on the dead disk — and the connector comes back
+as the *same participant*, pulls its hosted processes from the replicas of the peers it was hosting for,
+verifies every signature including its own, and carries on writing at the next `seq`. What it cannot
+recover are fields the peer was never allowed to see; `recover` counts them rather than pretending.
 
 ## M7 — Publish and deploy
 

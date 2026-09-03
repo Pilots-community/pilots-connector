@@ -22,6 +22,12 @@
 #
 #     docker compose up acme vanmoer
 #
+# For the automated party — Van Moer driven by a backoffice instead of a person —
+# add the overlay, which brings a fifth container and the subscription that feeds
+# it:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.automated.yml up
+#
 # Note what is seeded and what is not. `PILOTS_CONNECTIONS` establishes the
 # connection at boot so that `up` reaches a first transaction in under a minute.
 # The handshake still works without it, and S0 in the test suite is what proves

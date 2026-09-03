@@ -166,16 +166,16 @@ Absolute, not relative to anything:
 
 | Target | Value |
 |---|---|
-| Self-run containers, headless integrator | 1 |
-| Self-run containers, with the demo process UI | 2 |
-| Self-run containers, fully hosted | 0 |
+| Self-run containers, headless integrator | 1 — **measured at M6** |
+| Self-run containers, with the demo process UI | 2 — **measured at M6** |
+| Self-run containers, fully hosted | 0 — **measured at M6**; the hosted shape is proven in the scenario tier |
 | Database containers, small-party profile | **0** — file store on a mounted volume |
 | Memory, small-party profile | Comfortable in a **1 GB container**, with headroom. Measured at M3: ~82–86 MiB each, two connectors under a 1 GB limit, after S1 has run across both. |
-| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases**. Measured at M5. |
-| `docker compose up` → first transaction | < 60 s. Measured at M5: **~12 s** for the full four-container demo through the UI; **~6 s** for the two-connector headless profile. |
+| Containers for the full two-party demo | 4 — two connectors, two process UIs, **0 databases**. Measured at M6 across every topology. |
+| `docker compose up` → first transaction | < 60 s. Measured at M6: **~11 s** full self-hosting through the UI, **~11 s** with one side automated, **~6 s** headless. |
 | Inbound public HTTPS endpoint required | No, for a party using `stream` delivery |
 | Onboarding a new participant | Publish one static `did.json`, accept one connection request |
-| Full scenario suite (S0–S4) wall-clock | seconds, no containers. Measured at M5: 469 tests in ~3 s. |
+| Full scenario suite (S0–S4) wall-clock | seconds, no containers. Measured at M6: 496 tests in ~4 s. |
 
 ## Repo layout and stack
 

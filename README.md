@@ -40,7 +40,8 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 
 ## Where the code is
 
-**M1 through M5 are built — two parties run a negotiated process end to end, each through their own UI.**
+**M1 through M6 are built — two parties run a negotiated process end to end, each through their own UI,
+and every deployment topology has been started cold and measured.**
 
 | | |
 |---|---|
@@ -48,6 +49,7 @@ docs/IDEA.md              the original meeting sketch — superseded, kept for p
 | [`apps/connector`](apps/connector) | The connector: the store (memory + file + Mongo, one conformance suite), all three API surfaces, the connection handshake, the relay, peer replication, local delivery, links, deadlines, attachments, API keys and scopes, the hash-chained audit log, and a minimal admin UI it serves itself |
 | [`packages/client`](packages/client) | The integration surface: a typed client for the local API and a committed OpenAPI document, so a non-TypeScript integrator generates their own |
 | [`apps/process-ui`](apps/process-ui) | The demo process UI, its own container: a BFF holding one API key and owning its own users, and a SPA that renders transitions and forms **from the definition** — a new process needs no UI work |
+| [`apps/mock-backoffice`](apps/mock-backoffice) | A participant with no UI, as a container: it holds one API key, reacts to `action.required`, and has no copy of the definition and no state machine of its own |
 
 `pnpm demo:env && docker compose up` runs **four containers and zero databases** — two connectors and two process UIs —
 with the first transaction about twelve seconds in, started by a person in a browser and relayed to the
@@ -60,21 +62,40 @@ start, waiting, and a `link` advances it the moment the price is agreed. Deadlin
 over stored state, so an offer expiring after a day is a test that advances a clock rather than one that
 sleeps.
 
-[docs/ROADMAP.md](docs/ROADMAP.md) M6 — measure and harden — is next.
+A party with no UI is a container too. Add one overlay file and Van Moer's backoffice applies `weigh`,
+`recordPayment` and `issueVgm` unattended while Acme clicks in a browser, over an ordinary API key —
+neither connector can tell which side had a person on it. A large party runs the same image against a managed document
+store by adding one overlay file; a party that loses that store gets its hosted processes back from the
+replicas of the peers it was hosting for, verifying every signature including its own.
+
+[docs/ROADMAP.md](docs/ROADMAP.md) M7 — publish and deploy — is next, and starts on the supervisor's
+word rather than on M6 finishing.
 
 ```bash
 pnpm install
-pnpm test               # 469 tests, ~3 s, no network, no containers, no real clock
+pnpm test               # 506 tests, ~4 s, no network, no containers, no real clock
 pnpm lint:definitions   # check docs/definitions against the schema and the linter
 pnpm build
 
-docker compose up       # one container, no database, admin UI on /admin/
+docker compose up       # the full demo: 4 containers, 0 databases
+pnpm bench:topologies   # every topology, started cold and counted
 node apps/connector/scripts/bench.mjs   # the numbers below, measured
 ```
 
 ## Measured, not claimed
 
-One container, zero databases. `docker run --memory=1g`, file store, after S1 has run:
+Every topology, started cold by `pnpm bench:topologies` — the container count is the argument, so it is
+counted rather than asserted:
+
+| Topology | Self-run per party | Containers | Databases | First transaction |
+|---|---|---|---|---|
+| Headless integrator | 1 | 2 | **0** | 5.6 s |
+| Automated party | 1 + a backoffice | 4 | **0** | 11.4 s |
+| Full self-hosting | 2 | 4 | **0** | 11.3 s |
+| Fully hosted | **0** | 0 | **0** | — nothing to start |
+
+Against a 60 s target. One container, zero databases — `docker run --memory=1g`, file store, after S1
+has run:
 
 | | |
 |---|---|

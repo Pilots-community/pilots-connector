@@ -5,7 +5,9 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import type { ParticipantConfig } from '../src/config/config.js'
+import { loadConfig } from '../src/config/config.js'
 import { Identity } from '../src/identity/identity.service.js'
+import { chooseSecretStore } from '../src/runtime.js'
 import { EnvSecretStore, FileSecretStore, MemorySecretStore } from '../src/secrets/secret-store.js'
 
 const ACME: ParticipantConfig = {
@@ -149,5 +151,61 @@ describe('participant lookup', () => {
     expect(identity.participantByDid(VANMOER.did)?.id).toBe('vanmoer')
     expect(identity.participantByDid('did:web:stranger.example')).toBeUndefined()
     expect(identity.dids).toEqual([ACME.did, VANMOER.did])
+  })
+})
+
+/**
+ * Which secret store a connector picks, and why it is not the document store's
+ * business.
+ *
+ * This is a regression test with a scar. The choice used to read
+ * `adapter === 'file' ? file : memory`, so the **managed document-store
+ * profile** — the large party, the one most likely to restart — silently kept
+ * its signing key in memory. Every restart minted a new key, republished a new
+ * DID document, and left every event it had ever signed unverifiable. Nothing
+ * failed loudly; the connector came up looking healthy and its own log stopped
+ * verifying.
+ *
+ * The rule is durability, not adapter: memory only where the whole process is
+ * ephemeral by construction.
+ */
+describe('the signing key survives a restart on every durable store', () => {
+  const base = {
+    PILOTS_PARTICIPANT_ID: 'acme',
+    PILOTS_PARTICIPANT_DID: ACME.did,
+    PILOTS_BASE_URL: ACME.baseUrl,
+    PILOTS_DEFINITIONS_DIR: '../../docs/definitions',
+    NODE_ENV: 'test',
+    PILOTS_STORE_DIR: '/data',
+  }
+
+  it('persists the key on every durable store, memory only on the ephemeral one', () => {
+    expect(chooseSecretStore(loadConfig({ ...base, PILOTS_STORE: 'file' }))).toBeInstanceOf(
+      FileSecretStore,
+    )
+    // The regression this test exists for: the choice used to read
+    // `adapter === 'file'`, so the *managed* profile — the large party, the one
+    // most likely to restart — kept its signing key in memory.
+    expect(
+      chooseSecretStore(
+        loadConfig({ ...base, PILOTS_STORE: 'mongo', PILOTS_MONGO_URI: 'mongodb://db:27017' }),
+      ),
+    ).toBeInstanceOf(FileSecretStore)
+    expect(chooseSecretStore(loadConfig({ ...base, PILOTS_STORE: 'memory' }))).toBeInstanceOf(
+      MemorySecretStore,
+    )
+  })
+
+  it('comes back as the same participant, not a new one', async () => {
+    const path = tempFile()
+    const before = await Identity.bootstrap([ACME], new FileSecretStore(path))
+    const beforeDoc = await before.didDocument('acme')
+
+    // A restart: a new process, the same configured secrets file.
+    const after = await Identity.bootstrap([ACME], new FileSecretStore(path))
+
+    expect(after.report.generatedKeysFor).toEqual([])
+    expect(await after.didDocument('acme')).toEqual(beforeDoc)
+    expect(after.pepper).toEqual(before.pepper)
   })
 })

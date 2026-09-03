@@ -257,4 +257,14 @@ export interface AuditLog {
   read(participantId: string, sinceSeq?: number, limit?: number): Promise<AuditEntry[]>
   head(participantId: string): Promise<AuditEntry | undefined>
   count(participantId: string): Promise<number>
+  /**
+   * Discard every entry up to and including `throughSeq`. Returns how many went.
+   *
+   * Retention, and nothing more: `seq` does not restart and the entries that
+   * remain still chain to each other, so what is kept is still verifiable —
+   * `verifyAuditChain(entries, { from })` is how. An implementation that
+   * renumbered, or that let the caller prune the whole log, would turn an audit
+   * log into a diary.
+   */
+  prune(participantId: string, throughSeq: number): Promise<number>
 }

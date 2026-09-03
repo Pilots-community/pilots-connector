@@ -43,9 +43,15 @@ import { IDENTITY, type Identity } from '../identity/identity.service.js'
 import { LOG_SERVICE, type LogService } from '../logging/log.service.js'
 import { CONNECTIONS, type ConnectionService } from '../connections/connection.service.js'
 import { NOTIFICATIONS, type NotificationService } from '../notifications/notification.service.js'
-import { PEER_STREAMS } from '../runtime.tokens.js'
+import { PEER_STREAMS, RECOVERY } from '../runtime.tokens.js'
 import type { PeerStreamClient } from '../delivery/peer-stream-client.js'
+import type { RecoveryService } from '../recovery/recovery.service.js'
 import { STORE, type Store } from '../store/store.js'
+
+const RecoverBody = z.strictObject({
+  /** Which peer to pull from. Omitted, every connection that carries traffic is tried. */
+  from: Did.optional(),
+})
 
 const SignInBody = z.strictObject({
   token: z.string().min(1),
@@ -130,6 +136,13 @@ const ConnectionDecisionBody = z.strictObject({
   reason: z.string().max(1024).optional(),
 })
 
+const PruneAuditBody = z.strictObject({
+  /** The last seq to discard. Exact, so nobody prunes "roughly everything old". */
+  through: z.int().min(1),
+  /** Where the operator says the discarded entries now live. Recorded, not checked. */
+  exported: z.string().min(1).max(1024).optional(),
+})
+
 const TrustedPeerBody = z.strictObject({
   did: Did,
   note: z.string().max(255).optional(),
@@ -196,6 +209,7 @@ export class AdminController {
     @Inject(CONNECTIONS) private readonly connections: ConnectionService,
     @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
     @Inject(PEER_STREAMS) private readonly streams: PeerStreamClient,
+    @Inject(RECOVERY) private readonly recovery: RecoveryService,
   ) {}
 
   private session(request: AdminRequest): AdminSession {
@@ -690,10 +704,153 @@ export class AdminController {
 
   /** Confirms nobody has edited, reordered or removed an entry. */
   @Get('audit/verify')
-  async verifyAudit(@Query('participantId') participantId?: string) {
+  async verifyAudit(@Query('participantId') participantId?: string, @Query('from') from?: string) {
     const owner = this.participantId(participantId)
-    const entries = await this.store.audit.read(owner, 0, 100_000)
-    const verification = verifyAuditChain(entries)
-    return { ok: verification.ok, entries: entries.length, failures: verification.failures }
+    const start = from === undefined ? 1 : Number(from)
+    if (!Number.isInteger(start) || start < 1) {
+      throw ProblemException.badRequest('from must be a positive integer')
+    }
+
+    const entries = await this.store.audit.read(owner, start - 1, 1_000_000)
+    const verification = verifyAuditChain(entries, { from: start })
+    return {
+      ok: verification.ok,
+      entries: entries.length,
+      from: start,
+      failures: verification.failures,
+    }
+  }
+
+  /**
+   * Export the audit log, or a slice of it.
+   *
+   * The audit log is **never replicated** — it is nobody else's business — so
+   * getting a copy out is an operator act rather than a protocol one. It comes
+   * out as newline-delimited JSON because that is what a log pipeline, an
+   * auditor's spreadsheet and `grep` all read without help.
+   *
+   * A slice carries `from`, so a segment that begins at seq 4001 can still be
+   * verified: `GET /audit/verify?from=4001`. A chain whose earlier links are
+   * elsewhere is not a broken chain.
+   */
+  @Get('audit/export')
+  async exportAudit(
+    @Res({ passthrough: true }) reply: FastifyReply,
+    @Query('participantId') participantId?: string,
+    @Query('since') since?: string,
+    @Query('until') until?: string,
+  ) {
+    const owner = this.participantId(participantId)
+    const sinceSeq = since === undefined ? 0 : Number(since)
+    const untilSeq = until === undefined ? Number.MAX_SAFE_INTEGER : Number(until)
+    if (!Number.isInteger(sinceSeq) || sinceSeq < 0 || !Number.isInteger(untilSeq)) {
+      throw ProblemException.badRequest('since and until must be integers')
+    }
+
+    const entries = (await this.store.audit.read(owner, sinceSeq, 1_000_000)).filter(
+      (entry) => entry.seq <= untilSeq,
+    )
+
+    void reply
+      .header('content-type', 'application/x-ndjson')
+      .header(
+        'content-disposition',
+        `attachment; filename="audit-${owner}-${sinceSeq + 1}-${entries.at(-1)?.seq ?? sinceSeq}.ndjson"`,
+      )
+    return entries.map((entry) => JSON.stringify(entry)).join('\n')
+  }
+
+  /**
+   * Discard audit entries older than a point, once they have been exported.
+   *
+   * **Deliberately awkward.** It takes the exact `through` seq and refuses
+   * anything that would leave the remaining log unverifiable, because an audit
+   * log you can quietly truncate is not an audit log. The act of pruning is
+   * itself audited, in the log that remains, so the gap is never silent.
+   *
+   * Retention is an operator's decision about storage, not a way to make
+   * something go away: what is kept still chains, and the first kept entry names
+   * the seq it continues from.
+   */
+  @Post('audit/prune')
+  async pruneAudit(
+    @Req() request: AdminRequest,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(PruneAuditBody, body)
+    const owner = this.participantId(participantIdQuery)
+
+    const total = await this.store.audit.count(owner)
+    if (parsed.through >= total) {
+      throw ProblemException.badRequest(
+        `refusing to prune through ${parsed.through} of ${total} entries: that would leave nothing to verify`,
+      )
+    }
+
+    const removed = await this.store.audit.prune(owner, parsed.through)
+
+    // Recorded in the log that survives, so the gap is explained rather than
+    // merely present.
+    await this.audit(request, 'audit.prune', 'ok', owner)
+    return { removed, remainingFrom: parsed.through + 1, exported: parsed.exported }
+  }
+
+  // ── recovery: the log is the record, so prove it ─────────────────────────
+
+  /**
+   * Refold one instance from its own event log.
+   *
+   * §5.2 says the materialised instance is a cache the log rebuilds. This is
+   * that sentence as an operation: it verifies the chain, refolds, and reports
+   * what — if anything — the document had got wrong. It touches no peer.
+   */
+  @Post('instances/:id/rebuild')
+  async rebuildInstance(
+    @Req() request: AdminRequest,
+    @Param('id') id: string,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    const outcome = await this.recovery.rebuild(participant, id)
+    if (!outcome.ok) {
+      await this.audit(request, 'instance.rebuild', 'failed', owner, { instance: id })
+      throw ProblemException.badRequest(outcome.detail)
+    }
+    return outcome.value
+  }
+
+  /**
+   * Pull an instance back from a participant who kept a copy.
+   *
+   * The re-hosting path: a connector whose store is gone gets its state back
+   * from the replicas of the peers it was hosting for, verifying every
+   * signature — including its own — on the way in. It adds no protocol; it is
+   * the delivery layer's own `?since=` recovery call, made deliberately.
+   *
+   * A peer can only return what it was allowed to see, so a recovered log may
+   * carry redacted payloads. The response counts them rather than hiding it.
+   */
+  @Post('instances/:id/recover')
+  async recoverInstance(
+    @Req() request: AdminRequest,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Query('participantId') participantIdQuery?: string,
+  ) {
+    const parsed = parse(RecoverBody, body ?? {})
+    const owner = this.participantId(participantIdQuery)
+    const participant = this.identity.participant(owner)
+    if (!participant) throw ProblemException.badRequest(`unknown participant ${owner}`)
+
+    const outcome = await this.recovery.recover(participant, id, parsed.from)
+    if (!outcome.ok) {
+      await this.audit(request, 'instance.recover', 'failed', owner, { instance: id })
+      throw ProblemException.badRequest(outcome.detail)
+    }
+    return outcome.value
   }
 }

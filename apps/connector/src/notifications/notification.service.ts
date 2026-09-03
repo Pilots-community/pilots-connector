@@ -88,9 +88,19 @@ export class NotificationService {
       const stored = await this.store.instances.get(participant.id, notice.after.id)
       if (!stored) continue
 
-      const subscriptions = await this.store.subscriptions.find(participant.id, {
-        where: { status: 'ACTIVE' },
-      })
+      /*
+       * `ACTIVE` **and** `DEGRADED`.
+       *
+       * `DEGRADED` means delivery is failing, and the whole point of the state
+       * is that events *accumulate* and go out on recovery. Recording only for
+       * `ACTIVE` drops them permanently the moment a backoffice has a bad
+       * minute — and leaves the replay endpoint, which is specified as
+       * authoritative, with nothing to replay. Only `PAUSED` stops the
+       * recording, because an operator asked for that explicitly.
+       */
+      const subscriptions = (await this.store.subscriptions.find(participant.id)).filter(
+        (subscription) => subscription.status !== 'PAUSED',
+      )
       if (subscriptions.length === 0) continue
 
       await this.emit(participant, roles, stored, notice, subscriptions)

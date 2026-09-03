@@ -44,6 +44,7 @@ import { PeerClient } from './peer/peer-client.js'
 import { PeerSurface } from './peer/peer.server.js'
 import { Relay } from './peer/relay.js'
 import { PeerReplayCache } from './peer/replay-cache.js'
+import { RecoveryService } from './recovery/recovery.service.js'
 import { NO_TRANSPORT, type PeerTransport } from './peer/transport.js'
 import { ReplicationService } from './replication/replication.service.js'
 import { FileSecretStore, MemorySecretStore, type SecretStore } from './secrets/secret-store.js'
@@ -65,6 +66,7 @@ export interface Runtime {
   notifications: NotificationService
   peerDelivery: PeerDeliveryService
   peerStreams: PeerStreamClient
+  recovery: RecoveryService
   links: LinkService
   deadlines: DeadlineService
   attachments: AttachmentService
@@ -115,16 +117,34 @@ async function openStore(config: ConnectorConfig): Promise<Store> {
   return new MemoryStore()
 }
 
+/**
+ * Which secret store a connector uses — and why it is **not** a function of the
+ * document store.
+ *
+ * The signing key, the API-key pepper and the admin token hash live behind the
+ * `SecretStore` port, deliberately independent of where documents go: a large
+ * party moving to a managed cluster must not thereby hand it the key.
+ *
+ * The rule is **durability, not adapter**. Memory only where the whole process
+ * is ephemeral by construction — the `memory` store, which is the test default.
+ * Anything durable persists, so a restart is a restart rather than a new
+ * participant: a regenerated key republishes a new DID document, and every event
+ * the connector ever signed stops verifying — silently, while it looks healthy.
+ *
+ * Exported so that rule is a named thing with a test, rather than a ternary.
+ */
+export function chooseSecretStore(config: ConnectorConfig): SecretStore {
+  return config.store.adapter === 'memory'
+    ? new MemorySecretStore()
+    : new FileSecretStore(config.secretsFile)
+}
+
 export async function createRuntime(
   config: ConnectorConfig,
   overrides: RuntimeOverrides = {},
 ): Promise<Runtime> {
   const store = overrides.store ?? (await openStore(config))
-  const secrets =
-    overrides.secrets ??
-    (config.store.adapter === 'file'
-      ? new FileSecretStore(config.secretsFile)
-      : new MemorySecretStore())
+  const secrets = overrides.secrets ?? chooseSecretStore(config)
 
   const clock = overrides.clock ?? systemClock
   const now = (): string => toInstant(clock.now())
@@ -242,6 +262,16 @@ export async function createRuntime(
     replication,
     log,
     participants,
+  )
+
+  const recovery = new RecoveryService(
+    store,
+    registry,
+    connections,
+    peerStreams,
+    resolver,
+    log,
+    now,
   )
 
   const relay = new Relay(
@@ -362,6 +392,18 @@ export async function createRuntime(
     })
   }
 
+  // ── seeded subscriptions: the same demo shortcut as connections ──
+  for (const seeded of config.subscriptions) {
+    const existing = await store.subscriptions.get(seeded.participantId, seeded.id)
+    if (existing) continue
+    await store.subscriptions.insert({
+      ...seeded,
+      status: 'ACTIVE',
+      createdAt: now(),
+      updatedAt: now(),
+    })
+  }
+
   return {
     config,
     store,
@@ -376,6 +418,7 @@ export async function createRuntime(
     notifications,
     peerDelivery,
     peerStreams,
+    recovery,
     links: links.service,
     deadlines,
     attachments,

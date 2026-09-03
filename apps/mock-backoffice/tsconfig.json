@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    // `fetch` and its types come from the DOM lib, the same as the client this
+    // service is built on. It runs in Node, but nothing here is Node-specific
+    // beyond the HTTP server.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test", "*.ts", "*.mts"]
+}

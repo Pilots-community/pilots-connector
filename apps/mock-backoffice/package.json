@@ -1,0 +1,21 @@
+{
+  "name": "@pilots/mock-backoffice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A stand-in for a participant's own systems: it receives action.required and posts the transition back. No UI, no human, no state machine.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pilots/client": "workspace:*",
+    "@pilots/protocol": "workspace:*",
+    "fastify": "5.11.3",
+    "zod": "4.5.4"
+  }
+}

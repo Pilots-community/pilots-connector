@@ -13,7 +13,14 @@
  */
 import { z } from 'zod'
 
-import { Did, PeerDelivery } from '@pilots/protocol'
+import {
+  Did,
+  NotificationChannelName,
+  NotificationType,
+  PeerDelivery,
+  SubscriptionFilter,
+  WebhookTarget,
+} from '@pilots/protocol'
 
 export const ParticipantConfig = z.strictObject({
   /** Local id, used as `participantId` on every document this participant owns. */
@@ -56,6 +63,25 @@ export const SeededConnection = z.strictObject({
 })
 export type SeededConnection = z.infer<typeof SeededConnection>
 
+/**
+ * A notification subscription seeded from configuration.
+ *
+ * The same shortcut as `PILOTS_CONNECTIONS`, and for the same reason: the demo's
+ * backoffice container should be receiving work the moment `up` finishes, rather
+ * than after somebody visits the admin UI. Subscriptions remain operator state
+ * and the admin surface remains where they are managed.
+ */
+export const SeededSubscription = z.strictObject({
+  id: z.string().min(1).max(64),
+  participantId: z.string().min(1),
+  label: z.string().min(1).max(255),
+  channel: NotificationChannelName,
+  target: z.union([WebhookTarget, z.null()]).default(null),
+  notify: z.array(NotificationType).min(1),
+  filter: SubscriptionFilter.default({}),
+})
+export type SeededSubscription = z.infer<typeof SeededSubscription>
+
 export const ConnectorConfig = z.strictObject({
   port: z.int().min(0).max(65535),
   host: z.string().min(1),
@@ -75,6 +101,8 @@ export const ConnectorConfig = z.strictObject({
   peerTransport: z.enum(['http', 'none']),
   /** Connections established at boot instead of by handshake. A demo shortcut. */
   connections: z.array(SeededConnection),
+  /** Notification subscriptions registered at boot. The same demo shortcut. */
+  subscriptions: z.array(SeededSubscription),
   /** Peers whose connection requests are accepted without asking the operator. */
   autoAccept: z.array(Did),
   /**
@@ -188,6 +216,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     auditReads: bool(env['PILOTS_AUDIT_READS'], false),
     peerTransport: env['PILOTS_PEER_TRANSPORT'] ?? 'http',
     connections: readJsonList(env['PILOTS_CONNECTIONS'], 'PILOTS_CONNECTIONS'),
+    subscriptions: readJsonList(env['PILOTS_SUBSCRIPTIONS'], 'PILOTS_SUBSCRIPTIONS'),
     autoAccept: (env['PILOTS_AUTO_ACCEPT'] ?? '')
       .split(',')
       .map((did) => did.trim())
@@ -225,6 +254,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
       throw new ConfigError(
         `PILOTS_CONNECTIONS names participant ${seeded.participantId}, which is not configured`,
       )
+    }
+  }
+
+  for (const seeded of config.subscriptions) {
+    if (!ids.has(seeded.participantId)) {
+      throw new ConfigError(
+        `PILOTS_SUBSCRIPTIONS names participant ${seeded.participantId}, which is not configured`,
+      )
+    }
+    if (seeded.channel === 'webhook' && seeded.target === null) {
+      throw new ConfigError(`subscription ${seeded.id} is a webhook with nowhere to deliver`)
     }
   }
 

@@ -30,6 +30,16 @@ import { DEFINITIONS_DIR } from './core.js'
 export interface NodeSpec {
   /** The participants this connector holds keys for. Usually one; two is the hosted profile. */
   participants: ParticipantConfig[]
+  /**
+   * A directory, to run this node on the **file** store instead of memory.
+   *
+   * Almost never wanted: the scenario tier is hermetic and the memory adapter is
+   * the default for that reason. It exists for the one thing memory cannot
+   * express — an operator with disk access editing the log — which is exactly
+   * what a rebuild has to refuse. A temp dir is still hermetic
+   * ([TESTING.md §2](../../../../docs/TESTING.md)).
+   */
+  storeDir?: string
 }
 
 export interface ScenarioNode {
@@ -62,7 +72,13 @@ export interface Scenario {
   connect(
     from: string,
     to: string,
-    delivery?: { fromWants?: PeerDelivery; toWants?: PeerDelivery },
+    delivery?: {
+      fromWants?: PeerDelivery
+      toWants?: PeerDelivery
+      /** Which participant on each node. Connections are per participant, not per node. */
+      fromParticipant?: string
+      toParticipant?: string
+    },
   ): Promise<void>
   /** Run every node's scan loops until nothing more moves. */
   settle(rounds?: number): Promise<void>
@@ -70,6 +86,16 @@ export interface Scenario {
   stop(name: string): Promise<void>
   /** Put it back and let it catch up. */
   start(name: string): Promise<void>
+  /**
+   * Lose a node's store and bring it back on new infrastructure.
+   *
+   * The same participant, the same DID, the same signing key — the key was in a
+   * secret manager, not on the disk that died — and an empty store. Its
+   * connections come back the way a redeployed container's do: seeded from
+   * configuration. Its **processes do not**, which is the situation `recover`
+   * exists for.
+   */
+  restore(name: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -92,12 +118,22 @@ export async function buildScenario(specs: Record<string, NodeSpec>): Promise<Sc
   const nodes: Record<string, ScenarioNode> = {}
   let seed = 7
 
+  /** What a restore needs: the same keys, a fresh store, the same seat on the network. */
+  const rebuildable: Record<
+    string,
+    { spec: NodeSpec; secrets: MemorySecretStore; channel: CollectingChannel; seed: number }
+  > = {}
+
   for (const [name, spec] of Object.entries(specs)) {
     const channel = new CollectingChannel('webhook')
+    const secrets = new MemorySecretStore()
+    rebuildable[name] = { spec, secrets, channel, seed: (seed += 13) }
     const runtime = await createRuntime(
       loadConfig({
         PILOTS_PORT: '0',
-        PILOTS_STORE: 'memory',
+        ...(spec.storeDir === undefined
+          ? { PILOTS_STORE: 'memory' }
+          : { PILOTS_STORE: 'file', PILOTS_STORE_DIR: spec.storeDir }),
         PILOTS_DEFINITIONS_DIR: DEFINITIONS_DIR,
         NODE_ENV: 'test',
         PILOTS_LOG_LEVEL: 'silent',
@@ -109,8 +145,8 @@ export async function buildScenario(specs: Record<string, NodeSpec>): Promise<Sc
         clock,
         // A distinct seed per node: two connectors must not mint the same ids,
         // or a collision would look like idempotency working.
-        ids: deterministicIdGenerator((seed += 13), clock),
-        secrets: new MemorySecretStore(),
+        ids: deterministicIdGenerator(rebuildable[name].seed, clock),
+        secrets,
         transport: network,
         resolver,
         channels: { webhook: channel },
@@ -177,12 +213,22 @@ export async function buildScenario(specs: Record<string, NodeSpec>): Promise<Sc
       const fromWants: PeerDelivery = delivery.fromWants ?? { channel: 'stream' }
       const toWants: PeerDelivery = delivery.toWants ?? { channel: 'stream' }
 
+      // A connection belongs to a *participant*, not to a connector. On a
+      // hosted node each tenant needs its own — one customer must not be able
+      // to ride on another's trust relationship just by sharing a process.
+      const aParticipant = delivery.fromParticipant
+        ? a.caller(delivery.fromParticipant).participant
+        : a.participant
+      const bParticipant = delivery.toParticipant
+        ? b.caller(delivery.toParticipant).participant
+        : b.participant
+
       const requested = await a.runtime.connections.request(
-        a.participant,
+        aParticipant,
         {
-          peerDid: b.participant.did,
-          peerBaseUrl: b.participant.baseUrl,
-          displayName: b.participant.displayName,
+          peerDid: bParticipant.did,
+          peerBaseUrl: bParticipant.baseUrl,
+          displayName: bParticipant.displayName,
           delivery: fromWants,
         },
         { kind: 'adminSession', id: `${from}-operator` },
@@ -193,9 +239,9 @@ export async function buildScenario(specs: Record<string, NodeSpec>): Promise<Sc
 
       // B's operator decides. Nothing is auto-accepted in the harness: the
       // handshake is what S0 proves, and seeding it would prove nothing.
-      const pending = await b.runtime.connections.between(b.participant.id, a.participant.did)
+      const pending = await b.runtime.connections.between(bParticipant.id, aParticipant.did)
       if (!pending) throw new Error(`${to} never received the request`)
-      const accepted = await b.runtime.connections.accept(b.participant, pending.id, toWants, {
+      const accepted = await b.runtime.connections.accept(bParticipant, pending.id, toWants, {
         kind: 'adminSession',
         id: `${to}-operator`,
       })
@@ -229,6 +275,68 @@ export async function buildScenario(specs: Record<string, NodeSpec>): Promise<Sc
         network.heal(participant.baseUrl)
       }
       await scenario.settle()
+    },
+
+    async restore(name) {
+      const node = scenario.node(name)
+      const parts = rebuildable[name]
+      if (!parts) throw new Error(`no node ${name}`)
+
+      // What an operator would still have after losing the store: the peers this
+      // connector talks to. In the demo these come from `PILOTS_CONNECTIONS`;
+      // here they are read off the dying node so the test does not have to
+      // restate them. Note what is *not* carried over: instances, events, the
+      // audit log.
+      const seeded = (
+        await Promise.all(
+          parts.spec.participants.map(async (participant) =>
+            (await node.runtime.connections.list(participant.id)).map((connection) => ({
+              participantId: participant.id,
+              peerDid: connection.peerDid,
+              peerBaseUrl: connection.peerBaseUrl,
+              inbound: connection.inbound,
+              outbound: connection.outbound,
+            })),
+          ),
+        )
+      ).flat()
+
+      await node.runtime.close()
+
+      const runtime = await createRuntime(
+        loadConfig({
+          PILOTS_PORT: '0',
+          // A restore is new infrastructure, so a new directory would be the
+          // honest default; the harness keeps the spec's so a caller can choose.
+          ...(parts.spec.storeDir === undefined
+            ? { PILOTS_STORE: 'memory' }
+            : { PILOTS_STORE: 'file', PILOTS_STORE_DIR: parts.spec.storeDir }),
+          PILOTS_DEFINITIONS_DIR: DEFINITIONS_DIR,
+          NODE_ENV: 'test',
+          PILOTS_LOG_LEVEL: 'silent',
+          PILOTS_PARTICIPANTS: JSON.stringify(parts.spec.participants),
+          PILOTS_CONNECTIONS: JSON.stringify(seeded),
+          PILOTS_DELIVERY_INTERVAL_MS: '0',
+        }),
+        {
+          clock,
+          ids: deterministicIdGenerator(parts.seed + 1, clock),
+          // The same secret store, so the same keys: this is a new machine, not
+          // a new participant. A fresh key would be a different party wearing
+          // the same name, and every past signature would rightly fail.
+          secrets: parts.secrets,
+          transport: network,
+          resolver,
+          channels: { webhook: parts.channel },
+          logDestination: quiet(),
+        },
+      )
+
+      for (const participant of parts.spec.participants) {
+        documents[participant.did] = await runtime.identity.didDocument(participant.id)
+        network.register(participant.baseUrl, runtime.peers)
+      }
+      node.runtime = runtime
     },
 
     async close() {

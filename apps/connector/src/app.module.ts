@@ -24,7 +24,7 @@ import { ATTACHMENTS } from './attachments/attachment.service.js'
 import { CONNECTIONS } from './connections/connection.service.js'
 import { NOTIFICATIONS } from './notifications/notification.service.js'
 import { PEER_SERVER } from './peer/peer.server.js'
-import { LOCAL_HUB, PEER_STREAMS, RELAY } from './runtime.tokens.js'
+import { LOCAL_HUB, PEER_STREAMS, RECOVERY, RELAY } from './runtime.tokens.js'
 import { STORE } from './store/store.js'
 import type { Runtime } from './runtime.js'
 
@@ -55,6 +55,7 @@ export class AppModule {
         { provide: RELAY, useValue: runtime.relay },
         { provide: LOCAL_HUB, useValue: runtime.hub },
         { provide: PEER_STREAMS, useValue: runtime.peerStreams },
+        { provide: RECOVERY, useValue: runtime.recovery },
         { provide: ATTACHMENTS, useValue: runtime.attachments },
         ApiKeyGuard,
         AdminGuard,

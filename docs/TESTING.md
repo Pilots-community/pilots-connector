@@ -85,11 +85,18 @@ The three that matter most stop being manual demo steps:
 | **S5** role symmetry | three participants, one definition, two instances with *different* home nodes; assert one connector is authoritative for one and a replica of the other, and that `action.required` fires for both of its roles |
 | **S0** the handshake | request, domain-binding check, admin accept, peer callback; plus a peer that claims a base URL its DID is not bound to, and one whose body names a different sender than its token |
 | **deadlines** | advance the fake clock past `PT24H`, assert `expire` fired with `by: []` |
+| **re-hosting** | destroy the host's store, keep its key, recover the instance from the peer's replica, assert it is the home node again and can write the next `seq` |
 
 **S5 is the clearest case for this tier existing at all.** The demo runs one direction, so a
 per-definition hosting shortcut would pass every container demo and every happy path. Only a test that
 stands up two instances of one definition with opposite participants catches it — and that test is
 impossible to write cheaply *unless* two connectors can run in one process.
+
+**One node may run on the file store.** `NodeSpec.storeDir` puts a node's data in a temp directory,
+which is still hermetic and is the only way to express the one thing memory cannot: somebody with disk
+access editing the log. On the file adapter that is a text edit to a `.jsonl` file, and a rebuild has to
+refuse it rather than fold it — a rebuild that quietly folded an edited log would launder the edit into
+the cache and call it recovery. Everything else stays on memory; this is not an invitation.
 
 These are the two most important behaviours in the whole design — "the host cannot lie" and "a restart
 loses nothing". They should not be things a person checks by hand before a demo.

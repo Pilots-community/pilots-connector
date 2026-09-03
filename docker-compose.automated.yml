@@ -1,0 +1,72 @@
+# The **automated party** — Van Moer driven by its own systems instead of a person.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.automated.yml up
+#
+# One extra container and one extra setting. Van Moer's connector pushes
+# `action.required` to a backoffice, which answers on the ordinary local API with
+# an ordinary key; Acme's side is still a person clicking. **Neither connector can
+# tell the difference, because there is none to tell** — that is the claim, and it
+# is why this is an overlay rather than a mode.
+#
+# The backoffice is deliberately not in the base file. `docker compose up` is the
+# four-container two-party demo, and a party's own back-office system is that
+# party's fifth container, not the demo's.
+#
+# To see the automated path with nobody watching over its shoulder:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.automated.yml up --scale vanmoer-ui=0
+services:
+  vanmoer:
+    environment:
+      # Operator state, seeded the way connections are: a shortcut so `up`
+      # reaches a working demo, never a replacement for the admin surface.
+      PILOTS_SUBSCRIPTIONS: >-
+        [{"id":"backoffice",
+          "participantId":"vanmoer",
+          "label":"mock backoffice",
+          "channel":"webhook",
+          "target":{"url":"http://backoffice:5000/hook",
+                    "headers":{},
+                    "secretRef":"env:PILOTS_BACKOFFICE_SECRET"},
+          "notify":["action.required"],
+          "filter":{}}]
+      # The reference is stored; the value is resolved at delivery time and comes
+      # from `.env` like every other secret here.
+      PILOTS_BACKOFFICE_SECRET: ${BACKOFFICE_SECRET:?run `pnpm demo:env` first}
+
+  backoffice:
+    build:
+      context: .
+      dockerfile: apps/mock-backoffice/Dockerfile
+    depends_on:
+      vanmoer:
+        condition: service_healthy
+    environment:
+      PILOTS_CONNECTOR_URL: http://vanmoer:3000
+      # An ordinary integrator with an ordinary key — the same one Van Moer's UI
+      # holds, because they are the same participant.
+      PILOTS_API_KEY: ${VANMOER_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_BACKOFFICE_SECRET: ${BACKOFFICE_SECRET:?run `pnpm demo:env` first}
+      PILOTS_BACKOFFICE_ACTOR: weighbridge-controller
+      # Everything this business knows: its own data, keyed by the transition it
+      # might be asked for. No definition, no states, no ordering.
+      PILOTS_BACKOFFICE_DATA: >-
+        {"weigh":{"patch":{"grossMass":{"value":24180,"unit":"kg",
+                                        "measuredAt":"2026-09-02T10:00:00.000Z"}}},
+         "recordPayment":{"patch":{"paymentReference":"AUTO-PMT-1"}},
+         "issueVgm":{"patch":{"certificate":{"sha256":"__document__",
+                                             "issuedAt":"2026-09-02T10:05:00.000Z"}},
+                     "document":{"content":"%PDF-1.7 automated VGM certificate",
+                                 "mime":"application/pdf"}}}
+    mem_limit: 256m
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:5000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12

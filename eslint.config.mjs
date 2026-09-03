@@ -42,6 +42,7 @@ export default tseslint.config(
         { type: 'client', pattern: 'packages/client/*' },
         { type: 'connector', pattern: 'apps/connector/*' },
         { type: 'process-ui', pattern: 'apps/process-ui/*' },
+        { type: 'backoffice', pattern: 'apps/mock-backoffice/*' },
         { type: 'e2e', pattern: 'tests/e2e/*' },
       ],
       'boundaries/include': ['packages/**/*', 'apps/**/*', 'tests/**/*'],
@@ -94,6 +95,15 @@ export default tseslint.config(
               from: { element: { type: 'process-ui' } },
               allow: {
                 to: { element: { types: { anyOf: ['process-ui', 'client', 'protocol'] } } },
+              },
+            },
+            // The backoffice is an ordinary integrator: the client and nothing
+            // else. If it ever needed the connector's internals, so would every
+            // real integrator, and the claim would be false.
+            {
+              from: { element: { type: 'backoffice' } },
+              allow: {
+                to: { element: { types: { anyOf: ['backoffice', 'client', 'protocol'] } } },
               },
             },
             {

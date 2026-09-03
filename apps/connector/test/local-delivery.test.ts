@@ -172,6 +172,90 @@ describe('action.required is computed, not configured', () => {
 })
 
 describe('delivery guarantees', () => {
+  /**
+   * A `DEGRADED` subscription must keep **recording**, not just stop delivering.
+   *
+   * The state means "delivery is failing; events accumulate and go out on
+   * recovery". Recording only for `ACTIVE` drops them permanently the moment a
+   * backoffice has a bad minute, and leaves the replay endpoint — which is
+   * specified as authoritative — with nothing to replay. That failed silently in
+   * the container demo: the automated participant did one step and stopped, with
+   * no error anywhere, because the notification that should have told it to
+   * continue was never written down.
+   */
+  it('keeps recording while degraded, and delivers the backlog on recovery', async () => {
+    const acme = scenario.node('acme')
+    const vanmoer = scenario.node('vanmoer')
+    const subscriptionId = await vanmoer.subscribe({ notify: ['action.required'] })
+
+    // The backoffice is down before anything happens, so the very first
+    // notification fails and the subscription degrades.
+    vanmoer.channel.failures = 99
+    const id = await order()
+    expect(
+      (await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId))?.status,
+    ).toBe('DEGRADED')
+
+    // The process carries on while the backoffice is unreachable.
+    unwrap(
+      await acme.runtime.instances.applyTransition(
+        acme.caller(),
+        id,
+        { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
+        1,
+      ),
+    )
+    await scenario.settle()
+
+    // The notification for "it is your turn to weigh" exists, even though
+    // nothing could be delivered.
+    const recorded = await vanmoer.runtime.notifications.replay(VANMOER.id)
+    const turns = recorded.filter((one) => one.notification === 'action.required')
+    expect(
+      turns.some(
+        (one) =>
+          (one.envelope as { instance: { state: string } }).instance.state === 'TRUCK_ANNOUNCED',
+      ),
+    ).toBe(true)
+
+    // The backoffice comes back. The backlog goes out, in order, and the
+    // subscription recovers on its own.
+    vanmoer.channel.failures = 0
+    scenario.clock.advance('PT1M')
+    await vanmoer.runtime.notifications.pump()
+
+    const delivered = vanmoer.channel.ofType('action.required')
+    expect(delivered.map((one) => one.instance.state)).toContain('TRUCK_ANNOUNCED')
+    expect(
+      (await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId))?.status,
+    ).toBe('ACTIVE')
+  })
+
+  it('stops recording only when an operator pauses the subscription', async () => {
+    const acme = scenario.node('acme')
+    const vanmoer = scenario.node('vanmoer')
+    const subscriptionId = await vanmoer.subscribe({ notify: ['action.required'] })
+
+    const id = await order()
+    const paused = await vanmoer.runtime.store.subscriptions.get(VANMOER.id, subscriptionId)
+    await vanmoer.runtime.store.subscriptions.replace({ ...paused!, status: 'PAUSED' })
+
+    const before = (await vanmoer.runtime.notifications.replay(VANMOER.id)).length
+    unwrap(
+      await acme.runtime.instances.applyTransition(
+        acme.caller(),
+        id,
+        { transition: 'announceTruck', patch: { truckPlate: '1-ABC-123' } },
+        1,
+      ),
+    )
+    await scenario.settle()
+
+    // Paused is a decision somebody made, and it is the one state where
+    // dropping the notification is what was asked for.
+    expect((await vanmoer.runtime.notifications.replay(VANMOER.id)).length).toBe(before)
+  })
+
   it('retries with backoff, degrades, dead-letters, and replays from a cursor', async () => {
     const vanmoer = scenario.node('vanmoer')
     const subscriptionId = await vanmoer.subscribe({ notify: ['event'] })

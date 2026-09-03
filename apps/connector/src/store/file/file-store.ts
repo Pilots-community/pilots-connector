@@ -211,6 +211,20 @@ function makeFileJournal(directory: string, queue: WriteQueue): Journal {
           true,
         )
       }),
+    rewriteAudit: (participantId, entries) =>
+      enqueue(async () => {
+        const path = join(directory, 'audit', `${safeName(participantId)}.jsonl`)
+        await mkdir(dirname(path), { recursive: true })
+        // Durable: retention is the one operation that removes evidence, so the
+        // removal itself had better survive a crash rather than half-happen.
+        await writeAtomic(
+          path,
+          entries.length === 0
+            ? ''
+            : `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`,
+          true,
+        )
+      }),
     appendAudit: (entry) =>
       enqueue(() =>
         appendLine(

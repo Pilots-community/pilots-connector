@@ -45,6 +45,11 @@ const VARIABLES = [
     () => randomBytes(32).toString('base64url'),
     'The same, for Van Moer.',
   ],
+  [
+    'BACKOFFICE_SECRET',
+    () => randomBytes(32).toString('base64url'),
+    'Signs webhook deliveries to the mock backoffice, so a request that reaches the port still has to prove it is the connector.',
+  ],
 ]
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')

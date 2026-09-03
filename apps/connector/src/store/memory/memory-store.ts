@@ -69,6 +69,8 @@ export interface Journal {
     events: readonly StoredEvent[],
   ): Promise<void>
   appendAudit(entry: AuditEntry): Promise<void>
+  /** Rewrite one participant's audit file. Only retention uses it. */
+  rewriteAudit(participantId: string, entries: readonly AuditEntry[]): Promise<void>
 }
 
 export interface MemoryState {
@@ -399,6 +401,20 @@ class MemoryAuditLog implements AuditLog {
 
   async count(participantId: string): Promise<number> {
     return this.entries(participantId).length
+  }
+
+  async prune(participantId: string, throughSeq: number): Promise<number> {
+    const entries = this.entries(participantId)
+    const kept = entries.filter((entry) => entry.seq > throughSeq)
+    // `seq` is not renumbered and `prev` is not rewritten: what remains still
+    // chains to itself, so a retained log is still verifiable from the seq it
+    // now begins at. Renumbering would make retention indistinguishable from
+    // rewriting.
+    this.state.audit.set(participantId, kept)
+
+    const removed = entries.length - kept.length
+    if (removed > 0) await this.journal?.rewriteAudit(participantId, kept)
+    return removed
   }
 }
 
