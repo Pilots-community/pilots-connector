@@ -38,7 +38,7 @@ services:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       PILOTS_PARTICIPANT_ID: org-a
       PILOTS_PARTICIPANT_DID: did:web:org-a.example
@@ -67,14 +67,19 @@ services:
       # through the configured base URL instead — which reduces the
       # domain-binding check to "an operator configured this". See
       # docs/ARCHITECTURE.md §8.
-      PILOTS_DEV_DID_DIRECTORY: 'true'
+      PILOTS_DEV_DID_DIRECTORY: "true"
       # The key this participant's UI will present. **A name, never a value** —
       # it comes from `.env`, which `pnpm demo:env` generates and .gitignore
       # excludes. Remotely the same variable comes from a secret manager, and the
       # connector refuses this setting under NODE_ENV=production anyway.
       PILOTS_SEED_API_KEY: ${ORG_A_API_KEY:?run `pnpm demo:env` first}
-      # The signing key, the API-key pepper and the admin token are generated on
-      # first boot into the volume below. None of them appears here either.
+      # The admin token an operator would otherwise read once from this
+      # container's log. Safe to fix here because `/api/admin/v1` is never
+      # meant to be reachable from outside this Docker network — see
+      # docs/ARCHITECTURE.md §4 — and refused under NODE_ENV=production anyway.
+      PILOTS_SEED_ADMIN_TOKEN: ${ORG_A_ADMIN_TOKEN:?run `pnpm demo:env` first}
+      # The signing key and the API-key pepper are generated on first boot into
+      # the volume below. Neither appears here.
     volumes:
       - org-a-data:/data
     # The claim, enforced rather than asserted: if a connector stops fitting in a
@@ -84,9 +89,9 @@ services:
     healthcheck:
       test:
         [
-          'CMD',
-          'node',
-          '-e',
+          "CMD",
+          "node",
+          "-e",
           "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -98,7 +103,7 @@ services:
       context: .
       dockerfile: apps/connector/Dockerfile
     ports:
-      - '3001:3000'
+      - "3001:3000"
     environment:
       PILOTS_PARTICIPANT_ID: org-b
       PILOTS_PARTICIPANT_DID: did:web:org-b.example
@@ -113,17 +118,18 @@ services:
           "displayName":"Org A",
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
-      PILOTS_DEV_DID_DIRECTORY: 'true'
+      PILOTS_DEV_DID_DIRECTORY: "true"
       PILOTS_SEED_API_KEY: ${ORG_B_API_KEY:?run `pnpm demo:env` first}
+      PILOTS_SEED_ADMIN_TOKEN: ${ORG_B_ADMIN_TOKEN:?run `pnpm demo:env` first}
     volumes:
       - org-b-data:/data
     mem_limit: 1g
     healthcheck:
       test:
         [
-          'CMD',
-          'node',
-          '-e',
+          "CMD",
+          "node",
+          "-e",
           "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -142,7 +148,7 @@ services:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
-      - '4000:4000'
+      - "4000:4000"
     depends_on:
       org-a:
         condition: service_healthy
@@ -162,14 +168,14 @@ services:
       # throwaway UI, and `loadConfig` refuses the whole seeding mechanism under
       # NODE_ENV=production. Override from `.env` if you would rather.
       PILOTS_UI_SEED_EMAIL: ${ORG_A_UI_EMAIL:-alice@org-a.example}
-      PILOTS_UI_SEED_PASSWORD: ${ORG_A_UI_PASSWORD:-demo-password-org-a}
+      PILOTS_UI_SEED_PASSWORD: ${ORG_A_UI_PASSWORD:-OrgA_123}
     mem_limit: 512m
     healthcheck:
       test:
         [
-          'CMD',
-          'node',
-          '-e',
+          "CMD",
+          "node",
+          "-e",
           "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
@@ -181,7 +187,7 @@ services:
       context: .
       dockerfile: apps/process-ui/Dockerfile
     ports:
-      - '4001:4000'
+      - "4001:4000"
     depends_on:
       org-b:
         condition: service_healthy
@@ -192,15 +198,15 @@ services:
       PILOTS_UI_NAME: ${ORG_B_NAME:-Org B}
       PILOTS_UI_BASE_URL: http://localhost:4001
       NODE_ENV: development
-      PILOTS_UI_SEED_EMAIL: ${ORG_B_UI_EMAIL:-bram@org-b.example}
-      PILOTS_UI_SEED_PASSWORD: ${ORG_B_UI_PASSWORD:-demo-password-org-b}
+      PILOTS_UI_SEED_EMAIL: ${ORG_B_UI_EMAIL:-bob@org-b.example}
+      PILOTS_UI_SEED_PASSWORD: ${ORG_B_UI_PASSWORD:-OrgB_123}
     mem_limit: 512m
     healthcheck:
       test:
         [
-          'CMD',
-          'node',
-          '-e',
+          "CMD",
+          "node",
+          "-e",
           "fetch('http://localhost:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s

@@ -119,24 +119,30 @@ Four containers, zero databases, healthy in about eleven seconds:
 
 | | | |
 |---|---|---|
-| Org A's connector | http://localhost:3000 | admin UI at [`/admin/`](http://localhost:3000/admin/) |
-| Org A's process UI | http://localhost:4000 | sign in as `alice@org-a.example` / `demo-password-org-a` |
-| Org B's connector | http://localhost:3001 | admin UI at [`/admin/`](http://localhost:3001/admin/) |
-| Org B's process UI | http://localhost:4001 | sign in as `bram@org-b.example` / `demo-password-org-b` |
+| Org A's connector | http://localhost:3000 | admin UI at [`/admin/`](http://localhost:3000/admin/), token in `.env` as `ORG_A_ADMIN_TOKEN` |
+| Org A's process UI | http://localhost:4000 | sign in as `alice@org-a.example` / `OrgA_123` (also in `.env`) |
+| Org B's connector | http://localhost:3001 | admin UI at [`/admin/`](http://localhost:3001/admin/), token in `.env` as `ORG_B_ADMIN_TOKEN` |
+| Org B's process UI | http://localhost:4001 | sign in as `bob@org-b.example` / `OrgB_123` (also in `.env`) |
 
 The connectors are already connected to each other: `PILOTS_CONNECTIONS` seeds the handshake at boot so
 that `up` reaches a first transaction inside a minute. That is a shortcut for the demo, not a
 replacement — the handshake works without it, and `s0-connect.test.ts` is what proves it.
 
-**To reach an admin UI** you need the admin token, which the connector prints once on first boot and
-never stores in the clear:
+**Every credential above is a fixed value from `.env`**, not something to go find in a log —
+`PILOTS_SEED_ADMIN_TOKEN` and `PILOTS_UI_SEED_EMAIL`/`PILOTS_UI_SEED_PASSWORD` set them from
+configuration the same way `PILOTS_SEED_API_KEY` does. All three are refused under
+`NODE_ENV=production`: `/api/admin/v1` is meant to sit behind network-level access control rather than
+be its own perimeter (see [Who the two organisations are](#who-the-two-organisations-are) and
+[docs/ARCHITECTURE.md §4](docs/ARCHITECTURE.md)), so fixing its bootstrap token in a *local* `.env`
+costs nothing — a real deployment never puts this port on the public internet in the first place. If you
+would rather read it the way an operator without `PILOTS_SEED_ADMIN_TOKEN` has to:
 
 ```bash
 docker compose logs org-a | grep -o '"adminToken":"[^"]*"'
 ```
 
-If you have already restarted and lost it, `docker compose down -v && docker compose up` starts over
-with a fresh identity.
+If you have already restarted and lost track of a token that was *not* seeded, `docker compose down -v
+&& docker compose up` starts over with a fresh identity.
 
 ### A first process, in two browsers
 

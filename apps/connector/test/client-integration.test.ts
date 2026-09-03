@@ -54,7 +54,7 @@ beforeAll(async () => {
   orgB = new PilotsClient({
     baseUrl,
     apiKey: orgBKey.apiKey,
-    actorRef: 'bram@org-b.example',
+    actorRef: 'bob@org-b.example',
   })
 })
 

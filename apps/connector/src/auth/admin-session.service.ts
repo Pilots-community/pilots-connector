@@ -21,6 +21,12 @@
  * operator to choose badly, and no cryptography is hand-rolled — `createHmac`,
  * `randomBytes` and `timingSafeEqual` do the work.
  *
+ * `seedToken` is the one deliberate exception, and it is still not a password:
+ * it lets a deployment that already keeps `/api/admin/v1` off the public
+ * internet (the intended posture — see docs/ARCHITECTURE.md §4) fix the token's
+ * value in configuration instead of reading it from a log line, the same
+ * demo-convenience shape as `PILOTS_SEED_API_KEY`.
+ *
  * **This file must not grow into an auth library.** If a second operator, a
  * password login, account recovery, or sessions that outlive a restart is ever
  * wanted, adopt `better-auth` behind this same interface instead of extending
@@ -39,9 +45,16 @@ export interface AdminSession {
 }
 
 export interface AdminBootstrap {
-  /** Present only on the boot that generated it. Shown once, never stored. */
+  /**
+   * Present only when this boot decided a *new* value for the token —
+   * generated, or freshly adopted from configuration. Absent when the stored
+   * hash (or a seed value already matching it) is what is in effect, because
+   * there is nothing new to show or persist.
+   */
   token?: string
   generated: boolean
+  /** True when `token`'s value came from configuration rather than being generated here. */
+  seeded: boolean
 }
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000
@@ -57,22 +70,55 @@ export class AdminSessionService {
   ) {}
 
   /**
-   * Load the admin token, generating one on first boot.
+   * Load the admin token: from a seed value, from what was already stored, or
+   * generate one on first boot — in that order.
    *
-   * A generated token is returned to the caller exactly once so it can be logged
-   * for the operator. It is never stored in the clear and never retrievable.
+   * A token whose value is new this boot (generated, or freshly adopted from
+   * configuration) is returned to the caller exactly once so it can be logged
+   * for the operator. It is never stored in the clear and never retrievable
+   * afterwards — except by an operator who set `seedToken`, who already has it.
    */
-  static create(options: { storedHash: string | undefined; pepper: string; now: () => string }): {
+  static create(options: {
+    storedHash: string | undefined
+    pepper: string
+    now: () => string
+    /**
+     * A token whose value was decided outside the connector.
+     *
+     * Mirrors `PILOTS_SEED_API_KEY`: a demo convenience, refused under
+     * production config by `loadConfig`. It exists because `/api/admin/v1` is
+     * meant to sit behind network-level access control rather than be its own
+     * perimeter — a real deployment does not put this port on the public
+     * internet, so a fixed, `.env`-visible admin credential costs it nothing.
+     * Idempotent the same way a seeded API key is: a seed value that already
+     * matches what is stored changes nothing and reports nothing new.
+     */
+    seedToken?: string | null
+  }): {
     service: AdminSessionService
     tokenHash: string
   } {
     const hash = (token: string): string =>
       createHmac('sha256', options.pepper).update(token).digest('hex')
 
+    if (options.seedToken) {
+      const tokenHash = hash(options.seedToken)
+      const changed = tokenHash !== options.storedHash
+      return {
+        service: new AdminSessionService(tokenHash, options.pepper, options.now, {
+          ...(changed ? { token: options.seedToken } : {}),
+          generated: false,
+          seeded: true,
+        }),
+        tokenHash,
+      }
+    }
+
     if (options.storedHash !== undefined) {
       return {
         service: new AdminSessionService(options.storedHash, options.pepper, options.now, {
           generated: false,
+          seeded: false,
         }),
         tokenHash: options.storedHash,
       }
@@ -84,6 +130,7 @@ export class AdminSessionService {
       service: new AdminSessionService(tokenHash, options.pepper, options.now, {
         token,
         generated: true,
+        seeded: false,
       }),
       tokenHash,
     }

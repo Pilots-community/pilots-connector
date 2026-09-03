@@ -129,6 +129,18 @@ export const ConnectorConfig = z.strictObject({
    */
   seedApiKey: z.union([z.string().min(1), z.null()]),
   /**
+   * The admin bootstrap token, decided outside the connector.
+   *
+   * **Development only**, and refused under production config — the same shape
+   * as `seedApiKey`, for the same reason: `/api/admin/v1` is meant to sit
+   * behind network-level access control rather than be its own perimeter, so a
+   * fixed, `.env`-visible value costs a real deployment nothing (see
+   * ARCHITECTURE.md §4). Without it the connector generates one at first boot
+   * and prints it once; with it, the demo can sign in without reading a
+   * container log first.
+   */
+  seedAdminToken: z.union([z.string().min(1), z.null()]),
+  /**
    * The largest attachment this connector will accept.
    *
    * A ceiling, not a target. It also bounds the HTTP body limit, and the Mongo
@@ -225,6 +237,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     deliveryIntervalMs: Number(env['PILOTS_DELIVERY_INTERVAL_MS'] ?? 1000),
     maxAttachmentBytes: Number(env['PILOTS_MAX_ATTACHMENT_BYTES'] ?? 8 * 1024 * 1024),
     seedApiKey: env['PILOTS_SEED_API_KEY'] ?? null,
+    seedAdminToken: env['PILOTS_SEED_ADMIN_TOKEN'] ?? null,
   }
 
   const parsed = ConnectorConfig.safeParse(candidate)
@@ -277,6 +290,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
       'PILOTS_SEED_API_KEY registers an API key whose value was decided elsewhere. It is a demo ' +
         'convenience and cannot be used with NODE_ENV=production; mint a key in the admin UI and ' +
         'inject the value instead.',
+    )
+  }
+
+  if (config.seedAdminToken !== null && config.environment === 'production') {
+    throw new ConfigError(
+      'PILOTS_SEED_ADMIN_TOKEN sets the admin bootstrap token from configuration. It is a demo ' +
+        'convenience and cannot be used with NODE_ENV=production; let the connector generate one ' +
+        'and read it from the log instead.',
     )
   }
 

@@ -191,7 +191,7 @@ async function throughTheUi() {
 
   const signedIn = await call('/api/auth/sign-in/email', {
     method: 'POST',
-    body: JSON.stringify({ email: 'alice@org-a.example', password: 'demo-password-org-a' }),
+    body: JSON.stringify({ email: 'alice@org-a.example', password: 'OrgA_123' }),
   })
   if (signedIn.status !== 200) {
     throw new Error(`sign-in failed: ${signedIn.status} ${JSON.stringify(signedIn.body)}`)

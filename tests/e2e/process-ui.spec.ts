@@ -13,8 +13,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 const ORG_B_UI = process.env['PILOTS_E2E_ORG_B_UI'] ?? 'http://localhost:4001'
 
-const ORG_A = { email: 'alice@org-a.example', password: 'demo-password-org-a' }
-const ORG_B = { email: 'bram@org-b.example', password: 'demo-password-org-b' }
+const ORG_A = { email: 'alice@org-a.example', password: 'OrgA_123' }
+const ORG_B = { email: 'bob@org-b.example', password: 'OrgB_123' }
 
 async function signIn(page: Page, who: { email: string; password: string }): Promise<void> {
   await page.fill('input[name="email"]', who.email)

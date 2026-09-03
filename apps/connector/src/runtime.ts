@@ -76,8 +76,10 @@ export interface Runtime {
   resolver: DidResolver
   hub: StreamHub
   clock: Clock
-  /** Present only on the boot that generated it. Logged once, never stored. */
+  /** Present only when this boot decided a *new* value. Logged once, never stored in the clear. */
   adminToken?: string
+  /** True when `adminToken`'s value came from `PILOTS_SEED_ADMIN_TOKEN` rather than being generated. */
+  adminTokenSeeded?: boolean
   /**
    * Run every delivery scan loop once.
    *
@@ -160,8 +162,11 @@ export async function createRuntime(
     storedHash: stored.adminTokenHash,
     pepper: identity.pepper,
     now,
+    seedToken: config.seedAdminToken,
   })
-  if (admin.service.bootstrap.generated && secrets.persistable) {
+  // Broader than "generated": a freshly adopted seed value is just as much a
+  // new hash to persist as a randomly generated one is.
+  if (admin.service.bootstrap.token !== undefined && secrets.persistable) {
     await secrets.save({ adminTokenHash: admin.tokenHash })
   }
 
@@ -379,6 +384,31 @@ export async function createRuntime(
     }
   }
 
+  /*
+   * An admin bootstrap token whose value came from configuration.
+   *
+   * `bootstrap.token` is set only when this boot decided a *new* hash — a seed
+   * value that already matches what was stored produces neither a log line nor
+   * an audit entry, because nothing changed. Audited for the same reason the
+   * seeded API key is: a credential that appears with no record of where it
+   * came from is exactly what the audit log exists to prevent.
+   */
+  if (admin.service.bootstrap.seeded && admin.service.bootstrap.token !== undefined) {
+    const owner = config.participants[0]?.id ?? 'unknown'
+    await log.record({
+      level: 'warn',
+      message: 'registered the admin bootstrap token from configuration',
+      audit: {
+        participantId: owner,
+        category: 'admin',
+        action: 'admin.tokenSeed',
+        actor: { kind: 'runtime', id: 'seed', actorRef: null },
+        outcome: 'ok',
+        detail: 'from PILOTS_SEED_ADMIN_TOKEN; development only',
+      },
+    })
+  }
+
   // ── seeded connections: a demo shortcut, never a replacement ──
   for (const seeded of config.connections) {
     const participant = config.participants.find((one) => one.id === seeded.participantId)
@@ -430,7 +460,10 @@ export async function createRuntime(
     clock,
     ...(admin.service.bootstrap.token === undefined
       ? {}
-      : { adminToken: admin.service.bootstrap.token }),
+      : {
+          adminToken: admin.service.bootstrap.token,
+          adminTokenSeeded: admin.service.bootstrap.seeded,
+        }),
     tick: async () => {
       // Attach first: a line that dropped since the last tick should be back up
       // before we decide anything is undelivered.

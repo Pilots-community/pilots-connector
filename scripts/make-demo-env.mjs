@@ -9,10 +9,16 @@
  * point: the demo needs a connector and its UI to agree on one API key, and the
  * cheapest honest way to arrange that is a file that is never committed.
  *
- * Remotely this file has no part to play — the same variables come from a secret
- * manager, and `PILOTS_SEED_API_KEY` is refused under `NODE_ENV=production`
- * anyway, because a key whose value was decided outside the connector is a demo
- * convenience rather than a deployment pattern.
+ * The admin bootstrap token is included too — `PILOTS_SEED_ADMIN_TOKEN` fixes
+ * its value here instead of leaving it to a log line an operator has to go
+ * find, which is fine precisely because `/api/admin/v1` is never meant to be
+ * reachable from outside this Docker network (see docs/ARCHITECTURE.md §4) and
+ * the connector refuses this setting outright under `NODE_ENV=production`.
+ *
+ * Remotely this file has no part to play — the same variables come from a
+ * secret manager, and every `SEED_*` setting is refused under
+ * `NODE_ENV=production` anyway, because a value decided outside the connector
+ * is a demo convenience rather than a deployment pattern.
  *
  * Existing values are kept. Re-running this adds anything missing and rotates
  * nothing, so a demo that is already set up does not break under your hands.
@@ -32,32 +38,59 @@ function apiKey() {
   return `${id}.${randomBytes(32).toString('base64url')}`
 }
 
-/**
- * Not secrets — the names people see on screen.
- *
- * The identifiers (`org-a`, `did:web:org-a.example`) are fixed and neutral, so
- * nothing about a particular company is committed. The **labels** live here,
- * because a demo for a particular audience wants their names on the screens and
- * that is a property of the demo, not of the software.
- */
-const LABELS = [
-  [
-    'ORG_A_NAME',
-    'Org A',
-    'Shown in Org A’s process UI and admin UI. Change it to whatever the demo needs.',
-  ],
-  ['ORG_B_NAME', 'Org B', 'The same, for Org B.'],
-]
+/** The same shape the connector generates for itself on first boot. */
+function adminToken() {
+  return `adm_${randomBytes(32).toString('base64url')}`
+}
 
-const VARIABLES = [
-  ['ORG_A_API_KEY', apiKey, 'Org A’s connector registers it; Org A’s UI presents it.'],
-  ['ORG_B_API_KEY', apiKey, 'The same, for Org B.'],
-  [
-    'ORG_A_UI_AUTH_SECRET',
-    () => randomBytes(32).toString('base64url'),
-    'Signs Org A UI’s own sessions, so a restart does not sign everyone out.',
-  ],
-  ['ORG_B_UI_AUTH_SECRET', () => randomBytes(32).toString('base64url'), 'The same, for Org B.'],
+function uiAuthSecret() {
+  return randomBytes(32).toString('base64url')
+}
+
+/**
+ * Everything one organisation needs, in the order it reads on screen.
+ *
+ * Not all of these are secrets. `NAME`, `UI_EMAIL` and `UI_PASSWORD` are
+ * configuration an operator is expected to edit — the login is a demo
+ * convenience, not something worth protecting — while `API_KEY`,
+ * `ADMIN_TOKEN` and `UI_AUTH_SECRET` are generated once and are exactly as
+ * sensitive as the credentials they stand in for. Grouped by org rather than
+ * by kind, because that is how a reader looks for one.
+ */
+function fieldsForOrg(letter) {
+  const org = `Org ${letter}`
+  const lower = letter.toLowerCase()
+  return [
+    [
+      `ORG_${letter}_NAME`,
+      () => org,
+      `Shown in ${org}'s process UI and admin UI. Change it to whatever the demo needs.`,
+    ],
+    [`ORG_${letter}_API_KEY`, apiKey, `${org}'s connector registers it; ${org}'s UI presents it.`],
+    [
+      `ORG_${letter}_ADMIN_TOKEN`,
+      adminToken,
+      `Signs in to ${org}'s admin UI at /admin/ — paste it there instead of reading it from the container log.`,
+    ],
+    [
+      `ORG_${letter}_UI_AUTH_SECRET`,
+      uiAuthSecret,
+      `Signs ${org}'s UI's own sessions, so a restart does not sign everyone out.`,
+    ],
+    [
+      `ORG_${letter}_UI_EMAIL`,
+      () => `${lower === 'a' ? 'alice' : 'bram'}@org-${lower}.example`,
+      `The demo login for ${org}'s process UI.`,
+    ],
+    [
+      `ORG_${letter}_UI_PASSWORD`,
+      () => `demo-password-org-${lower}`,
+      `Its password. A demo convenience, not a secret worth protecting — change both if this demo is reachable by anyone else.`,
+    ],
+  ]
+}
+
+const SHARED = [
   [
     'BACKOFFICE_SECRET',
     () => randomBytes(32).toString('base64url'),
@@ -72,7 +105,7 @@ const existing = new Map()
 if (existsSync(file)) {
   for (const line of readFileSync(file, 'utf8').split('\n')) {
     const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (match) existing.set(match[1], match[2])
+    if (match) existing.set(match[1], match[2].replace(/^"|"$/g, ''))
   }
 }
 
@@ -81,29 +114,29 @@ const lines = [
   '#',
   '# `docker compose` reads this automatically. The compose file names these',
   '# variables and never carries their values, so nothing here reaches the',
-  '# repository. Delete the file and re-run to rotate everything.',
+  '# repository. Delete a line and re-run to rotate just that value, or delete',
+  '# the whole file to rotate everything.',
   '',
 ]
 let added = 0
-lines.push('# ── who the demo is about. Yours to edit; not secrets. ──', '')
-for (const [name, fallback, note] of LABELS) {
-  const value = existing.get(name) ?? fallback
+
+function writeField(name, generate, note) {
+  const value = existing.get(name) ?? generate()
   if (!existing.has(name)) added += 1
   lines.push(`# ${note}`)
   // Quoted, because a name has spaces in it and a `.env` gets sourced by shells
   // as well as read by compose.
-  lines.push(`${name}="${value.replace(/^"|"$/g, '')}"`)
+  lines.push(`${name}="${value}"`)
   lines.push('')
 }
 
-lines.push('# ── generated credentials. Delete a line and re-run to rotate it. ──', '')
-for (const [name, generate, note] of VARIABLES) {
-  const value = existing.get(name) ?? generate()
-  if (!existing.has(name)) added += 1
-  lines.push(`# ${note}`)
-  lines.push(`${name}=${value}`)
-  lines.push('')
+for (const letter of ['A', 'B']) {
+  lines.push(`# ── Org ${letter} ──`, '')
+  for (const [name, generate, note] of fieldsForOrg(letter)) writeField(name, generate, note)
 }
+
+lines.push('# ── shared across both ──', '')
+for (const [name, generate, note] of SHARED) writeField(name, generate, note)
 
 writeFileSync(file, lines.join('\n'), { mode: 0o600 })
 process.stdout.write(

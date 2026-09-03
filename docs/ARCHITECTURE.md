@@ -167,6 +167,15 @@ The auth boundary is visible in the URL. Details in [PROTOCOL.md](PROTOCOL.md).
 **No privileged path.** Our demo UI is an ordinary API-key client. There is no back door it uses and a
 third party cannot.
 
+**The admin surface is not internet-facing by design.** A 12-hour in-memory session traded for one
+bootstrap token, shown once in the log, is the right primitive for an operator reaching
+`/api/admin/v1` over a private network — a VPN, an SSH tunnel, or a container's own network in this
+demo — not for a public login form. `PILOTS_SEED_ADMIN_TOKEN` fixes that token's value in configuration
+instead of a log line, the same demo shortcut as `PILOTS_SEED_API_KEY`. It does not weaken the surface,
+because the surface's actual protection is the network boundary around it rather than the secrecy of a
+freshly generated string; `loadConfig` still refuses the flag under `NODE_ENV=production`, so a value
+convenient for a demo to expose is never one a real deployment is tempted to reuse.
+
 ### 4.1 The local API relays
 
 An integrator calls its **own** connector, always, and never addresses a peer directly. The connector

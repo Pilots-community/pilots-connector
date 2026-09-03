@@ -82,11 +82,13 @@ async function main(): Promise<void> {
   }
 
   if (runtime.adminToken !== undefined) {
-    // Shown once. It is stored only as an HMAC, so there is no way to print it
-    // again — which is the point.
     runtime.log.warn(
       { adminToken: runtime.adminToken },
-      'first boot: this is the admin token for /api/admin/v1. It is shown once and cannot be recovered.',
+      runtime.adminTokenSeeded
+        ? 'admin bootstrap token set from PILOTS_SEED_ADMIN_TOKEN; development only, and it is already in your configuration.'
+        : // Shown once. It is stored only as an HMAC, so there is no way to print
+          // it again — which is the point.
+          'first boot: this is the admin token for /api/admin/v1. It is shown once and cannot be recovered.',
     )
   }
 
