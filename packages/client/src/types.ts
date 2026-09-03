@@ -12,6 +12,7 @@ import type {
   AvailableAction,
   Connection,
   Instance,
+  InstanceOutcome,
   JsonObject,
   NotificationEnvelope,
   Offering,
@@ -25,6 +26,7 @@ export type {
   AvailableAction,
   Connection,
   Instance,
+  InstanceOutcome,
   JsonObject,
   NotificationEnvelope,
   Offering,
@@ -36,9 +38,10 @@ export type {
 /**
  * An instance as the caller may see it.
  *
- * The three fields beyond `Instance` are the ones a UI needs and a stored
+ * The four fields beyond `Instance` are the ones a caller needs and a stored
  * document does not have: whether this copy is authoritative, what this
- * participant may do next, and whether anything was withheld from this view.
+ * participant may do next, whether anything was withheld from this view, and
+ * whether the process is over.
  */
 export interface InstanceView extends Instance {
   /** Whether this connector's copy is the authoritative one. Usually irrelevant to a client. */
@@ -54,6 +57,16 @@ export interface InstanceView extends Instance {
   available: AvailableAction[]
   /** True when the visibility filter withheld something from this view. */
   redacted: boolean
+  /**
+   * Whether this process is over, and how — computed from the definition.
+   *
+   * The generic companion to `state`. `state` is the definition's own
+   * vocabulary and means nothing to code that does not hold that definition;
+   * this is the half an integrator can act on, so closing a ticket when a
+   * process finishes does not mean hardcoding that `VGM_ISSUED` is the good
+   * ending of one particular process.
+   */
+  outcome: InstanceOutcome
 }
 
 /** The participant an API key acts for. */

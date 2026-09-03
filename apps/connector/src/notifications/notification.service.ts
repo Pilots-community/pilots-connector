@@ -19,6 +19,7 @@
  */
 import {
   availableTransitions,
+  outcomeOf,
   filterEvent,
   rolesOf,
   type AvailableAction,
@@ -230,6 +231,11 @@ export class NotificationService {
         definition: stored.definition,
         kind: stored.kind,
         state: stored.state,
+        // The generic half of "where is this process". A recipient that does
+        // not hold the definition still learns whether it is over and how.
+        // `running` when the definition is unknown, which is the same guess
+        // `outcomeOf` makes and the safe one.
+        outcome: definition ? outcomeOf(definition, stored.state) : 'running',
         seq: stored.seq,
       },
       available,

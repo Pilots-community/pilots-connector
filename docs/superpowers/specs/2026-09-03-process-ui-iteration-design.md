@@ -42,7 +42,7 @@ M7 (publish and deploy) is **locked** until this functional iteration lands.
 | P7 | Render the diagram with **`@xyflow/react`** (React Flow), MIT. | `bpmn-js` (non-MIT, logo attribution, and our definitions are not BPMN); `mermaid` (84 MB unpacked, buys only layout); hand-rolled SVG (throws away the renderer when editing arrives). See §5. |
 | P8 | **Hand-roll the layout** — BFS layering, terminal states in their own lane. | `dagre` or `elkjs`. Rejected: definitions are near-linear, and an editor wants positions that are stable and eventually persisted, not recomputed under the cursor. |
 | P9 | A `from: ["*"]` transition renders as **one** edge from an "any state" marker. | One edge per source state. Rejected: `cancel` alone becomes four edges in `container-weighing` and six in `container-transport-with-terminal`, and the diagram stops being readable at exactly the point it should be. |
-| P12 | "Off the happy path" means **reached only by a wildcard transition**, computed per definition. | Using `definition.terminalStates`, or a hardcoded list of names like `CANCELLED`/`WITHDRAWN`. Rejected: `terminalStates` includes the *successful* endings (`VGM_ISSUED`, `AGREED`, `DELIVERED`), so it would exile the happy ending to the abort lane; a hardcoded list breaks the "a new definition needs no UI work" claim. |
+| P12 | ~~"Off the happy path" means **reached only by a wildcard transition**~~ — **superseded, see the amendment below.** | — |
 | P10 | Add `@tanstack/react-query`. | A third hand-rolled fetch layer. Rejected: `docs/STACK.md` §6 already names it, and interval + focus refetch + cache invalidation is precisely what it does. |
 | P11 | `toGraph()` lives in `apps/process-ui`, not `packages/protocol`. | Promoting it to the protocol package. Rejected: layout is presentation. The protocol is the spec, and no peer needs to agree on where a node is drawn. |
 
@@ -251,3 +251,31 @@ Written down so the next record does not have to undo anything here:
 - **Sessions do not survive a UI restart** (P2), by choice.
 - **No accessibility pass** on the diagram. A graph is the wrong primitive for a screen reader, and the
   underlying data is available as the event log and the transition list, which are ordinary DOM.
+
+---
+
+## Amendment, 2026-09-03 — states declare how a process ends (P13)
+
+P12 above invented a heuristic because the definition could not answer the question. Building the
+diagram exposed that as a symptom of a real gap, and the supervisor named it: a process's
+**business** state (`VGM_ISSUED`) and its **generic** outcome (it finished, and it finished well) are
+two different things, and only the first was expressed.
+
+`terminalStates` said *that* a process had ended and never *how*. In `container-transport-quotation`,
+`AGREED`, `REJECTED` and `EXPIRED` are all terminal and all reached by ordinary transitions, so no
+amount of graph inspection separates the good ending from the bad ones. The heuristic could not have
+worked; it only looked like it did because `container-weighing` is simple.
+
+**P13.** `states[].outcome` is `fulfilled` or `abandoned`, absent means running, and its presence
+**is** what makes a state terminal — `terminalStates` is derived and the schema field is gone, so two
+places can no longer disagree. The computed value travels on `GET /instances` and in every
+notification envelope, beside `available` and for the same reason: *the connector computed it from the
+definition, so an internal system needs no state machine.* A back-office system closes its ticket on
+`fulfilled` without ever learning that `VGM_ISSUED` is one particular process's good ending.
+
+The diagram's lane rule becomes `outcome === 'abandoned'`, which is declared rather than guessed —
+and which correctly puts `REJECTED` and `EXPIRED` off the happy path, where the heuristic left them on
+it.
+
+**Rejected:** reserved state ids (`ONGOING`, `FINALISED`) inside the state machine. That mixes levels
+and takes vocabulary away from the business process, which is the one thing a definition exists to own.

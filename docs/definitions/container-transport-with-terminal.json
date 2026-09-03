@@ -5,62 +5,142 @@
   "kind": "service",
   "title": "Container road transport with terminal release",
   "description": "The two-party transport process with a third participant. Exists to prove that adding a role is a definition change and not a redesign: compare with container-transport.json — same schema, one more role, three more transitions. Not executed in the first milestone.",
-
   "roles": [
-    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
-    { "id": "transporter", "title": "Transporter", "cardinality": 1, "protocolRole": "provider" },
-    { "id": "terminal", "title": "Terminal operator", "cardinality": 1, "protocolRole": "provider" }
+    {
+      "id": "shipper",
+      "title": "Shipper",
+      "cardinality": 1,
+      "protocolRole": "requester"
+    },
+    {
+      "id": "transporter",
+      "title": "Transporter",
+      "cardinality": 1,
+      "protocolRole": "provider"
+    },
+    {
+      "id": "terminal",
+      "title": "Terminal operator",
+      "cardinality": 1,
+      "protocolRole": "provider"
+    }
   ],
   "hostedBy": "transporter",
-
   "initialState": "PENDING_CONTRACT",
   "states": [
-    { "id": "PENDING_CONTRACT", "title": "Awaiting an agreed quotation" },
-    { "id": "CONTRACTED", "title": "Contracted" },
-    { "id": "ASSIGNED", "title": "Assigned" },
-    { "id": "GATE_BOOKED", "title": "Gate slot booked" },
-    { "id": "RELEASED", "title": "Released by terminal" },
-    { "id": "PICKED_UP", "title": "Picked up" },
-    { "id": "DELIVERED", "title": "Delivered" },
-    { "id": "CANCELLED", "title": "Cancelled" }
+    {
+      "id": "PENDING_CONTRACT",
+      "title": "Awaiting an agreed quotation"
+    },
+    {
+      "id": "CONTRACTED",
+      "title": "Contracted"
+    },
+    {
+      "id": "ASSIGNED",
+      "title": "Assigned"
+    },
+    {
+      "id": "GATE_BOOKED",
+      "title": "Gate slot booked"
+    },
+    {
+      "id": "RELEASED",
+      "title": "Released by terminal"
+    },
+    {
+      "id": "PICKED_UP",
+      "title": "Picked up"
+    },
+    {
+      "id": "DELIVERED",
+      "title": "Delivered",
+      "outcome": "fulfilled"
+    },
+    {
+      "id": "CANCELLED",
+      "title": "Cancelled",
+      "outcome": "abandoned"
+    }
   ],
-  "terminalStates": ["DELIVERED", "CANCELLED"],
-
   "defaultVisibility": "all",
-
   "data": {
     "type": "object",
     "required": ["containerType", "terminal"],
     "properties": {
-      "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" },
-      "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] },
-      "terminal": { "type": "string" },
-      "pickup": { "type": "object" },
-      "dropoff": { "type": "object" },
-      "price": { "type": "object" },
-      "vehiclePlate": { "type": "string" },
-      "driverName": { "type": "string" },
-      "driverPhone": { "type": "string" },
-      "plannedPickupAt": { "type": "string", "format": "date-time" },
+      "containerNumber": {
+        "type": "string",
+        "pattern": "^[A-Z]{4}[0-9]{7}$"
+      },
+      "containerType": {
+        "type": "string",
+        "enum": ["20DV", "40DV", "40HC", "45HC"]
+      },
+      "terminal": {
+        "type": "string"
+      },
+      "pickup": {
+        "type": "object"
+      },
+      "dropoff": {
+        "type": "object"
+      },
+      "price": {
+        "type": "object"
+      },
+      "vehiclePlate": {
+        "type": "string"
+      },
+      "driverName": {
+        "type": "string"
+      },
+      "driverPhone": {
+        "type": "string"
+      },
+      "plannedPickupAt": {
+        "type": "string",
+        "format": "date-time"
+      },
       "gateSlot": {
         "type": "object",
         "properties": {
-          "from": { "type": "string", "format": "date-time" },
-          "to": { "type": "string", "format": "date-time" },
-          "reference": { "type": "string" }
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reference": {
+            "type": "string"
+          }
         }
       },
-      "releaseReference": { "type": "string" },
-      "actualPickupAt": { "type": "string", "format": "date-time" },
-      "deliveredAt": { "type": "string", "format": "date-time" },
+      "releaseReference": {
+        "type": "string"
+      },
+      "actualPickupAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "deliveredAt": {
+        "type": "string",
+        "format": "date-time"
+      },
       "proofOfDelivery": {
         "type": "object",
-        "properties": { "sha256": { "type": "string" } }
+        "properties": {
+          "sha256": {
+            "type": "string"
+          }
+        }
       },
-      "cancellationReason": { "type": "string" }
+      "cancellationReason": {
+        "type": "string"
+      }
     }
   },
-
   "transitions": [
     {
       "id": "startExecution",
@@ -79,10 +159,19 @@
         "type": "object",
         "required": ["vehiclePlate", "plannedPickupAt"],
         "properties": {
-          "vehiclePlate": { "type": "string" },
-          "driverName": { "type": "string" },
-          "driverPhone": { "type": "string" },
-          "plannedPickupAt": { "type": "string", "format": "date-time" }
+          "vehiclePlate": {
+            "type": "string"
+          },
+          "driverName": {
+            "type": "string"
+          },
+          "driverPhone": {
+            "type": "string"
+          },
+          "plannedPickupAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       }
     },
@@ -102,9 +191,17 @@
             "type": "object",
             "required": ["from", "to"],
             "properties": {
-              "from": { "type": "string", "format": "date-time" },
-              "to": { "type": "string", "format": "date-time" },
-              "reference": { "type": "string" }
+              "from": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "to": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "reference": {
+                "type": "string"
+              }
             }
           }
         }
@@ -119,7 +216,11 @@
       "patch": {
         "type": "object",
         "required": ["releaseReference"],
-        "properties": { "releaseReference": { "type": "string" } }
+        "properties": {
+          "releaseReference": {
+            "type": "string"
+          }
+        }
       }
     },
     {
@@ -132,8 +233,14 @@
         "type": "object",
         "required": ["actualPickupAt"],
         "properties": {
-          "actualPickupAt": { "type": "string", "format": "date-time" },
-          "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" }
+          "actualPickupAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "containerNumber": {
+            "type": "string",
+            "pattern": "^[A-Z]{4}[0-9]{7}$"
+          }
         }
       }
     },
@@ -143,16 +250,26 @@
       "from": ["PICKED_UP"],
       "to": "DELIVERED",
       "by": ["transporter"],
-      "attachments": { "required": true, "mime": ["application/pdf", "image/jpeg"] },
+      "attachments": {
+        "required": true,
+        "mime": ["application/pdf", "image/jpeg"]
+      },
       "patch": {
         "type": "object",
         "required": ["deliveredAt", "proofOfDelivery"],
         "properties": {
-          "deliveredAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
           "proofOfDelivery": {
             "type": "object",
             "required": ["sha256"],
-            "properties": { "sha256": { "type": "string" } }
+            "properties": {
+              "sha256": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -165,23 +282,53 @@
       "by": ["shipper", "transporter"],
       "patch": {
         "type": "object",
-        "properties": { "cancellationReason": { "type": "string" } }
+        "properties": {
+          "cancellationReason": {
+            "type": "string"
+          }
+        }
       }
     }
   ],
-
   "visibility": [
-    { "path": "price", "roles": ["shipper", "transporter"] },
-    { "path": "dropoff", "roles": ["shipper", "transporter"] },
-    { "path": "driverName", "roles": ["transporter", "terminal"] },
-    { "path": "driverPhone", "roles": ["transporter"] },
-    { "path": "driverName", "roles": ["shipper"], "whenState": ["PICKED_UP", "DELIVERED"] }
+    {
+      "path": "price",
+      "roles": ["shipper", "transporter"]
+    },
+    {
+      "path": "dropoff",
+      "roles": ["shipper", "transporter"]
+    },
+    {
+      "path": "driverName",
+      "roles": ["transporter", "terminal"]
+    },
+    {
+      "path": "driverPhone",
+      "roles": ["transporter"]
+    },
+    {
+      "path": "driverName",
+      "roles": ["shipper"],
+      "whenState": ["PICKED_UP", "DELIVERED"]
+    }
   ],
-
   "links": [
-    { "onEvent": "quotation:AGREED", "triggers": "startExecution" },
-    { "onEvent": "quotation:REJECTED", "triggers": "cancel" },
-    { "onEvent": "quotation:WITHDRAWN", "triggers": "cancel" },
-    { "onEvent": "quotation:EXPIRED", "triggers": "cancel" }
+    {
+      "onEvent": "quotation:AGREED",
+      "triggers": "startExecution"
+    },
+    {
+      "onEvent": "quotation:REJECTED",
+      "triggers": "cancel"
+    },
+    {
+      "onEvent": "quotation:WITHDRAWN",
+      "triggers": "cancel"
+    },
+    {
+      "onEvent": "quotation:EXPIRED",
+      "triggers": "cancel"
+    }
   ]
 }

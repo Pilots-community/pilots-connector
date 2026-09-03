@@ -80,9 +80,8 @@ describe('the exported schemas are usable outside TypeScript', () => {
         initialState: 'START',
         states: [
           { id: 'START', title: 'Start' },
-          { id: 'DONE', title: 'Done' },
+          { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
         ],
-        terminalStates: ['DONE'],
         data: { type: 'object' },
         transitions: [{ id: 'finish', title: 'Finish', from: ['START'], to: 'DONE', by: ['a'] }],
       }),

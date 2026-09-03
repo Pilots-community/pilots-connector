@@ -20,7 +20,7 @@
  * counterparty checks instead is the arithmetic: it holds the same log, so it
  * can see when the state was entered and compare.
  */
-import { parseDuration, type Clock, type ProcessDefinition } from '@pilots/protocol'
+import { isTerminal, parseDuration, type Clock, type ProcessDefinition } from '@pilots/protocol'
 
 import type { ParticipantConfig } from '../config/config.js'
 import type { DefinitionRegistry } from '../definitions/definition-registry.js'
@@ -56,7 +56,7 @@ export class DeadlineService {
 
         const registered = this.definitions.get(instance.definition)
         if (!registered) continue
-        if (registered.definition.terminalStates.includes(instance.state)) continue
+        if (isTerminal(registered.definition, instance.state)) continue
 
         const due = await this.dueOn(registered.definition, instance.state, local.id, instance.id)
         if (!due) continue

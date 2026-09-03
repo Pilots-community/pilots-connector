@@ -50,6 +50,14 @@
           "maxLength": 64,
           "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
         },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "running",
+            "fulfilled",
+            "abandoned"
+          ]
+        },
         "seq": {
           "type": "integer",
           "minimum": 1,
@@ -61,6 +69,7 @@
         "definition",
         "kind",
         "state",
+        "outcome",
         "seq"
       ],
       "additionalProperties": false

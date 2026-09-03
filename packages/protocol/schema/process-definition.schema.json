@@ -118,6 +118,13 @@
           },
           "description": {
             "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "fulfilled",
+              "abandoned"
+            ]
           }
         },
         "required": [
@@ -125,15 +132,6 @@
           "title"
         ],
         "additionalProperties": false
-      }
-    },
-    "terminalStates": {
-      "minItems": 1,
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 64,
-        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
       }
     },
     "defaultVisibility": {
@@ -342,7 +340,6 @@
     "hostedBy",
     "initialState",
     "states",
-    "terminalStates",
     "data",
     "transitions"
   ],

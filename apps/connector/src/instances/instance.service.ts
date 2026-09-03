@@ -18,6 +18,7 @@ import {
   Problem,
   autoTransitions,
   availableTransitions,
+  outcomeOf,
   evaluateCreate,
   evaluateTransition,
   filterEvent,
@@ -35,6 +36,7 @@ import {
   type DidResolver,
   type Instance,
   type InstanceIdentity,
+  type InstanceOutcome,
   type JsonObject,
   type ParticipantMap,
   type ProtocolError,
@@ -82,6 +84,14 @@ export interface InstanceView {
   available: AvailableAction[]
   /** Whether this connector's copy is the authoritative one. */
   home: boolean
+  /**
+   * Whether this process is over, and how — `running`, `fulfilled`, `abandoned`.
+   *
+   * The generic companion to `state`. `state` speaks the definition's own
+   * vocabulary and means nothing without it; this is the half every caller can
+   * act on, so nobody has to hardcode that `VGM_ISSUED` is the good ending.
+   */
+  outcome: InstanceOutcome
 }
 
 export interface WriteOutcome {
@@ -257,7 +267,8 @@ export class InstanceService {
     const instance = stripLocalFields(stored)
 
     if (!registered) {
-      return { instance, redacted: false, available: [], home: stored.home }
+      // No definition held, so nothing can be said about how it would end.
+      return { instance, redacted: false, available: [], home: stored.home, outcome: 'running' }
     }
     const filtered = filterInstance(registered.definition, instance, roles)
     return {
@@ -265,6 +276,7 @@ export class InstanceService {
       redacted: filtered.redacted,
       available: availableTransitions(registered.definition, stored, roles),
       home: stored.home,
+      outcome: outcomeOf(registered.definition, stored.state),
     }
   }
 

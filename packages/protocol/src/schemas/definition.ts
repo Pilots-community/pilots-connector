@@ -52,10 +52,37 @@ export const RoleDefinition = z.strictObject({
 })
 export type RoleDefinition = z.infer<typeof RoleDefinition>
 
+/**
+ * How a process ended, for the states that end it.
+ *
+ * The business vocabulary stays the definition's own — `VGM_ISSUED`, `AGREED`,
+ * `DELIVERED` — and this says what such a state *means* to anything that is not
+ * a person reading it. Two values, deliberately: "it did what it was for" and
+ * "it stopped without doing it". A third can be added without breaking a reader
+ * that already handles these.
+ */
+export const StateOutcome = z.enum(['fulfilled', 'abandoned'])
+export type StateOutcome = z.infer<typeof StateOutcome>
+
+/** `running`, plus the two ways a process can be over. */
+export const InstanceOutcome = z.enum(['running', 'fulfilled', 'abandoned'])
+export type InstanceOutcome = z.infer<typeof InstanceOutcome>
+
 export const StateDefinition = z.strictObject({
   id: StateId,
   title: z.string().min(1),
   description: z.string().optional(),
+  /**
+   * Present exactly on the states that end the process, and **is** what makes
+   * a state terminal — there is no second list to disagree with.
+   *
+   * This exists because a terminal flag alone could not tell `AGREED` from
+   * `REJECTED`, so every integrator had to hardcode which of a definition's
+   * state names meant success. The computed value travels on the instance and
+   * in every notification, so an internal system never learns a state name to
+   * answer "is this done, and did it work?".
+   */
+  outcome: StateOutcome.optional(),
 })
 export type StateDefinition = z.infer<typeof StateDefinition>
 
@@ -150,7 +177,6 @@ export const ProcessDefinition = z.strictObject({
    */
   createdBy: z.array(Identifier).min(1).optional(),
   states: z.array(StateDefinition).min(1),
-  terminalStates: z.array(StateId).min(1),
   defaultVisibility: z.enum(['all', 'none']).default('all'),
   /** JSON Schema the data document must satisfy after every transition, not merely at creation. */
   data: JsonSchemaDocument,
@@ -190,8 +216,7 @@ export function expandFromStates(
   transition: TransitionDefinition,
 ): string[] {
   if (!transition.from.includes(ANY_STATE)) return transition.from
-  const terminal = new Set(definition.terminalStates)
-  const expanded = definition.states.map((s) => s.id).filter((id) => !terminal.has(id))
+  const expanded = definition.states.filter((s) => s.outcome === undefined).map((s) => s.id)
   for (const explicit of transition.from) {
     if (explicit !== ANY_STATE && !expanded.includes(explicit)) expanded.push(explicit)
   }
@@ -210,5 +235,26 @@ export function roleIds(definition: ProcessDefinition): string[] {
 }
 
 export function isTerminal(definition: ProcessDefinition, state: string): boolean {
-  return definition.terminalStates.includes(state)
+  return outcomeOf(definition, state) !== 'running'
+}
+
+/**
+ * How this instance stands: still running, or over and how it ended.
+ *
+ * An unknown state answers `running` rather than throwing. A replica can hold
+ * an instance whose definition it has since replaced, and a list that crashes
+ * is worse than one that says "in progress".
+ */
+export function outcomeOf(definition: ProcessDefinition, state: string): InstanceOutcome {
+  return definition.states.find((one) => one.id === state)?.outcome ?? 'running'
+}
+
+/**
+ * The states that end the process — derived, never declared.
+ *
+ * It used to be a field beside `states`, which meant two places could disagree
+ * about whether a state was final and the linter had to check they did not.
+ */
+export function terminalStates(definition: ProcessDefinition): string[] {
+  return definition.states.filter((one) => one.outcome !== undefined).map((one) => one.id)
 }

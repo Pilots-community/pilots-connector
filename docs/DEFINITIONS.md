@@ -29,8 +29,7 @@ pnpm lint:definitions
   "roles": [ … ],
   "hostedBy": "transporter",
   "initialState": "PENDING_CONTRACT",
-  "states": [ … ],
-  "terminalStates": [ "DELIVERED", "CANCELLED" ],
+  "states": [ … ],                         // an ending state carries an "outcome"
   "defaultVisibility": "all",              // "all" | "none"
   "data": { … },                           // JSON Schema
   "transitions": [ … ],
@@ -79,10 +78,35 @@ Optional. Roles permitted to create an instance; absent means any participant ma
 definitions restrict it, but the field exists so that "the definition forbids the caller's role from
 creating an instance" ([PROTOCOL.md §9.1](PROTOCOL.md#91-post-instances)) is a real check.
 
-### `states`, `initialState`, `terminalStates`
+### `states`, `initialState`, and how a process ends
 
-`states` is a list of `{ id, title }`. Every state must be reachable from `initialState`, and every
-state must have a path to some terminal state. The linter in `packages/protocol` enforces both; a
+`states` is a list of `{ id, title }`, and a state that **ends** the process carries an `outcome`:
+
+```jsonc
+"states": [
+  { "id": "PENDING_CONTRACT", "title": "Pending contract" },
+  { "id": "DELIVERED",  "title": "Delivered",  "outcome": "fulfilled" },
+  { "id": "CANCELLED",  "title": "Cancelled",  "outcome": "abandoned" }
+]
+```
+
+`outcome` is what makes a state terminal — there is no separate list, so nothing can disagree about
+whether a state is final. Two values: **`fulfilled`** ("it did what it was for") and **`abandoned`**
+("it stopped without doing it"). Absent means the process is still running there.
+
+**Why it is not merely a terminal flag.** A flag says *that* a process ended and never *how*, so
+`AGREED` and `REJECTED` look identical to anything that does not already know this definition's
+vocabulary — and every integrator ends up hardcoding which state names of which definitions mean
+success. The computed value travels on the instance (`outcome` on `GET /instances`) and in every
+notification envelope, so a back-office system can close its own ticket on `fulfilled` without
+learning that `VGM_ISSUED` is one particular process's good ending. It is the same principle as
+`available`: the connector computed it, so an internal system needs no state machine.
+
+A `["*"]` transition expands to every **non-terminal** state, so a cancellation cannot resurrect a
+finished instance.
+
+Every state must be reachable from `initialState`, every state must have a path to an ending, and at
+least one state must declare an `outcome`. The linter in `packages/protocol` enforces all three; a
 definition that fails does not load.
 
 ### `data`

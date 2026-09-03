@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { ProcessDefinition, definitionRef, expandFromStates } from '../src/schemas/definition.js'
+import {
+  ProcessDefinition,
+  definitionRef,
+  expandFromStates,
+  isTerminal,
+  outcomeOf,
+  terminalStates,
+} from '../src/schemas/definition.js'
 import { loadShippedDefinitions } from './helpers/definitions.js'
 
 const shipped = loadShippedDefinitions()
@@ -33,9 +40,8 @@ describe('ProcessDefinition schema', () => {
       initialState: 'START',
       states: [
         { id: 'START', title: 'Start' },
-        { id: 'DONE', title: 'Done' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
       ],
-      terminalStates: ['DONE'],
       data: { type: 'object' },
       transitions: [{ id: 'finish', title: 'Finish', from: ['START'], to: 'DONE', by: ['a'] }],
     })
@@ -87,5 +93,81 @@ describe('expandFromStates', () => {
     ])
     expect(expandFromStates(weighing, cancel)).not.toContain('VGM_ISSUED')
     expect(expandFromStates(weighing, cancel)).not.toContain('CANCELLED')
+  })
+})
+
+/**
+ * A process instance's **outcome** — running, fulfilled, or abandoned.
+ *
+ * The problem this solves is not presentational. A terminal flag said *that* a
+ * process had ended and never *how*, so `AGREED` and `REJECTED` were
+ * indistinguishable to anything that did not already know the definition's
+ * vocabulary. Every integrator therefore hardcoded which of a definition's
+ * state names meant success — once per definition it touched.
+ *
+ * Declaring it on the state, and carrying the computed value on the wire, is
+ * what removes that.
+ */
+describe('state outcomes', () => {
+  const definition = ProcessDefinition.parse({
+    id: 'x',
+    version: '1.0.0',
+    kind: 'quotation',
+    title: 'X',
+    roles: [{ id: 'a', title: 'A' }],
+    hostedBy: 'a',
+    initialState: 'DRAFT',
+    states: [
+      { id: 'DRAFT', title: 'Draft' },
+      { id: 'AGREED', title: 'Agreed', outcome: 'fulfilled' },
+      { id: 'REJECTED', title: 'Rejected', outcome: 'abandoned' },
+    ],
+    data: { type: 'object' },
+    transitions: [
+      { id: 'accept', title: 'Accept', from: ['DRAFT'], to: 'AGREED', by: ['a'] },
+      { id: 'withdraw', title: 'Withdraw', from: ['*'], to: 'REJECTED', by: ['a'] },
+    ],
+  })
+
+  it('treats a state with no outcome as still running', () => {
+    expect(outcomeOf(definition, 'DRAFT')).toBe('running')
+  })
+
+  it('tells a successful ending from an unsuccessful one', () => {
+    // The distinction a terminal flag could not make: both are simply "over",
+    // so anything generic had to know the names to tell them apart.
+    expect(outcomeOf(definition, 'AGREED')).toBe('fulfilled')
+    expect(outcomeOf(definition, 'REJECTED')).toBe('abandoned')
+  })
+
+  it('derives terminality from the outcome, so the two cannot disagree', () => {
+    expect(isTerminal(definition, 'DRAFT')).toBe(false)
+    expect(isTerminal(definition, 'AGREED')).toBe(true)
+    expect(terminalStates(definition).sort()).toEqual(['AGREED', 'REJECTED'])
+  })
+
+  it('reports an unknown state as running rather than throwing', () => {
+    // A replica can hold an instance whose definition it has since replaced.
+    // A list that renders "in progress" beats one that crashes.
+    expect(outcomeOf(definition, 'NO_SUCH_STATE')).toBe('running')
+  })
+
+  it('still keeps a wildcard from resurrecting a finished instance', () => {
+    const withdraw = definition.transitions.find((t) => t.id === 'withdraw')!
+    expect(expandFromStates(definition, withdraw)).toEqual(['DRAFT'])
+  })
+
+  it('classifies every shipped definition, with exactly one fulfilled ending', () => {
+    // The guard on the claim that this is authored rather than guessed: if a
+    // definition ships without saying how it ends, the linter fails it, and if
+    // it says so ambiguously this catches it.
+    for (const { name, parsed } of shipped) {
+      const outcomes = parsed.states.filter((s) => s.outcome !== undefined)
+      expect(outcomes.length, name).toBeGreaterThan(0)
+      expect(
+        outcomes.filter((s) => s.outcome === 'fulfilled'),
+        name,
+      ).toHaveLength(1)
+    }
   })
 })

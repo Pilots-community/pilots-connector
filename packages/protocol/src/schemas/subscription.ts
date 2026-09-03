@@ -14,7 +14,7 @@
 import { z } from 'zod'
 
 import { DefinitionRef, Instant, Identifier, StateId, Ulid } from './common.js'
-import { ProcessKind } from './definition.js'
+import { InstanceOutcome, ProcessKind } from './definition.js'
 import { SignedEvent } from './event.js'
 
 export const NotificationType = z.enum([
@@ -94,6 +94,17 @@ export const NotificationEnvelope = z.strictObject({
     definition: DefinitionRef,
     kind: ProcessKind,
     state: StateId,
+    /**
+     * Whether this process is over, and how — computed from the definition.
+     *
+     * `state` is the definition's own vocabulary and means nothing to a system
+     * that does not hold that definition. This is the generic half, so a
+     * backoffice can close its own ticket on `fulfilled` without ever learning
+     * that `VGM_ISSUED` is the good ending. It is the same principle as
+     * `available`: the connector computed it, so an internal system needs no
+     * state machine.
+     */
+    outcome: InstanceOutcome,
     seq: z.int().min(1),
   }),
   /**

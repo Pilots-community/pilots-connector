@@ -10,6 +10,13 @@
 
 **Spec:** [`docs/superpowers/specs/2026-09-03-process-ui-iteration-design.md`](../specs/2026-09-03-process-ui-iteration-design.md)
 
+> **Amended after Task 0.** The spec's P12 invented a heuristic — "off-path means reached only by a
+> wildcard transition" — because the definition could not say how a process ended. It can now:
+> `states[].outcome` is `fulfilled` or `abandoned`, terminality is derived from it, and both the
+> instance view and the notification envelope carry the computed value. **The heuristic is gone**, and
+> Tasks 4 and 6 below are simpler for it. P9 (one edge per wildcard) still stands — that is about
+> edges, not states.
+
 ## Global Constraints
 
 - **Never run `git commit` or `git push`.** `CLAUDE.md` forbids it and `.claude/settings.json` blocks it. Every task ends with a **Verify** step instead; when a task is green, stop and tell the supervisor it is ready to review and commit.
@@ -590,8 +597,8 @@ Create `apps/process-ui/test/to-graph.test.ts`:
 /**
  * The picture is derived from the definition, so a new process needs no UI
  * work. These tests are the guard on that claim, and on the two traps the
- * design record records: `terminalStates` is not the off-path rule, and a
- * wildcard transition must not be expanded.
+ * design record records: the lane is declared by `outcome`, not inferred from
+ * the graph's shape, and a wildcard transition must not be expanded.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -614,10 +621,9 @@ const WEIGHING: ProcessDefinition = {
     { id: 'TRUCK_ANNOUNCED', title: 'Truck announced' },
     { id: 'WEIGHED', title: 'Weighed' },
     { id: 'PAID', title: 'Paid' },
-    { id: 'VGM_ISSUED', title: 'VGM issued' },
-    { id: 'CANCELLED', title: 'Cancelled' },
+    { id: 'VGM_ISSUED', title: 'VGM issued', outcome: 'fulfilled' },
+    { id: 'CANCELLED', title: 'Cancelled', outcome: 'abandoned' },
   ],
-  terminalStates: ['VGM_ISSUED', 'CANCELLED'],
   data: {},
   transitions: [
     { id: 'announceTruck', title: 'Announce truck', from: ['ORDERED'], to: 'TRUCK_ANNOUNCED', by: ['shipper'] },
@@ -656,10 +662,8 @@ describe('the off-path lane', () => {
     const { nodes } = toGraph(WEIGHING)
     const lane = (id: string) => nodes.find((n) => n.id === id)?.lane
 
+    // Both are endings; only one is a *good* one, and the definition says which.
     expect(lane('CANCELLED')).toBe('off-path')
-    // The trap this test exists for: VGM_ISSUED is in `terminalStates` too, so
-    // using that array as the rule would exile the happy ending to the abort
-    // lane. Off-path means "reached only by a wildcard transition".
     expect(lane('VGM_ISSUED')).toBe('main')
     expect(nodes.find((n) => n.id === 'VGM_ISSUED')?.terminal).toBe(true)
   })
@@ -681,7 +685,6 @@ describe('wildcard transitions', () => {
     const linear = {
       ...WEIGHING,
       states: WEIGHING.states.filter((s) => s.id !== 'CANCELLED'),
-      terminalStates: ['VGM_ISSUED'],
       transitions: WEIGHING.transitions.filter((t) => t.id !== 'cancel'),
     }
     expect(toGraph(linear).nodes.some((n) => n.kind === 'any-state')).toBe(false)
@@ -738,13 +741,14 @@ Create `apps/process-ui/src/web/graph/to-graph.ts`:
  * eyeballed. It is also the model Iteration 2's editor mutates, which is why it
  * returns plain nodes and edges rather than anything React Flow-shaped.
  *
- * Two rules are worth stating because both have an obvious wrong version:
+ * Two rules are worth stating:
  *
- * - **Off-path is computed, not listed.** A state is off the happy path when
- *   the *only* transitions reaching it are wildcards. The tempting rule —
- *   `definition.terminalStates` — is wrong, because that array holds the
- *   successful endings too (`VGM_ISSUED`, `AGREED`, `DELIVERED`), and using it
- *   would draw the happy ending in the abort lane.
+ * - **Off-path is declared, not guessed.** A state whose `outcome` is
+ *   `abandoned` goes in the lower lane; `fulfilled` stays on the main line as
+ *   the happy ending. An earlier draft inferred this from "reached only by a
+ *   wildcard", which got `REJECTED` and `EXPIRED` wrong in the quotation
+ *   definition — both are ordinary transitions and neither is a happy ending.
+ *   The definition now says so outright.
  * - **A wildcard is one edge, not many.** `from: ["*"]` expanded is four edges
  *   in `container-weighing` and six in `container-transport-with-terminal`, and
  *   the diagram stops being readable exactly where it should be clearest.
@@ -791,12 +795,6 @@ export function toGraph(definition: ProcessDefinition, options: GraphOptions = {
   const wildcards = definition.transitions.filter((t) => isWildcard(t.from))
   const ordinary = definition.transitions.filter((t) => !isWildcard(t.from))
 
-  // Off-path: reached only by a wildcard. See the note above for why this is
-  // not `definition.terminalStates`.
-  const byOrdinary = new Set(ordinary.map((t) => t.to).filter((to): to is string => Boolean(to)))
-  const byWildcard = new Set(wildcards.map((t) => t.to).filter((to): to is string => Boolean(to)))
-  const offPath = new Set([...byWildcard].filter((state) => !byOrdinary.has(state)))
-
   // Layers: breadth-first from the initial state over ordinary edges only, so a
   // wildcard cannot drag an abort state into the middle of the happy path.
   const layers = new Map<string, number>([[definition.initialState, 0]])
@@ -829,9 +827,10 @@ export function toGraph(definition: ProcessDefinition, options: GraphOptions = {
     // An unreachable state still has to be drawn somewhere; the far right is
     // honest about it not being on the path from the initial state.
     layer: layers.get(state.id) ?? deepest + 1,
-    lane: offPath.has(state.id) ? 'off-path' : 'main',
+    // Declared by the definition, not inferred from the graph's shape.
+    lane: state.outcome === 'abandoned' ? 'off-path' : 'main',
     kind: 'state',
-    terminal: definition.terminalStates.includes(state.id),
+    terminal: state.outcome !== undefined,
     reached: reached.has(state.id),
     current: options.current === state.id,
   }))
@@ -1076,7 +1075,8 @@ Implements spec §6. `available` is already on `GET /instances`, computed by the
 
 **Interfaces:**
 - Consumes: `InstanceView` from `api.ts`.
-- Produces: `groupInstances(instances: readonly InstanceView[], terminalStates: (ref: string) => string[]): { yours: InstanceView[]; waiting: InstanceView[]; done: InstanceView[] }`
+- Produces: `groupInstances(instances: readonly InstanceView[]): { yours: InstanceView[]; waiting: InstanceView[]; done: InstanceView[] }`
+- **Simplified by Task 0:** the connector now sends `outcome` on every instance, so this needs no definition lookup at all.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1093,34 +1093,33 @@ function instance(over: Partial<InstanceView>): InstanceView {
     id: '01J', kind: 'service', definition: 'container-weighing@1.0.0',
     participants: {}, quotationId: null, offering: null,
     state: 'ORDERED', seq: 1, data: {}, createdAt: '', updatedAt: '',
-    home: false, available: [], redacted: false, ...over,
+    home: false, available: [], redacted: false, outcome: 'running', ...over,
   }
 }
 
 describe('grouping a process list', () => {
-  const terminal = () => ['VGM_ISSUED', 'CANCELLED']
-
   it('puts an instance with an available transition under "your turn"', () => {
     const one = instance({ available: [{ transition: 'announceTruck', role: 'shipper' }] })
-    expect(groupInstances([one], terminal).yours).toEqual([one])
+    expect(groupInstances([one]).yours).toEqual([one])
   })
 
   it('puts a live instance with nothing to do under "waiting"', () => {
     const one = instance({ state: 'TRUCK_ANNOUNCED', available: [] })
-    expect(groupInstances([one], terminal).waiting).toEqual([one])
+    expect(groupInstances([one]).waiting).toEqual([one])
   })
 
-  it('puts a finished instance under "done", even if a transition is offered', () => {
-    // A terminal state is finished whatever else is true; `cancel` is not
-    // offered from one, but the ordering must not depend on that.
-    const one = instance({ state: 'VGM_ISSUED', available: [] })
-    expect(groupInstances([one], terminal).done).toEqual([one])
+  it('puts a finished instance under "done", however it finished', () => {
+    // Both endings belong in the same bucket, and neither needs a state name:
+    // the connector already said whether this process is over.
+    const good = instance({ id: 'a', state: 'VGM_ISSUED', outcome: 'fulfilled' })
+    const bad = instance({ id: 'b', state: 'CANCELLED', outcome: 'abandoned' })
+    expect(groupInstances([good, bad]).done.map((i) => i.id).sort()).toEqual(['a', 'b'])
   })
 
   it('orders each group by most recently updated first', () => {
     const older = instance({ id: 'a', updatedAt: '2026-08-24T09:00:00.000Z' })
     const newer = instance({ id: 'b', updatedAt: '2026-08-24T10:00:00.000Z' })
-    expect(groupInstances([older, newer], terminal).waiting.map((i) => i.id)).toEqual(['b', 'a'])
+    expect(groupInstances([older, newer]).waiting.map((i) => i.id)).toEqual(['b', 'a'])
   })
 })
 ```
@@ -1144,18 +1143,16 @@ export interface GroupedInstances {
 }
 
 /**
- * Whose turn it is, from `available` — which the connector computed from the
- * definition. The UI does not get a second opinion about permission; it only
- * decides where to put the row.
+ * Whose turn it is, from `available`, and whether it is over, from `outcome` —
+ * both computed by the connector from the definition. The UI does not get a
+ * second opinion about permission or about finality; it only decides where to
+ * put the row.
  */
-export function groupInstances(
-  instances: readonly InstanceView[],
-  terminalStates: (definitionRef: string) => string[],
-): GroupedInstances {
+export function groupInstances(instances: readonly InstanceView[]): GroupedInstances {
   const recentFirst = [...instances].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   const grouped: GroupedInstances = { yours: [], waiting: [], done: [] }
   for (const one of recentFirst) {
-    if (terminalStates(one.definition).includes(one.state)) grouped.done.push(one)
+    if (one.outcome !== 'running') grouped.done.push(one)
     else if (one.available.length > 0) grouped.yours.push(one)
     else grouped.waiting.push(one)
   }
@@ -1358,6 +1355,6 @@ Report to the supervisor for review and commit.
 
 **Spec coverage.** §3 → Task 1. §4.2 → Task 2. §4.3 → Task 7. §5.2 → Task 4. §5.3 → Task 5. §6 → Tasks 6 and 8. §7 structure → Task 3; §7 tests → Tasks 2, 4, 6, 9. §8 (what Iteration 2 inherits) is satisfied by Task 4 returning a plain node/edge model and Task 5 mounting React Flow with the two flags off. §9 open items are deliberately not implemented.
 
-**Type consistency.** `ChangeFeed.subscribe` returns `() => void` in Tasks 2 and 3. `toGraph(definition, options)` takes `{ history, current }` in Tasks 4, 5 and 7. `GraphEdge` uses `source`/`target` (React Flow's names) consistently in Tasks 4 and 5 — not `from`/`to`, which are the *definition's* names and would collide. `groupInstances` takes `terminalStates` as a lookup function in Task 6 because the list holds several definitions.
+**Type consistency.** `ChangeFeed.subscribe` returns `() => void` in Tasks 2 and 3. `toGraph(definition, options)` takes `{ history, current }` in Tasks 4, 5 and 7. `GraphEdge` uses `source`/`target` (React Flow's names) consistently in Tasks 4 and 5 — not `from`/`to`, which are the *definition's* names and would collide. `groupInstances` takes only the instances in Task 6: Task 0 put `outcome` on every instance view, so no definition lookup is needed.
 
 **Known gap, deliberate.** Task 8's "link to the service instance a quotation authorises" needs a reverse lookup — the quotation does not point at the service, the service points back via `quotationId`. The implementer should scan the loaded instance list rather than adding an endpoint.

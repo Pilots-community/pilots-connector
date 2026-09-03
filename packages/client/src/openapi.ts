@@ -521,7 +521,7 @@ export function localApiDocument(): Record<string, unknown> {
             { $ref: '#/components/schemas/Instance' },
             {
               type: 'object',
-              required: ['home', 'available', 'redacted'],
+              required: ['home', 'available', 'redacted', 'outcome'],
               properties: {
                 home: {
                   type: 'boolean',
@@ -543,6 +543,12 @@ export function localApiDocument(): Record<string, unknown> {
                 redacted: {
                   type: 'boolean',
                   description: 'True when the visibility filter withheld something from this view.',
+                },
+                outcome: {
+                  type: 'string',
+                  enum: ['running', 'fulfilled', 'abandoned'],
+                  description:
+                    'Whether the process is over, and how — computed from the definition. The generic companion to `state`: `state` is the definition’s own vocabulary, this is the half you can act on without holding that definition. Close a ticket on `fulfilled` rather than hardcoding that `VGM_ISSUED` is one process’s good ending.',
                 },
               },
             },

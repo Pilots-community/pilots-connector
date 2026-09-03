@@ -31,9 +31,8 @@ function baseline(): Record<string, JsonValue> {
     states: [
       { id: 'OPEN', title: 'Open' },
       { id: 'WORKING', title: 'Working' },
-      { id: 'DONE', title: 'Done' },
+      { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
     ],
-    terminalStates: ['DONE'],
     data: { type: 'object', properties: { note: { type: 'string' } } },
     transitions: [
       { id: 'start', title: 'Start', from: ['OPEN'], to: 'WORKING', by: ['provider'] },
@@ -92,14 +91,22 @@ describe('structural errors', () => {
     ).toContain('unknown-state')
   })
 
-  it('catches an unknown terminalState', () => {
+  /*
+   * There is no longer an "unknown terminal state" to catch: terminality lives
+   * on the state itself, so a terminal state that is not a declared state
+   * cannot be expressed. What replaces it is the case that *can* still be
+   * written — a process with no ending at all.
+   */
+  it('catches a definition in which no state declares an outcome', () => {
     expect(
       errorCodes(
         lintWith((d) => {
-          d.terminalStates = ['NOWHERE']
+          for (const state of d['states'] as Array<Record<string, JsonValue>>) {
+            delete state['outcome']
+          }
         }),
       ),
-    ).toContain('unknown-state')
+    ).toContain('no-terminal-state')
   })
 
   it('catches hostedBy naming a role that does not exist', () => {
@@ -327,7 +334,7 @@ describe('warnings — worth saying, not worth refusing', () => {
       d.states = [
         { id: 'open', title: 'Open' },
         { id: 'WORKING', title: 'Working' },
-        { id: 'DONE', title: 'Done' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
       ]
       d.initialState = 'open'
       ;(d.transitions as Record<string, JsonValue>[])[0]!.from = ['open']

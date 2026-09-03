@@ -80,6 +80,8 @@ export interface InstanceView {
   home: boolean
   available: AvailableAction[]
   redacted: boolean
+  /** Whether the process is over, and how — computed by the connector. */
+  outcome: 'running' | 'fulfilled' | 'abandoned'
 }
 
 export interface SignedEvent {
@@ -128,8 +130,7 @@ export interface ProcessDefinition {
   roles: Array<{ id: string; title: string }>
   hostedBy: string
   initialState: string
-  states: Array<{ id: string; title: string }>
-  terminalStates: string[]
+  states: Array<{ id: string; title: string; outcome?: 'fulfilled' | 'abandoned' }>
   data: Record<string, unknown>
   transitions: TransitionDefinition[]
 }

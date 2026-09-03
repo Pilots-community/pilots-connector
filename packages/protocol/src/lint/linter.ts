@@ -16,6 +16,7 @@ import {
   ProcessDefinition,
   expandFromStates,
   parseLinkEvent,
+  terminalStates,
   type TransitionDefinition,
 } from '../schemas/definition.js'
 import { createSchemaValidator } from '../validation/ajv.js'
@@ -104,7 +105,7 @@ export function lintDefinition(raw: unknown): LintResult {
   }
 
   // — references —
-  const terminal = new Set(definition.terminalStates)
+  const terminal = new Set(terminalStates(definition))
   if (!states.has(definition.initialState)) {
     error(
       'unknown-state',
@@ -112,14 +113,20 @@ export function lintDefinition(raw: unknown): LintResult {
       '/initialState',
     )
   }
-  for (const [index, state] of definition.terminalStates.entries()) {
-    if (!states.has(state)) {
-      error(
-        'unknown-state',
-        `terminalState ${state} is not a declared state`,
-        `/terminalStates/${index}`,
-      )
-    }
+  /*
+   * A process must be able to end.
+   *
+   * This replaces the schema's old `terminalStates: min(1)`. Terminality is
+   * derived from `outcome` now, so "no state declares an outcome" is the shape
+   * a definition with no ending takes — and without this the dead-end check
+   * below has no targets and silently passes.
+   */
+  if (terminal.size === 0) {
+    error(
+      'no-terminal-state',
+      'no state declares an `outcome`, so this process can never end',
+      '/states',
+    )
   }
   if (terminal.has(definition.initialState)) {
     warn(
@@ -304,7 +311,7 @@ export function lintDefinition(raw: unknown): LintResult {
     }
   }
 
-  const declaredTerminals = definition.terminalStates.filter((state) => states.has(state))
+  const declaredTerminals = [...terminal]
   if (declaredTerminals.length > 0) {
     const backward = reachable(edges, declaredTerminals, 'backward')
     const deadEnds = [...states].filter((state) => !backward.has(state))

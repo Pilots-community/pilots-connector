@@ -300,9 +300,8 @@ describe('a transition with no `to` is a pure data update', () => {
     initialState: 'OPEN',
     states: [
       { id: 'OPEN', title: 'Open' },
-      { id: 'CLOSED', title: 'Closed' },
+      { id: 'CLOSED', title: 'Closed', outcome: 'fulfilled' },
     ],
-    terminalStates: ['CLOSED'],
     data: { type: 'object', properties: { note: { type: 'string' } } },
     transitions: [
       {

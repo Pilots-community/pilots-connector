@@ -5,47 +5,79 @@
   "kind": "quotation",
   "title": "Container weighing — standing quotation",
   "description": "A fixed-price offering. No negotiation: the instance is created and immediately agreed. Withdrawal remains possible while the service has not started.",
-
   "roles": [
-    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
-    { "id": "weigher", "title": "Weighing company", "cardinality": 1, "protocolRole": "provider" }
+    {
+      "id": "shipper",
+      "title": "Shipper",
+      "cardinality": 1,
+      "protocolRole": "requester"
+    },
+    {
+      "id": "weigher",
+      "title": "Weighing company",
+      "cardinality": 1,
+      "protocolRole": "provider"
+    }
   ],
   "hostedBy": "weigher",
-
   "initialState": "DRAFT",
   "states": [
-    { "id": "DRAFT", "title": "Draft" },
-    { "id": "AGREED", "title": "Agreed" },
-    { "id": "WITHDRAWN", "title": "Withdrawn" }
+    {
+      "id": "DRAFT",
+      "title": "Draft"
+    },
+    {
+      "id": "AGREED",
+      "title": "Agreed",
+      "outcome": "fulfilled"
+    },
+    {
+      "id": "WITHDRAWN",
+      "title": "Withdrawn",
+      "outcome": "abandoned"
+    }
   ],
-  "terminalStates": ["AGREED", "WITHDRAWN"],
-
   "defaultVisibility": "all",
-
   "data": {
     "type": "object",
     "required": ["offering", "price", "conditions"],
     "properties": {
-      "offering": { "type": "string", "format": "uri" },
+      "offering": {
+        "type": "string",
+        "format": "uri"
+      },
       "price": {
         "type": "object",
         "required": ["value", "currency"],
         "properties": {
-          "value": { "type": "number", "minimum": 0 },
-          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
         }
       },
       "conditions": {
         "type": "object",
         "properties": {
-          "terminal": { "type": "string" },
-          "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] }
+          "terminal": {
+            "type": "string"
+          },
+          "containerType": {
+            "type": "string",
+            "enum": ["20DV", "40DV", "40HC", "45HC"]
+          }
         }
       },
-      "validUntil": { "type": "string", "format": "date-time" }
+      "validUntil": {
+        "type": "string",
+        "format": "date-time"
+      }
     }
   },
-
   "transitions": [
     {
       "id": "agree",
@@ -54,7 +86,11 @@
       "to": "AGREED",
       "by": [],
       "auto": true,
-      "guards": [{ "required": ["price", "offering"] }]
+      "guards": [
+        {
+          "required": ["price", "offering"]
+        }
+      ]
     },
     {
       "id": "withdraw",
@@ -64,11 +100,14 @@
       "by": ["shipper", "weigher"],
       "patch": {
         "type": "object",
-        "properties": { "withdrawalReason": { "type": "string" } }
+        "properties": {
+          "withdrawalReason": {
+            "type": "string"
+          }
+        }
       }
     }
   ],
-
   "visibility": [],
   "links": []
 }

@@ -407,5 +407,67 @@ describe('an automated participant', () => {
     // And Org A's replica converged to the same terminal state, without Org A
     // knowing a machine was on the other end.
     expect((await orgA.runtime.store.instances.get(ORG_A.id, id))?.state).toBe('VGM_ISSUED')
+
+    // It was never asked to act on a finished process: every turn it was
+    // offered came while the instance was still running, and it read that from
+    // a field rather than from a list of state names.
+    const turns = orgB.channel.received.map((one) => one.envelope)
+    expect(turns.every((one) => one.instance.outcome === 'running')).toBe(true)
+  })
+
+  /**
+   * The distinction a terminal flag could not make.
+   *
+   * `AGREED` and `CANCELLED` are both endings. Telling "it did what it was for"
+   * from "it stopped short" used to mean hardcoding which state names of which
+   * definitions meant success — per definition, in every integration. Both
+   * answers now arrive on the envelope, computed by the connector.
+   */
+  it('says how a process ended, not merely that it did', async () => {
+    const orgA = scenario.node('org-a')
+    const orgB = scenario.node('org-b')
+    await orgB.subscribe({ notify: ['state.changed'] })
+
+    // A standing quotation: `agree` is an `auto` transition, so this is born
+    // finished — and finished *well*.
+    const fulfilled = unwrap(
+      await orgA.runtime.instances.create(orgA.caller(), {
+        definition: 'container-weighing-quotation@1.0.0',
+        participants: PARTICIPANTS,
+        data: {
+          offering: 'urn:offering:org-b:container-weighing',
+          price: { value: 45, currency: 'EUR' },
+          conditions: { terminal: '869' },
+        },
+      }),
+    )
+
+    const abandoned = unwrap(
+      await orgA.runtime.instances.create(orgA.caller(), {
+        definition: 'container-weighing@1.0.0',
+        participants: PARTICIPANTS,
+        data: { containerNumber: 'MSCU1234567', terminal: '869' },
+      }),
+    )
+    unwrap(
+      await orgA.runtime.instances.applyTransition(
+        orgA.caller(),
+        abandoned.instance.id,
+        { transition: 'cancel', patch: { cancellationReason: 'no longer needed' } },
+        1,
+      ),
+    )
+    await scenario.settle()
+
+    const latestFor = (id: string): { state: string; outcome: string } | undefined => {
+      const envelope = orgB.channel.received
+        .map((one) => one.envelope)
+        .filter((one) => one.instance.id === id)
+        .at(-1)
+      return envelope && { state: envelope.instance.state, outcome: envelope.instance.outcome }
+    }
+
+    expect(latestFor(fulfilled.instance.id)).toEqual({ state: 'AGREED', outcome: 'fulfilled' })
+    expect(latestFor(abandoned.instance.id)).toEqual({ state: 'CANCELLED', outcome: 'abandoned' })
   })
 })

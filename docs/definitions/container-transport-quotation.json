@@ -5,27 +5,57 @@
   "kind": "quotation",
   "title": "Container transport — negotiated quotation",
   "description": "A negotiated quotation. The shipper requests, the transporter offers, either side may counter. Runs in parallel with the service instance it authorises, which waits in PENDING_CONTRACT until this reaches AGREED.",
-
   "roles": [
-    { "id": "shipper", "title": "Shipper", "cardinality": 1, "protocolRole": "requester" },
-    { "id": "transporter", "title": "Transporter", "cardinality": 1, "protocolRole": "provider" }
+    {
+      "id": "shipper",
+      "title": "Shipper",
+      "cardinality": 1,
+      "protocolRole": "requester"
+    },
+    {
+      "id": "transporter",
+      "title": "Transporter",
+      "cardinality": 1,
+      "protocolRole": "provider"
+    }
   ],
   "hostedBy": "transporter",
-
   "initialState": "REQUESTED",
   "states": [
-    { "id": "REQUESTED", "title": "Requested" },
-    { "id": "OFFERED", "title": "Offered" },
-    { "id": "COUNTERED", "title": "Countered" },
-    { "id": "AGREED", "title": "Agreed" },
-    { "id": "REJECTED", "title": "Rejected" },
-    { "id": "WITHDRAWN", "title": "Withdrawn" },
-    { "id": "EXPIRED", "title": "Expired" }
+    {
+      "id": "REQUESTED",
+      "title": "Requested"
+    },
+    {
+      "id": "OFFERED",
+      "title": "Offered"
+    },
+    {
+      "id": "COUNTERED",
+      "title": "Countered"
+    },
+    {
+      "id": "AGREED",
+      "title": "Agreed",
+      "outcome": "fulfilled"
+    },
+    {
+      "id": "REJECTED",
+      "title": "Rejected",
+      "outcome": "abandoned"
+    },
+    {
+      "id": "WITHDRAWN",
+      "title": "Withdrawn",
+      "outcome": "abandoned"
+    },
+    {
+      "id": "EXPIRED",
+      "title": "Expired",
+      "outcome": "abandoned"
+    }
   ],
-  "terminalStates": ["AGREED", "REJECTED", "WITHDRAWN", "EXPIRED"],
-
   "defaultVisibility": "all",
-
   "data": {
     "type": "object",
     "required": ["pickup", "dropoff", "containerType"],
@@ -34,36 +64,69 @@
         "type": "object",
         "required": ["location"],
         "properties": {
-          "location": { "type": "string" },
-          "earliest": { "type": "string", "format": "date-time" },
-          "latest": { "type": "string", "format": "date-time" }
+          "location": {
+            "type": "string"
+          },
+          "earliest": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latest": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "dropoff": {
         "type": "object",
         "required": ["location"],
         "properties": {
-          "location": { "type": "string" },
-          "earliest": { "type": "string", "format": "date-time" },
-          "latest": { "type": "string", "format": "date-time" }
+          "location": {
+            "type": "string"
+          },
+          "earliest": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latest": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
-      "containerType": { "type": "string", "enum": ["20DV", "40DV", "40HC", "45HC"] },
-      "containerNumber": { "type": "string", "pattern": "^[A-Z]{4}[0-9]{7}$" },
+      "containerType": {
+        "type": "string",
+        "enum": ["20DV", "40DV", "40HC", "45HC"]
+      },
+      "containerNumber": {
+        "type": "string",
+        "pattern": "^[A-Z]{4}[0-9]{7}$"
+      },
       "price": {
         "type": "object",
         "required": ["value", "currency"],
         "properties": {
-          "value": { "type": "number", "minimum": 0 },
-          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          }
         }
       },
-      "terms": { "type": "string" },
-      "notes": { "type": "string" },
-      "outcomeReason": { "type": "string" }
+      "terms": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      },
+      "outcomeReason": {
+        "type": "string"
+      }
     }
   },
-
   "transitions": [
     {
       "id": "offer",
@@ -73,7 +136,11 @@
       "by": ["transporter"],
       "deadline": "PT24H",
       "onDeadline": "expire",
-      "guards": [{ "required": ["price"] }],
+      "guards": [
+        {
+          "required": ["price"]
+        }
+      ],
       "patch": {
         "type": "object",
         "required": ["price"],
@@ -82,14 +149,28 @@
             "type": "object",
             "required": ["value", "currency"],
             "properties": {
-              "value": { "type": "number", "minimum": 0 },
-              "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+              "value": {
+                "type": "number",
+                "minimum": 0
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              }
             }
           },
-          "pickup": { "type": "object" },
-          "dropoff": { "type": "object" },
-          "terms": { "type": "string" },
-          "notes": { "type": "string" }
+          "pickup": {
+            "type": "object"
+          },
+          "dropoff": {
+            "type": "object"
+          },
+          "terms": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       }
     },
@@ -102,10 +183,18 @@
       "patch": {
         "type": "object",
         "properties": {
-          "pickup": { "type": "object" },
-          "dropoff": { "type": "object" },
-          "price": { "type": "object" },
-          "notes": { "type": "string" }
+          "pickup": {
+            "type": "object"
+          },
+          "dropoff": {
+            "type": "object"
+          },
+          "price": {
+            "type": "object"
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       }
     },
@@ -115,7 +204,11 @@
       "from": ["OFFERED"],
       "to": "AGREED",
       "by": ["shipper"],
-      "guards": [{ "required": ["price", "pickup", "dropoff"] }]
+      "guards": [
+        {
+          "required": ["price", "pickup", "dropoff"]
+        }
+      ]
     },
     {
       "id": "reject",
@@ -125,7 +218,11 @@
       "by": ["shipper", "transporter"],
       "patch": {
         "type": "object",
-        "properties": { "outcomeReason": { "type": "string" } }
+        "properties": {
+          "outcomeReason": {
+            "type": "string"
+          }
+        }
       }
     },
     {
@@ -136,7 +233,11 @@
       "by": ["shipper"],
       "patch": {
         "type": "object",
-        "properties": { "outcomeReason": { "type": "string" } }
+        "properties": {
+          "outcomeReason": {
+            "type": "string"
+          }
+        }
       }
     },
     {
@@ -147,7 +248,6 @@
       "by": []
     }
   ],
-
   "visibility": [],
   "links": []
 }

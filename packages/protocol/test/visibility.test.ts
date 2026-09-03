@@ -114,9 +114,8 @@ describe('defaultVisibility: "none"', () => {
     initialState: 'OPEN',
     states: [
       { id: 'OPEN', title: 'Open' },
-      { id: 'DONE', title: 'Done' },
+      { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
     ],
-    terminalStates: ['DONE'],
     defaultVisibility: 'none',
     data: { type: 'object' },
     transitions: [{ id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['a'] }],
@@ -160,9 +159,8 @@ describe('nested grants below a visible container', () => {
     initialState: 'OPEN',
     states: [
       { id: 'OPEN', title: 'Open' },
-      { id: 'DONE', title: 'Done' },
+      { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
     ],
-    terminalStates: ['DONE'],
     data: { type: 'object' },
     transitions: [{ id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['a'] }],
     visibility: [{ path: 'offer.margin', roles: ['a'] }],
