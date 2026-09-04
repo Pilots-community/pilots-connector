@@ -396,6 +396,7 @@ export class LocalController {
         home: view.home,
         available: view.available,
         redacted: view.redacted,
+        outcome: view.outcome,
       })),
     }
   }
@@ -417,6 +418,7 @@ export class LocalController {
       home: view.home,
       available: view.available,
       redacted: view.redacted,
+      outcome: view.outcome,
     }
   }
 
@@ -577,7 +579,13 @@ export class LocalController {
     const view = await this.instances.read(context, outcome.instance.id)
     return {
       instance: view
-        ? { ...view.instance, home: view.home, available: view.available, redacted: view.redacted }
+        ? {
+            ...view.instance,
+            home: view.home,
+            available: view.available,
+            redacted: view.redacted,
+            outcome: view.outcome,
+          }
         : undefined,
       events: outcome.events.map((event) => ({
         header: event.header,

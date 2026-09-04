@@ -548,3 +548,44 @@ describe('the admin surface', () => {
     expect(response.statusCode).toBe(401)
   })
 })
+
+/**
+ * The generic outcome reaches the wire.
+ *
+ * `InstanceService` computing it is not enough — the controller has to put it
+ * in the response, and it once did not. The scenario tier missed that because
+ * it asserts on the envelope and on service return values, neither of which
+ * goes through this serialisation. An integrator sees only what is written
+ * here, so this is where it has to be checked.
+ */
+describe('an instance says whether it is over, and how', () => {
+  it('carries `outcome` on the list, on the single read, and on a transition', async () => {
+    const { id } = await createWeighing()
+
+    const list = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/local/v1/instances',
+      headers: { authorization: `ApiKey ${orgAKey}`, 'x-actor-ref': 'alice@org-a.example' },
+    })
+    expect(list.json().instances[0].outcome).toBe('running')
+
+    const one = await testApp.app.inject({
+      method: 'GET',
+      url: `/api/local/v1/instances/${id}`,
+      headers: { authorization: `ApiKey ${orgAKey}`, 'x-actor-ref': 'alice@org-a.example' },
+    })
+    expect(one.json().outcome).toBe('running')
+
+    const applied = await transition(
+      orgAKey,
+      id,
+      { transition: 'cancel', patch: { cancellationReason: 'no longer needed' } },
+      1,
+    )
+    expect(applied.statusCode).toBe(200)
+    // `CANCELLED` is the definition's word; `abandoned` is the one an
+    // integrator can act on without holding the definition.
+    expect(applied.json().instance.state).toBe('CANCELLED')
+    expect(applied.json().instance.outcome).toBe('abandoned')
+  })
+})

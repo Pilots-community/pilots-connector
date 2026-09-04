@@ -6,58 +6,45 @@
  * A sixth definition would appear here with no code change.
  */
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
-import {
-  UiError,
-  api,
-  type DefinitionSummary,
-  type Offering,
-  type ProcessDefinition,
-} from '../api.js'
+import { UiError, api, type Offering } from '../api.js'
 import { SchemaForm } from '../components/SchemaForm.js'
+import { StateDiagram } from '../graph/StateDiagram.js'
+import { queries } from '../queries.js'
 import { Card, Problem, button, input } from '../ui.js'
+import { Offerings } from './Offerings.js'
 
 export function Start({ onStarted }: { onStarted: (id: string) => void }) {
-  const [definitions, setDefinitions] = useState<DefinitionSummary[]>([])
-  const [offerings, setOfferings] = useState<Offering[]>([])
-  const [peers, setPeers] = useState<Array<{ did: string; name: string }>>([])
   const [ref, setRef] = useState('')
-  const [definition, setDefinition] = useState<ProcessDefinition | null>(null)
   const [participants, setParticipants] = useState<Record<string, string>>({})
   const [data, setData] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<UiError | null>(null)
 
-  useEffect(() => {
-    void api.definitions().then(({ definitions: list }) => {
-      setDefinitions(list)
-      if (list[0]) setRef(list[0].ref)
-    })
-    void api.offerings().then(({ offerings: list }) => setOfferings(list))
-    void api.connections().then(({ connections }) => {
-      setPeers(
-        connections
-          .filter((one) => one.status === 'ACTIVE' || one.status === 'DEGRADED')
-          .map((one) => ({ did: one.peerDid, name: one.peerDisplayName ?? one.peerDid })),
-      )
-    })
-  }, [])
+  const definitions = useQuery(queries.definitions()).data ?? []
+  const connections = useQuery(queries.connections()).data ?? []
+  const peers = connections
+    .filter((one) => one.status === 'ACTIVE' || one.status === 'DEGRADED')
+    .map((one) => ({ did: one.peerDid, name: one.peerDisplayName ?? one.peerDid }))
+
+  /*
+   * The out-of-order fetch this used to guard against is gone: react-query keys
+   * the definition by ref, so a late answer for the definition you *were*
+   * looking at can no longer overwrite the one you are looking at now.
+   */
+  const definition = useQuery({ ...queries.definition(ref), enabled: ref !== '' }).data?.definition
 
   useEffect(() => {
-    if (ref === '') return
-    // Two fetches can be in flight — the initial default and whatever the user
-    // just picked — and they can land out of order. Without this guard the
-    // stale one wins and quietly wipes the form the user is filling in.
-    let current = true
-    // Only the definition. Clearing the form here would race with the user
-    // filling it in: the fetch lands whenever it lands, and by then they may
-    // have chosen a role. The reset belongs where the change happens.
-    void api.definition(ref).then(({ definition: found }) => {
-      if (current) setDefinition(found)
-    })
-    return () => {
-      current = false
-    }
-  }, [ref])
+    if (ref === '' && definitions[0]) setRef(definitions[0].ref)
+  }, [ref, definitions])
+
+  /** Start from an offering: pick its service definition and fill in the supplier. */
+  const fromOffering = (offering: Offering): void => {
+    setRef(offering.serviceDefinition)
+    setParticipants({})
+    setData({})
+    setError(null)
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -117,6 +104,12 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
             </label>
           ))}
 
+          {/*
+            What you are about to start, before you commit to it. The same
+            picture the instance shows afterwards, with nothing walked yet.
+          */}
+          {definition && <StateDiagram definition={definition} height="h-48" />}
+
           {definition && <SchemaForm schema={definition.data} value={data} onChange={setData} />}
 
           {error && <Problem error={error} />}
@@ -140,28 +133,7 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
         </div>
       </Card>
 
-      <Card title="Offerings">
-        {offerings.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Nothing published here. Publishing an offering is what makes a participant a supplier —
-            it is done in the connector’s admin UI, and it is a runtime record rather than a
-            setting.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {offerings.map((offering) => (
-              <li key={offering.id} className="text-sm">
-                <span className="font-medium">{offering.title}</span>
-                {offering.price && (
-                  <span className="ml-2 text-slate-500">
-                    {offering.price.value} {offering.price.currency}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      <Offerings onStart={fromOffering} />
     </div>
   )
 }

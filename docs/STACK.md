@@ -144,6 +144,7 @@ against. NestJS stays, and this section's trigger is spent.
 | Styling | **Tailwind** + **shadcn/ui** | both |
 | Server state | **TanStack Query** | **process UI (installed)**; the admin UI still hand-rolls its fetches |
 | Routing | **TanStack Router** | process UI. The admin UI is small enough to need almost none. |
+| Process diagram | **React Flow** (`@xyflow/react`, MIT) | process UI |
 | Process UI server | **Fastify** + **better-auth** | thin BFF: holds the API key, owns its own users, proxies via `packages/client` |
 | E2E | **Playwright** | `webServer` starts local processes; containers only for S4c |
 
@@ -153,6 +154,24 @@ open form. That is the job it does: an interval, a refetch on focus, and cache i
 with the previous value held on screen so a revalidation never blanks a view. *When* to revalidate is
 not its business — that is a `ChangeFeed` port in `src/web/live/`, with polling and window-focus
 adapters today and a notification-driven nudge designed for.
+
+**On React Flow.** A process definition is a state machine, and a demo audience should see it rather
+than read a state name. The choice was made for the *editor* that authoring definitions will need
+(Iteration 2), not for the viewer: rendering is the cheap half, while drag, connect-by-dragging,
+hit-testing, selection and undo are the expensive half, so hand-rolling a viewer now would mean
+discarding it later. It is mounted read-only — `nodesDraggable` and `nodesConnectable` off — and
+becomes an editor by turning those on.
+
+Rejected: **`bpmn-js`**, which is *not* MIT (the bpmn.io licence carries a logo-attribution
+requirement) and would need a lossy bidirectional mapping, because `by` roles, `guards`, JSON Schema
+`patch` and `deadline`/`onDeadline` have no clean home in BPMN XML — and the definition, not the
+drawing, is the spec. **`mermaid`**, at 84 MB unpacked, buys only layout and cannot become an editor.
+Layout here is ours: ~20 lines of layer-times-column, because definitions are near-linear and an editor
+wants positions that are stable and eventually persisted rather than recomputed under the cursor. That
+is one dependency instead of two.
+
+Cost, measured: the SPA bundle is **131 KB gzipped**, and the UI container sits at ~49 MiB of its
+512 MB limit.
 
 The process UI's BFF is deliberately the same server stack as the connector. A third party should be able
 to read it as *"this is how you integrate"* rather than *"this is a framework demo"*.

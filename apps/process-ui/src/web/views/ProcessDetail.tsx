@@ -6,53 +6,75 @@
  * The forms come from each transition's own `patch` schema. Nothing here knows
  * what a weighing is.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import {
-  UiError,
-  api,
-  type InstanceView,
-  type ProcessDefinition,
-  type SignedEvent,
-  type VerificationReport,
-} from '../api.js'
+import { UiError, api } from '../api.js'
 import { EventLog, VerificationBanner } from '../components/EventLog.js'
 import { SchemaForm } from '../components/SchemaForm.js'
+import { StateDiagram } from '../graph/StateDiagram.js'
+import { keys, queries } from '../queries.js'
 import { Card, Problem, button, ghost } from '../ui.js'
 
 export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const [instance, setInstance] = useState<InstanceView | null>(null)
-  const [definition, setDefinition] = useState<ProcessDefinition | null>(null)
-  const [events, setEvents] = useState<SignedEvent[]>([])
-  const [report, setReport] = useState<VerificationReport | null>(null)
-  const [chosen, setChosen] = useState<string | null>(null)
+  const client = useQueryClient()
+  const log = useQuery(queries.events(id))
+  const instance = log.data?.instance
+  const events = log.data?.events ?? []
+  const report = log.data?.verification
+
+  const definition = useQuery({
+    ...queries.definition(instance?.definition ?? ''),
+    enabled: Boolean(instance),
+  }).data?.definition
+
+  /*
+   * Form state, and nothing else, lives here.
+   *
+   * A revalidation lands every few seconds and must never write to any of it —
+   * that is the whole of "refresh without disturbing an open form". `openedAt`
+   * is the `seq` the form was started against, which is both what `If-Match`
+   * carries and how we notice the instance moved underneath.
+   */
+  const [chosen, setChosen] = useState<{ transition: string; openedAt: number } | null>(null)
   const [patch, setPatch] = useState<Record<string, unknown>>({})
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState<UiError | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const reload = useCallback(() => {
-    void api.events(id).then(({ events: log, instance: current, verification }) => {
-      setEvents(log)
-      setInstance(current)
-      setReport(verification)
-      void api.definition(current.definition).then(({ definition: found }) => setDefinition(found))
-    })
-  }, [id])
-
-  useEffect(reload, [reload])
+  const reload = (): void => {
+    void client.invalidateQueries({ queryKey: keys.events(id) })
+    void client.invalidateQueries({ queryKey: keys.instances })
+  }
 
   if (!instance || !report) return <p className="text-sm text-slate-500">Loading…</p>
 
-  const transition = definition?.transitions.find((one) => one.id === chosen)
+  const transition = chosen
+    ? definition?.transitions.find((one) => one.id === chosen.transition)
+    : undefined
+  const movedUnderneath = chosen !== null && instance.seq !== chosen.openedAt
 
   return (
-    <div className="flex flex-col gap-4">
+    // The id is on the container so a test can open a *particular* instance
+    // rather than whichever row happens to sort first.
+    <div className="flex flex-col gap-4" data-instance={instance.id}>
       <button type="button" className={`${ghost} self-start`} onClick={onBack}>
         ← All processes
       </button>
 
       <VerificationBanner report={report} />
+
+      {definition && (
+        <Card title={`${definition.title} · ${instance.state}`}>
+          {/*
+            The state machine and the progress through it, in one picture: the
+            path taken is drawn bold, the current state is filled, and what
+            remains is dimmed. Derived from the definition, so a sixth process
+            needs no work here either.
+          */}
+          <StateDiagram definition={definition} history={events} current={instance.state} />
+        </Card>
+      )}
 
       <Card title={`${instance.definition} · ${instance.state}`}>
         <dl className="grid grid-cols-2 gap-2 text-sm">
@@ -64,6 +86,14 @@ export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }
           <dd className="font-mono">{instance.seq}</dd>
           <dt className="text-slate-500">Record</dt>
           <dd>{instance.home ? 'authoritative here' : 'a verified replica'}</dd>
+          <dt className="text-slate-500">Progress</dt>
+          <dd data-testid="outcome">
+            {instance.outcome === 'running'
+              ? 'in progress'
+              : instance.outcome === 'fulfilled'
+                ? 'completed'
+                : 'stopped before completing'}
+          </dd>
         </dl>
 
         <pre
@@ -99,9 +129,11 @@ export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }
                   key={action.transition}
                   type="button"
                   data-transition={action.transition}
-                  className={action.transition === chosen ? button : ghost}
+                  className={action.transition === chosen?.transition ? button : ghost}
                   onClick={() => {
-                    setChosen(action.transition)
+                    // The seq is captured here, not read at submit time: it is
+                    // what the person actually saw when they decided.
+                    setChosen({ transition: action.transition, openedAt: instance.seq })
                     setPatch({})
                     setError(null)
                   }}
@@ -113,8 +145,24 @@ export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }
               ))}
             </div>
 
-            {transition && (
+            {transition && chosen && (
               <div className="flex flex-col gap-3 rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                {/*
+                  Non-blocking on purpose: nothing is disabled and no field is
+                  cleared. Yanking a half-filled form away because the other
+                  party moved would lose work that is still perfectly good.
+                */}
+                {movedUnderneath && (
+                  <div
+                    data-testid="moved-banner"
+                    className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                  >
+                    This process moved on while you were filling this in — it is now{' '}
+                    <strong>{instance.state}</strong>. Your entries are untouched, but submitting
+                    may be refused.
+                  </div>
+                )}
+
                 <SchemaForm schema={transition.patch} value={patch} onChange={setPatch} />
 
                 {transition.attachments && (
@@ -148,9 +196,11 @@ export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }
                           transition: transition.id,
                           patch: Object.keys(patch).length === 0 ? null : patch,
                           ...(attachments ? { attachments } : {}),
-                          // The seq we read. Two people acting at once produce a
-                          // conflict here rather than a silent overwrite.
-                          ifMatch: instance.seq,
+                          // The seq the form was opened against, not the latest
+                          // one. Re-reading it here would silently overwrite
+                          // whatever the other party just did — the lost update
+                          // this header exists to prevent.
+                          ifMatch: chosen.openedAt,
                         })
                         setChosen(null)
                         setPatch({})

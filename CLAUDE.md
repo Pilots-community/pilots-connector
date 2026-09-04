@@ -157,8 +157,14 @@ pilots-service/
     src/server/          The BFF: holds the one API key, owns its own user accounts
                          (better-auth), turns a signed-in user into an `X-Actor-Ref`, and
                          verifies the event log itself rather than trusting the connector.
-    src/web/             The SPA. Transitions and forms rendered from the definition, so a
-                         new process needs no UI work.
+    src/web/             The SPA shell. Transitions and forms rendered from the definition,
+                         so a new process needs no UI work.
+      views/             Processes (grouped by whose turn it is), detail, start, offerings.
+      graph/             `toGraph` — definition + event log to nodes and edges, pure and
+                         unit-tested — and the React Flow surface. Read-only now; the same
+                         model an editor mutates at Iteration 2.
+      live/              The `ChangeFeed` port. Polling and window-focus adapters today; a
+                         notification-driven nudge is a third adapter, not a rewrite.
   tests/e2e/             Playwright. Wiring and UI only, never protocol behaviour.
   docs/                  Design documents.
 ```

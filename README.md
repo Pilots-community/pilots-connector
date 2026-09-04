@@ -147,12 +147,16 @@ If you have already restarted and lost track of a token that was *not* seeded, `
 ### A first process, in two browsers
 
 Put the two process UIs side by side — each names its organisation and its DID in the header, so which
-is which is never in doubt.
+is which is never in doubt. Processes are grouped by the question you actually arrive with:
+**Your turn**, **Waiting on them**, **Quotations**, **Done** — with completed and stopped
+distinguished, because a process that finished and one that was cancelled are not the same news.
 
-1. **In Org A's UI** (`:4000`), sign in, open **Start**, and choose `container-weighing@1.0.0`.
-   Pick *Us* for `shipper` and Org B for `weigher`, fill in a container number and a terminal, and
-   start it. Note what you never type: a DID. Roles come from the definition and *Us* is resolved by
-   the UI's backend.
+1. **In Org A's UI** (`:4000`), sign in, open **Start**, and either pick a published **offering** —
+   "Org B offers container weighing → *Start one*" — or choose `container-weighing@1.0.0` directly.
+   Either way the **state machine is drawn before you commit**, so you can see the shape of what you
+   are starting. Pick *Us* for `shipper` and Org B for `weigher`, fill in a container number and a
+   terminal, and start it. Note what you never type: a DID. Roles come from the definition and *Us*
+   is resolved by the UI's backend.
 2. The instance appears at `ORDERED`. **Only `announceTruck` is offered** — the other transitions belong
    to the weigher, and the connector computed that from the definition rather than the UI guessing.
    Apply it.
@@ -161,9 +165,19 @@ is which is never in doubt.
 4. Back in Org A's UI, open the instance and look at `grossMass`. **It is not there.** The definition
    grants that field to the shipper only from `PAID`, and it was withheld on the way out — Org A's
    connector never received it. Record the payment from Org B's side and it appears.
-5. Open the **event log** on either side. Every event is signed and chained, and the status beside it is
-   the result of a check the UI's backend ran itself against the published keys — not something the
-   connector asserted about itself.
+5. **Watch the other screen while you act.** Neither UI needs a reload: each polls every five seconds
+   and on regaining focus, so Org B's move appears on Org A's list on its own. If you have a
+   transition form half-filled when the other party moves, you get a banner saying so and **your
+   entries are left alone** — and submitting anyway is refused with a `409`, because the form still
+   carries the `seq` it was opened against. The UI's staleness handling and the protocol's
+   concurrency control are the same mechanism.
+6. **Look at the diagram** on the instance. The path actually taken is drawn bold, the current state
+   is filled, and what remains is dimmed — so "where is this process" is one glance rather than a
+   state name to interpret. Abort states sit in a lane below, and a `["*"]` transition like `cancel`
+   is drawn once from an *any state* marker rather than once per state it could fire from.
+7. Open the **event log** on either side. Every event is signed and chained, and the status beside it
+   is the result of a check the UI's backend ran itself against the published keys — not something
+   the connector asserted about itself.
 
 ### The UI is a client, not the runtime
 
