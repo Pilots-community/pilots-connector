@@ -21,6 +21,7 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
   const [data, setData] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<UiError | null>(null)
 
+  const demoTools = useQuery(queries.session()).data?.demoTools ?? false
   const definitions = useQuery(queries.definitions()).data ?? []
   const connections = useQuery(queries.connections()).data ?? []
   const peers = connections
@@ -110,7 +111,14 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
           */}
           {definition && <StateDiagram definition={definition} height="h-48" />}
 
-          {definition && <SchemaForm schema={definition.data} value={data} onChange={setData} />}
+          {definition && (
+            <SchemaForm
+              schema={definition.data}
+              value={data}
+              onChange={setData}
+              demoTools={demoTools}
+            />
+          )}
 
           {error && <Problem error={error} />}
 

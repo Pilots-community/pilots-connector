@@ -164,6 +164,10 @@ services:
       # one session cookie and sign each other out. Two process UIs on one host
       # must differ here.
       PILOTS_UI_COOKIE_PREFIX: org-a
+      # Demo affordances: the "fill with sample data" button on every form.
+      # A flag of its own rather than a reading of NODE_ENV — a deployed demo
+      # node runs NODE_ENV=production and still wants these.
+      PILOTS_UI_DEMO_TOOLS: 'true'
       PILOTS_UI_BASE_URL: http://localhost:4000
       NODE_ENV: development
       # A demo account, so `up` reaches a usable screen. Deliberately readable:
@@ -201,6 +205,7 @@ services:
       PILOTS_UI_AUTH_SECRET: ${ORG_B_UI_AUTH_SECRET:?run `pnpm demo:env` first}
       PILOTS_UI_NAME: ${ORG_B_NAME:-Org B}
       PILOTS_UI_COOKIE_PREFIX: org-b
+      PILOTS_UI_DEMO_TOOLS: 'true'
       PILOTS_UI_BASE_URL: http://localhost:4001
       NODE_ENV: development
       PILOTS_UI_SEED_EMAIL: ${ORG_B_UI_EMAIL:-bob@org-b.example}

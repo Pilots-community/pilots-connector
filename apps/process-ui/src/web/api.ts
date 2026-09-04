@@ -166,6 +166,8 @@ export const api = {
       /** Our own DID, so the SPA can label "Us" without ever hardcoding one. */
       did: string | null
       connector: string
+      /** Whether this UI offers its demo affordances. See PILOTS_UI_DEMO_TOOLS. */
+      demoTools: boolean
     }>('/api/ui/session'),
 
   signIn: (email: string, password: string) =>

@@ -18,6 +18,7 @@ import { Card, Problem, button, ghost } from '../ui.js'
 
 export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const client = useQueryClient()
+  const demoTools = useQuery(queries.session()).data?.demoTools ?? false
   const log = useQuery(queries.events(id))
   const instance = log.data?.instance
   const events = log.data?.events ?? []
@@ -163,7 +164,12 @@ export function ProcessDetail({ id, onBack }: { id: string; onBack: () => void }
                   </div>
                 )}
 
-                <SchemaForm schema={transition.patch} value={patch} onChange={setPatch} />
+                <SchemaForm
+                  schema={transition.patch}
+                  value={patch}
+                  onChange={setPatch}
+                  demoTools={demoTools}
+                />
 
                 {transition.attachments && (
                   <label className="block">

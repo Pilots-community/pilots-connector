@@ -128,6 +128,13 @@ The connectors are already connected to each other: `PILOTS_CONNECTIONS` seeds t
 that `up` reaches a first transaction inside a minute. That is a shortcut for the demo, not a
 replacement — the handshake works without it, and `s0-connect.test.ts` is what proves it.
 
+**Filling forms in a demo.** Every form carries a **Fill with sample data** button, generated from the
+definition's own JSON Schema rather than from a table of field names — so a container number is random
+but matches its pattern, a price clears its minimum, and a pickup window opens before it closes. Press
+it again for a different payload. It is switched on by `PILOTS_UI_DEMO_TOOLS`, **a flag of its own
+rather than a reading of `NODE_ENV`**: a deployed demo node runs `NODE_ENV=production` because it is a
+deployment and still wants the affordance. Off unless asked for; compose sets it for both UIs.
+
 **Every credential above is a fixed value from `.env`**, not something to go find in a log —
 `PILOTS_SEED_ADMIN_TOKEN` and `PILOTS_UI_SEED_EMAIL`/`PILOTS_UI_SEED_PASSWORD` set them from
 configuration the same way `PILOTS_SEED_API_KEY` does. All three are refused under

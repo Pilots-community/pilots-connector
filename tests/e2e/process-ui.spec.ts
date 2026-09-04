@@ -226,3 +226,42 @@ test.describe('the process is drawn, not only described', () => {
     await expect(page.getByTestId('outcome')).toBeVisible()
   })
 })
+
+test.describe('the form helps rather than waits to refuse', () => {
+  test('guides with words, flags a bad value, and fills itself plausibly', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page, ORG_A)
+    await page.getByTestId('tab-start').click()
+    await page.selectOption('select[name="definition"]', 'container-weighing@1.0.0')
+
+    // Guidance a person can act on. The raw regex used to be the placeholder.
+    const container = page.locator('input[data-field="containerNumber"]')
+    await expect(container).toHaveAttribute('placeholder', /4 letters, then 7 digits/)
+    await expect(container).toHaveAttribute('pattern', '^[A-Z]{4}[0-9]{7}$')
+
+    // Wrong input is named before the connector ever sees it.
+    await container.fill('nope')
+    await expect(page.getByTestId('violation-containerNumber')).toContainText('4 letters')
+
+    // …and the complaint goes away when it is right.
+    await container.fill('MSCU1234567')
+    await expect(page.getByTestId('violation-containerNumber')).toHaveCount(0)
+
+    // Sample data satisfies the schema it came from, and differs each press.
+    await page.getByTestId('quick-fill').click()
+    const first = await container.inputValue()
+    expect(first).toMatch(/^[A-Z]{4}[0-9]{7}$/)
+
+    await page.getByTestId('quick-fill').click()
+    const second = await container.inputValue()
+    expect(second).toMatch(/^[A-Z]{4}[0-9]{7}$/)
+    // Pressing again gives a fresh payload; a merge would make it a no-op.
+    expect(second).not.toBe(first)
+
+    // And the whole thing is startable without typing a field by hand.
+    await page.selectOption('select[data-role="shipper"]', '__self__')
+    await page.selectOption('select[data-role="weigher"]', 'did:web:org-b.example')
+    await page.getByTestId('start').click()
+    await expect(page.getByTestId('state')).toHaveText('ORDERED')
+  })
+})

@@ -14,20 +14,10 @@
  */
 import { useState } from 'react'
 
-export interface JsonSchema {
-  type?: string | string[]
-  title?: string
-  description?: string
-  format?: string
-  enum?: unknown[]
-  properties?: Record<string, JsonSchema>
-  required?: string[]
-  items?: JsonSchema
-  minimum?: number
-  maximum?: number
-  pattern?: string
-  default?: unknown
-}
+import type { JsonSchema } from './json-schema.js'
+import { hintFor, sampleObject, violationOf } from './sample-data.js'
+
+export type { JsonSchema } from './json-schema.js'
 
 const label = 'mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400'
 const input =
@@ -140,6 +130,9 @@ function Field({
         ? 'datetime-local'
         : 'text'
 
+  const hint = hintFor(schema)
+  const violation = violationOf(value, schema)
+
   return (
     <label className="block">
       <span className={label}>
@@ -147,15 +140,28 @@ function Field({
         {required && <span className="text-red-600"> *</span>}
       </span>
       <input
-        className={input}
+        className={`${input} ${violation ? 'border-red-400 dark:border-red-500' : ''}`}
         type={inputType}
         data-field={path}
-        placeholder={schema.pattern ?? schema.description ?? ''}
+        /*
+         * Real constraints, so the browser helps too — and never the raw
+         * regex, which is what used to sit in the placeholder.
+         */
+        {...(schema.pattern ? { pattern: schema.pattern } : {})}
+        {...(schema.minimum !== undefined ? { min: schema.minimum } : {})}
+        {...(schema.maximum !== undefined ? { max: schema.maximum } : {})}
+        {...(inputType === 'number' ? { step: type === 'integer' ? 1 : 'any' } : {})}
+        aria-invalid={violation !== null}
+        placeholder={hint ?? ''}
         value={toInputValue(value, inputType)}
         onChange={(event) => onChange(fromInputValue(event.target.value, type, inputType))}
       />
-      {schema.description && (
-        <span className="mt-1 block text-xs text-slate-500">{schema.description}</span>
+      {violation ? (
+        <span data-testid={`violation-${path}`} className="mt-1 block text-xs text-red-600">
+          {violation}
+        </span>
+      ) : (
+        hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>
       )}
     </label>
   )
@@ -164,8 +170,18 @@ function Field({
 function toInputValue(value: unknown, inputType: string): string {
   if (value === undefined || value === null) return ''
   if (typeof value === 'string') {
-    // `2026-08-24T09:19:00.000Z` → what the widget wants.
-    return inputType === 'datetime-local' ? value.slice(0, 16) : value
+    /*
+     * `datetime-local` is a **local** wall clock, and the protocol's instants
+     * are UTC. Slicing the ISO string put the UTC time into a widget that
+     * labels it local, so a demo in Brussels showed every timestamp two hours
+     * early — and `fromInputValue` then read it back as local, so the two
+     * errors cancelled on a round trip and only the display was wrong.
+     */
+    if (inputType !== 'datetime-local') return value
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return value
+    const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000)
+    return local.toISOString().slice(0, 16)
   }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   // Anything else has no text widget. The JSON escape hatch is where it belongs,
@@ -188,10 +204,13 @@ export function SchemaForm({
   schema,
   value,
   onChange,
+  demoTools = false,
 }: {
   schema: JsonSchema | undefined
   value: Record<string, unknown>
   onChange: (next: Record<string, unknown>) => void
+  /** Show the sample-data button. A demo affordance, switched on by configuration. */
+  demoTools?: boolean
 }) {
   const [raw, setRaw] = useState<string | null>(null)
 
@@ -245,13 +264,31 @@ export function SchemaForm({
           }}
         />
       ))}
-      <button
-        type="button"
-        className="self-start text-xs text-slate-500 underline"
-        onClick={() => setRaw(JSON.stringify(value, null, 2))}
-      >
-        edit as JSON
-      </button>
+      <div className="flex items-center gap-3">
+        {demoTools && (
+          <button
+            type="button"
+            data-testid="quick-fill"
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+            /*
+             * Generated from the schema, never from a table of field names, so
+             * a sixth definition gets this for free. Values are merged over
+             * what is already there rather than replacing it, so a half-filled
+             * form keeps whatever somebody meant.
+             */
+            onClick={() => onChange(sampleObject(schema, new Date(), Math.random))}
+          >
+            Fill with sample data
+          </button>
+        )}
+        <button
+          type="button"
+          className="text-xs text-slate-500 underline"
+          onClick={() => setRaw(JSON.stringify(value, null, 2))}
+        >
+          edit as JSON
+        </button>
+      </div>
     </div>
   )
 }

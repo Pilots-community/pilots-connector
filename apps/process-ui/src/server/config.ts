@@ -40,6 +40,18 @@ export const ProcessUiConfig = z.strictObject({
    */
   cookiePrefix: z.string().regex(/^[a-z0-9][a-z0-9-]{0,31}$/),
   /**
+   * Show the demo affordances: today, the "fill with sample data" button.
+   *
+   * **A flag of its own, deliberately not keyed on `NODE_ENV`.** A deployed
+   * demo node runs `NODE_ENV=production` because it is a deployment, and would
+   * still want these; reading the build mode as "is this a real customer" is a
+   * conflation that gets more wrong the moment the demo leaves a laptop.
+   *
+   * Off unless asked for, like every other affordance here that would be a
+   * liability in front of the wrong audience.
+   */
+  demoTools: z.boolean(),
+  /**
    * A demo account created at boot, so `docker compose up` reaches a usable UI
    * without a sign-up flow. Absent in any deployment that matters.
    */
@@ -68,6 +80,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfi
     displayName: env['PILOTS_UI_NAME'] ?? 'Process UI',
     authSecret: env['PILOTS_UI_AUTH_SECRET'] ?? null,
     cookiePrefix: env['PILOTS_UI_COOKIE_PREFIX'] ?? 'pilots',
+    demoTools: ['1', 'true', 'yes', 'on'].includes(
+      (env['PILOTS_UI_DEMO_TOOLS'] ?? '').toLowerCase(),
+    ),
     seedUser:
       seedEmail === undefined || seedPassword === undefined
         ? null

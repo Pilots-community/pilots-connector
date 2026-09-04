@@ -135,6 +135,8 @@ export function registerRoutes(
       // So a demo with two UIs side by side is never ambiguous about which is
       // which, and so a support question has an answer.
       connector: config.connectorUrl,
+      // Whether to offer the demo affordances. Configuration, not a build mode.
+      demoTools: config.demoTools,
     })
   })
 
