@@ -142,10 +142,17 @@ against. NestJS stays, and this section's trigger is spent.
 | Build | **Vite** | admin UI, process UI |
 | Framework | **React** + **TypeScript** | both |
 | Styling | **Tailwind** + **shadcn/ui** | both |
-| Server state | **TanStack Query** | both |
+| Server state | **TanStack Query** | **process UI (installed)**; the admin UI still hand-rolls its fetches |
 | Routing | **TanStack Router** | process UI. The admin UI is small enough to need almost none. |
 | Process UI server | **Fastify** + **better-auth** | thin BFF: holds the API key, owns its own users, proxies via `packages/client` |
 | E2E | **Playwright** | `webServer` starts local processes; containers only for S4c |
+
+**On TanStack Query's arrival.** It was named here from the start and only installed during the
+2026-09-03 process-UI iteration, when the screens had to keep themselves current without disturbing an
+open form. That is the job it does: an interval, a refetch on focus, and cache invalidation by key,
+with the previous value held on screen so a revalidation never blanks a view. *When* to revalidate is
+not its business — that is a `ChangeFeed` port in `src/web/live/`, with polling and window-focus
+adapters today and a notification-driven nudge designed for.
 
 The process UI's BFF is deliberately the same server stack as the connector. A third party should be able
 to read it as *"this is how you integrate"* rather than *"this is a framework demo"*.

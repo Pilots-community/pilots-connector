@@ -10,7 +10,8 @@
  * It is also entirely replaceable. It holds no key, knows no peer, and speaks
  * only to its own BFF — stop this container and the connector will not notice.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   UiError,
@@ -19,12 +20,15 @@ import {
   type InstanceView,
   type Offering,
   type ProcessDefinition,
-  type SessionUser,
   type SignedEvent,
   type VerificationReport,
 } from './api.js'
 import { EventLog, VerificationBanner } from './components/EventLog.js'
 import { SchemaForm } from './components/SchemaForm.js'
+import { browserFocusTarget } from './live/browser-target.js'
+import { focusFeed, mergeFeeds, pollingFeed } from './live/change-feed.js'
+import { useLiveSync } from './live/useLiveSync.js'
+import { queries } from './queries.js'
 
 const button =
   'rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900'
@@ -463,46 +467,48 @@ function Detail({ id, onBack }: { id: string; onBack: () => void }) {
 // ── the shell ───────────────────────────────────────────────────────────────
 
 export function App() {
-  const [user, setUser] = useState<SessionUser | null>(null)
-  const [participant, setParticipant] = useState('Process UI')
-  // Our own DID, shown rather than merely used. Two of these UIs sit side by
-  // side in a demo, and "which organisation am I looking at" must never be a
-  // question anybody has to answer by checking the port number.
-  const [did, setDid] = useState<string | null>(null)
-  const [ready, setReady] = useState(false)
-  const [instances, setInstances] = useState<InstanceView[]>([])
+  const client = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<'processes' | 'start'>('processes')
 
+  /*
+   * Why the two feeds are built once, outside render.
+   *
+   * `useLiveSync` subscribes in an effect keyed on the feed. A feed rebuilt on
+   * every render would tear the subscription down and stand it up again each
+   * time, so the interval would never actually reach five seconds.
+   */
+  const feed = useMemo(() => mergeFeeds(pollingFeed(5_000), focusFeed(browserFocusTarget())), [])
+  useLiveSync(feed)
+
+  const session = useQuery(queries.session())
+  const user = session.data?.user ?? null
+  const participant = session.data?.participant ?? 'Process UI'
+  // Our own DID, shown rather than merely used. Two of these UIs sit side by
+  // side in a demo, and "which organisation am I looking at" must never be a
+  // question anybody has to answer by checking the port number.
+  const did = session.data?.did ?? null
+
+  const instanceList = useQuery({ ...queries.instances(), enabled: Boolean(user) })
+  const instances = instanceList.data ?? []
+
+  // The browser tab too: two tabs called "Pilots" is exactly the ambiguity this
+  // is meant to remove.
+  useEffect(() => {
+    if (session.data) document.title = `${session.data.participant} — Pilots`
+  }, [session.data])
+
   const refresh = useCallback(() => {
-    void api
-      .session()
-      .then((session) => {
-        setUser(session.user)
-        setParticipant(session.participant)
-        setDid(session.did)
-        // The browser tab too: two tabs called "Pilots" is exactly the ambiguity
-        // this is meant to remove.
-        document.title = `${session.participant} — Pilots`
-        setReady(true)
-        if (session.user) void api.instances().then(({ instances: list }) => setInstances(list))
-      })
-      .catch(() => {
-        /*
-         * The BFF is unreachable, or answered something unreadable.
-         *
-         * Without this the promise rejects, `ready` stays false and the app
-         * renders `null` — a blank page that never resolves and says nothing.
-         * A sign-in screen is both honest and actionable.
-         */
-        setUser(null)
-        setReady(true)
-      })
-  }, [])
+    void client.invalidateQueries()
+  }, [client])
 
-  useEffect(refresh, [refresh])
-
-  if (!ready) return null
+  /*
+   * `isPending` rather than "no data": a failed session call must reach the
+   * sign-in screen, not leave a blank page that never resolves. react-query
+   * settles into an error state, and an error here means "not signed in as far
+   * as this screen is concerned".
+   */
+  if (session.isPending) return null
   if (!user) return <SignIn participant={participant} did={did} onDone={refresh} />
 
   return (
