@@ -10,12 +10,17 @@
 import { Controller, Get, Inject, Param, Res } from '@nestjs/common'
 import type { FastifyReply } from 'fastify'
 
+import { CONFIG, type ConnectorConfig } from '../config/config.js'
+import { postureOf } from '../config/posture.js'
 import { ProblemException } from '../http/problem.js'
 import { IDENTITY, type Identity } from '../identity/identity.service.js'
 
 @Controller()
 export class WellKnownController {
-  constructor(@Inject(IDENTITY) private readonly identity: Identity) {}
+  constructor(
+    @Inject(IDENTITY) private readonly identity: Identity,
+    @Inject(CONFIG) private readonly config: ConnectorConfig,
+  ) {}
 
   @Get('.well-known/did.json')
   async didDocument(@Res({ passthrough: true }) reply: FastifyReply) {
@@ -39,8 +44,21 @@ export class WellKnownController {
     return this.identity.didDocument(participantId)
   }
 
+  /**
+   * Liveness, plus whether this node is configured for production.
+   *
+   * `productionReady: false` is the thing to alert on. The **count** is here
+   * and the **detail** is not: this endpoint is unauthenticated, and telling
+   * the internet exactly which weakening is in play would be a gift. An
+   * operator reads the specifics from `/api/admin/v1/status` or the boot log.
+   */
   @Get('healthz')
   health() {
-    return { status: 'ok' }
+    const posture = postureOf(this.config)
+    return {
+      status: 'ok',
+      productionReady: posture.productionReady,
+      warnings: posture.warnings.length,
+    }
   }
 }

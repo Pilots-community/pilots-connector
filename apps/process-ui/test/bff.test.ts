@@ -18,7 +18,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createAuth, type AuthService } from '../src/server/auth.js'
-import { loadConfig, ConfigError, type ProcessUiConfig } from '../src/server/config.js'
+import { loadConfig, postureOf, ConfigError, type ProcessUiConfig } from '../src/server/config.js'
 import { registerRoutes } from '../src/server/routes.js'
 
 const API_KEY = 'ak_01J0000000000000000000TEST.notarealsecret'
@@ -243,17 +243,12 @@ describe('configuration refuses what it should', () => {
     ).toThrow(ConfigError)
   })
 
-  it('will not seed a known password in production', () => {
-    expect(() =>
-      loadConfig({
-        PILOTS_CONNECTOR_URL: 'http://localhost:3000',
-        PILOTS_API_KEY: API_KEY,
-        NODE_ENV: 'production',
-        PILOTS_UI_SEED_EMAIL: 'alice@org-a.example',
-        PILOTS_UI_SEED_PASSWORD: 'correct-horse-battery',
-      }),
-    ).toThrow(/cannot be used with NODE_ENV=production/)
-  })
+  /*
+   * There is no longer a "refuses a seeded password under production" case.
+   * That guard read `NODE_ENV` as "is the audience real", which a deployed demo
+   * node contradicts — it runs `production` and still needs its demo login. The
+   * replacement is `postureOf`, tested below: the value is used and reported.
+   */
 })
 
 /**
@@ -309,5 +304,49 @@ describe('session cookies are scoped to this UI', () => {
     const setCookie = response.headers.get('set-cookie') ?? ''
     expect(setCookie).toContain('org-a.session_token')
     expect(setCookie).not.toContain('better-auth.session_token')
+  })
+})
+
+/**
+ * The UI reports its own posture too.
+ *
+ * The seeded demo account used to be refused under `NODE_ENV=production`, which
+ * meant a deployed demo node could not create the login it exists to
+ * demonstrate. It is used and reported instead.
+ */
+describe('configuration posture', () => {
+  const base = {
+    PILOTS_CONNECTOR_URL: 'http://localhost:3000',
+    PILOTS_API_KEY: API_KEY,
+    PILOTS_UI_COOKIE_PREFIX: 'org-a',
+    NODE_ENV: 'production' as const,
+  }
+
+  it('is production-ready when nothing is switched on', () => {
+    expect(postureOf(loadConfig(base))).toEqual({ productionReady: true, warnings: [] })
+  })
+
+  it('accepts a seeded account under production, and reports it', () => {
+    // The refusal this replaces is why a deployed demo node could not start.
+    const config = loadConfig({
+      ...base,
+      PILOTS_UI_SEED_EMAIL: 'alice@org-a.example',
+      PILOTS_UI_SEED_PASSWORD: 'correct-horse-battery',
+    })
+    expect(config.seedUser?.email).toBe('alice@org-a.example')
+
+    const posture = postureOf(config)
+    expect(posture.productionReady).toBe(false)
+    expect(posture.warnings.map((one) => one.setting)).toContain('PILOTS_UI_SEED_EMAIL')
+  })
+
+  it('reports the demo tools and a shared cookie name', () => {
+    const posture = postureOf(
+      loadConfig({ ...base, PILOTS_UI_COOKIE_PREFIX: 'pilots', PILOTS_UI_DEMO_TOOLS: 'true' }),
+    )
+    expect(posture.warnings.map((one) => one.setting).sort()).toEqual([
+      'PILOTS_UI_COOKIE_PREFIX',
+      'PILOTS_UI_DEMO_TOOLS',
+    ])
   })
 })

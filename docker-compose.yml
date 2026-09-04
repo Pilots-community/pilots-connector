@@ -48,9 +48,11 @@ services:
       PILOTS_PARTICIPANT_NAME: ${ORG_A_NAME:-Org A}
       PILOTS_BASE_URL: http://org-a:3000
       PILOTS_LOG_LEVEL: info
-      # This demo *is* development, and has to say so. The image defaults to
-      # NODE_ENV=production, and the connector refuses to start with
-      # PILOTS_DEV_DID_DIRECTORY under it — which is the point of that guard.
+      # `development` here changes log formatting and framework behaviour, and
+      # nothing else. It is **not** a feature gate: every affordance below has
+      # its own variable with a production-ready default, so a deployed demo
+      # node can run NODE_ENV=production and still be configured like this one.
+      # What such a node reports is `productionReady: false` on GET /healthz.
       NODE_ENV: development
       # Org A dials out and holds the line: `stream` inbound. It needs no route
       # in, no DNS entry and no certificate — the profile a one-truck haulier
@@ -62,21 +64,20 @@ services:
           "displayName":"Org B",
           "inbound":{"channel":"stream"},
           "outbound":{"channel":"stream"}}]
-      # Development only, and the connector refuses it under NODE_ENV=production.
       # The demo's DIDs do not resolve over DNS, so peer identity is resolved
       # through the configured base URL instead — which reduces the
       # domain-binding check to "an operator configured this". See
-      # docs/ARCHITECTURE.md §8.
+      # docs/ARCHITECTURE.md §8. Defaults to off; reported on /healthz when on.
       PILOTS_DEV_DID_DIRECTORY: 'true'
       # The key this participant's UI will present. **A name, never a value** —
       # it comes from `.env`, which `pnpm demo:env` generates and .gitignore
-      # excludes. Remotely the same variable comes from a secret manager, and the
-      # connector refuses this setting under NODE_ENV=production anyway.
+      # excludes. Remotely the same variable comes from a secret manager. Using
+      # it is allowed anywhere and always reported on /healthz.
       PILOTS_SEED_API_KEY: ${ORG_A_API_KEY:?run `pnpm demo:env` first}
       # The admin token an operator would otherwise read once from this
       # container's log. Safe to fix here because `/api/admin/v1` is never
       # meant to be reachable from outside this Docker network — see
-      # docs/ARCHITECTURE.md §4 — and refused under NODE_ENV=production anyway.
+      # docs/ARCHITECTURE.md §4. Reported on /healthz.
       PILOTS_SEED_ADMIN_TOKEN: ${ORG_A_ADMIN_TOKEN:?run `pnpm demo:env` first}
       # The signing key and the API-key pepper are generated on first boot into
       # the volume below. Neither appears here.
@@ -92,7 +93,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+          "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -130,7 +131,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://localhost:3000/.well-known/did.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+          "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -173,8 +174,8 @@ services:
       # A demo account, so `up` reaches a usable screen. Deliberately readable:
       # it is a login somebody has to type, and hiding it in `.env` would only
       # mean going to look it up. It grants access to nothing but this
-      # throwaway UI, and `loadConfig` refuses the whole seeding mechanism under
-      # NODE_ENV=production. Override from `.env` if you would rather.
+      # throwaway UI, and a UI configured this way reports itself as not
+      # production-ready on /healthz. Override from `.env` if you would rather.
       PILOTS_UI_SEED_EMAIL: ${ORG_A_UI_EMAIL:-alice@org-a.example}
       PILOTS_UI_SEED_PASSWORD: ${ORG_A_UI_PASSWORD:-OrgA_123}
     mem_limit: 512m

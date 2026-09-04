@@ -561,15 +561,41 @@ using a payment processor: the provider holds the key, and the answer is provide
 than architecture. `Signer` stays a plugin interface so a remote signer remains possible, but nothing
 is blocked on it.
 
+### 8.2 Configuration posture, and why `NODE_ENV` is not a feature gate
+
+Several settings here weaken something on purpose: a key or an admin token supplied by configuration,
+peer DIDs resolved through configured base URLs, connection requests accepted without an operator.
+They used to be **refused** under `NODE_ENV=production`, and that was a conflation worth naming.
+
+`NODE_ENV` says how the process was *built and behaves* — secure cookies, log formatting, framework
+optimisations. It does not say who is looking at the screen. **A demo node deployed to a development
+environment runs `NODE_ENV=production` because it is a deployment**, and refusing its configuration
+made it impossible to start — so the guard broke the exact case it was supposed to serve.
+
+The rule now:
+
+- **A value supplied by configuration is used.** Nothing is refused for being a demo convenience.
+- **Every affordance has its own environment variable, defaulting to the production-ready value.** An
+  unset environment is a safe environment; nothing has to be remembered.
+- **Weakenings are reported, not silent.** `postureOf` computes them, the connector logs each one at
+  boot with what it costs, and `GET /healthz` answers
+  `{ status, productionReady, warnings: <count> }` — unauthenticated, so a monitor needs no
+  credential, and alertable on `productionReady: false`.
+- **The public endpoint carries the count, not the names.** Telling anyone who asks *which* weakening
+  is in play would be a gift; `GET /api/admin/v1/status` carries the detail behind a session, and so
+  does the boot log.
+
+The process UI reports its own posture the same way, on its own `/healthz`.
+
 **The demo does not resolve DIDs over DNS**, and that is worth stating rather than glossing. Every DID
 in this repository is on the reserved `.example` TLD precisely so nothing here points at a real host,
 and `.example` resolves nowhere. So `docker compose up` sets `PILOTS_DEV_DID_DIRECTORY`, which
 resolves a peer's DID through the base URL an operator configured for it instead of through the URL
 the DID itself implies. That **reduces the domain-binding check to "our operator wrote this address
 down"** — the one property `did:web` was chosen for. Signatures, chains and every other check are
-unaffected. `loadConfig` refuses the flag under `NODE_ENV=production`, so the weakening cannot survive
-a deployment by being forgotten; a real deployment publishes a real `did.json` on a real domain and
-the check means what it says.
+unaffected. It defaults to off, so it cannot arrive by being forgotten, and a node running with it on reports
+`productionReady: false` — which is what an alert watches. A real deployment publishes a real
+`did.json` on a real domain and the check means what it says.
 
 ## 9. Connections
 

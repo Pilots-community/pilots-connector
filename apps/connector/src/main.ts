@@ -15,6 +15,7 @@ import { serveAdminUi } from './http/admin-ui.js'
 import { acceptRawBodies } from './http/raw-body.js'
 import { ProblemFilter } from './http/problem.filter.js'
 import { loadConfig } from './config/config.js'
+import { postureOf } from './config/posture.js'
 import { createRuntime } from './runtime.js'
 
 async function main(): Promise<void> {
@@ -85,17 +86,27 @@ async function main(): Promise<void> {
     runtime.log.warn(
       { adminToken: runtime.adminToken },
       runtime.adminTokenSeeded
-        ? 'admin bootstrap token set from PILOTS_SEED_ADMIN_TOKEN; development only, and it is already in your configuration.'
+        ? 'admin bootstrap token set from PILOTS_SEED_ADMIN_TOKEN; it is already in your configuration, and this node reports itself as not production-ready.'
         : // Shown once. It is stored only as an HMAC, so there is no way to print
           // it again — which is the point.
           'first boot: this is the admin token for /api/admin/v1. It is shown once and cannot be recovered.',
     )
   }
 
-  if (config.devDidDirectory) {
+  /*
+   * Say plainly whether this node is configured the way a production node
+   * should be. Each of these used to be a refusal under `NODE_ENV=production`,
+   * which made a deployed demo node impossible to start; a warning an operator
+   * can alert on is the honest replacement.
+   */
+  const posture = postureOf(config)
+  if (!posture.productionReady) {
+    for (const warning of posture.warnings) {
+      runtime.log.warn({ setting: warning.setting }, `${warning.setting}: ${warning.detail}`)
+    }
     runtime.log.warn(
-      {},
-      'PILOTS_DEV_DID_DIRECTORY is on: peer DIDs are resolved through their configured base URL instead of did:web, which reduces the domain-binding check to "an operator configured it". Development only.',
+      { productionReady: false, warnings: posture.warnings.map((one) => one.setting) },
+      `this node is NOT configured for production (${posture.warnings.length} setting(s)); GET /healthz reports the same`,
     )
   }
 

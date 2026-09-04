@@ -18,7 +18,7 @@ import fastifyStatic from '@fastify/static'
 import Fastify from 'fastify'
 
 import { createAuth } from './auth.js'
-import { loadConfig } from './config.js'
+import { loadConfig, postureOf } from './config.js'
 import { registerRoutes, toHeaders } from './routes.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -71,7 +71,17 @@ async function main(): Promise<void> {
 
   registerRoutes(fastify, config, auth)
 
-  fastify.get('/healthz', async () => ({ ok: true }))
+  /*
+   * Liveness, plus whether this UI is configured for production.
+   *
+   * `productionReady: false` is what an alert watches. The count is here and
+   * the detail is not: this endpoint is unauthenticated, and naming the
+   * weakening would be a gift. The boot log carries the specifics.
+   */
+  fastify.get('/healthz', async () => {
+    const posture = postureOf(config)
+    return { ok: true, productionReady: posture.productionReady, warnings: posture.warnings.length }
+  })
 
   // The built SPA, when there is one. `pnpm dev:web` serves it from Vite
   // instead, so a missing build is a development state rather than a failure.
@@ -83,6 +93,17 @@ async function main(): Promise<void> {
       // A single-page app: every other path is its router's business.
       return reply.sendFile('index.html')
     })
+  }
+
+  const posture = postureOf(config)
+  if (!posture.productionReady) {
+    for (const warning of posture.warnings) {
+      fastify.log.warn({ setting: warning.setting }, `${warning.setting}: ${warning.detail}`)
+    }
+    fastify.log.warn(
+      { productionReady: false, warnings: posture.warnings.map((one) => one.setting) },
+      `this UI is NOT configured for production (${posture.warnings.length} setting(s)); GET /healthz reports the same`,
+    )
   }
 
   await fastify.listen({ port: config.port, host: config.host })

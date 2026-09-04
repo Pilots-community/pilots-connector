@@ -131,9 +131,28 @@ replacement — the handshake works without it, and `s0-connect.test.ts` is what
 **Filling forms in a demo.** Every form carries a **Fill with sample data** button, generated from the
 definition's own JSON Schema rather than from a table of field names — so a container number is random
 but matches its pattern, a price clears its minimum, and a pickup window opens before it closes. Press
-it again for a different payload. It is switched on by `PILOTS_UI_DEMO_TOOLS`, **a flag of its own
-rather than a reading of `NODE_ENV`**: a deployed demo node runs `NODE_ENV=production` because it is a
-deployment and still wants the affordance. Off unless asked for; compose sets it for both UIs.
+it again for a different payload. It is switched on by `PILOTS_UI_DEMO_TOOLS`, one of several
+flags that each default to the production-ready value — see below.
+
+### Knowing whether a node is configured for production
+
+Every demo affordance — a seeded API key, a fixed admin token, the dev DID directory, auto-accepted
+peers, the demo tools, a seeded UI login — **is used when supplied and reported when used**. None of
+them is refused, because a demo node deployed to a dev environment runs `NODE_ENV=production` and
+would otherwise be unable to start.
+
+```bash
+curl -s http://localhost:3000/healthz
+```
+
+```json
+{ "status": "ok", "productionReady": false, "warnings": 3 }
+```
+
+`productionReady: false` is the thing to alert on. The count is public and the **names are not** —
+publishing which weakening is in play would be a gift — so the detail lives in the boot log and in
+`GET /api/admin/v1/status`. Leave everything unset and the same endpoint answers
+`"productionReady": true`.
 
 **Every credential above is a fixed value from `.env`**, not something to go find in a log —
 `PILOTS_SEED_ADMIN_TOKEN` and `PILOTS_UI_SEED_EMAIL`/`PILOTS_UI_SEED_PASSWORD` set them from

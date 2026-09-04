@@ -589,3 +589,32 @@ describe('an instance says whether it is over, and how', () => {
     expect(applied.json().instance.outcome).toBe('abandoned')
   })
 })
+
+/**
+ * `/healthz` is what an alert watches.
+ *
+ * Unauthenticated on purpose, so a monitor needs no credential — and for the
+ * same reason it carries the *count* of weakenings and not their names.
+ * Publishing "this node resolves peer DIDs from configuration" to anyone who
+ * asks would be a gift; the admin surface and the boot log have the detail.
+ */
+describe('a node says whether it is configured for production', () => {
+  it('reports liveness and posture without a credential', async () => {
+    const response = await testApp.app.inject({ method: 'GET', url: '/healthz' })
+    expect(response.statusCode).toBe(200)
+
+    const body = response.json()
+    expect(body.status).toBe('ok')
+    expect(typeof body.productionReady).toBe('boolean')
+    expect(typeof body.warnings).toBe('number')
+  })
+
+  it('never names the weakening on the public endpoint', async () => {
+    const body = await testApp.app
+      .inject({ method: 'GET', url: '/healthz' })
+      .then((one) => one.body)
+
+    expect(body).not.toContain('PILOTS_')
+    expect(body).not.toContain('did:web')
+  })
+})

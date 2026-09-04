@@ -105,15 +105,52 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProcessUiConfi
     )
   }
 
-  // A seeded account is a demo convenience and a production hazard, so it is
-  // refused rather than warned about — the same shape as the connector's
-  // dev-DID-directory guard.
-  if (parsed.data.seedUser && parsed.data.environment === 'production') {
-    throw new ConfigError(
-      'PILOTS_UI_SEED_EMAIL creates an account with a known password at boot. ' +
-        'It cannot be used with NODE_ENV=production.',
-    )
+  return parsed.data
+}
+
+export interface PostureWarning {
+  setting: string
+  detail: string
+}
+
+export interface Posture {
+  productionReady: boolean
+  warnings: PostureWarning[]
+}
+
+/**
+ * Whether this UI is configured the way a production one should be.
+ *
+ * The seeded account used to be **refused** under `NODE_ENV=production`, which
+ * conflated how the code was built with who is looking at it — and made a
+ * deployed demo node impossible to start. It is now used and reported: `/healthz`
+ * carries the boolean for an alert to watch, and the boot log carries the detail.
+ */
+export function postureOf(config: ProcessUiConfig): Posture {
+  const warnings: PostureWarning[] = []
+
+  if (config.seedUser) {
+    warnings.push({
+      setting: 'PILOTS_UI_SEED_EMAIL',
+      detail: `an account (${config.seedUser.email}) is created at boot with a password taken from configuration, so anyone who can read the environment can sign in`,
+    })
+  }
+  if (config.demoTools) {
+    warnings.push({
+      setting: 'PILOTS_UI_DEMO_TOOLS',
+      detail:
+        'demo affordances are shown, including a button that fills any form with generated sample data',
+    })
+  }
+  if (config.cookiePrefix === 'pilots') {
+    // Not a weakening on its own, but two UIs on one host that share a cookie
+    // name sign each other out — the bug this default exists to make visible.
+    warnings.push({
+      setting: 'PILOTS_UI_COOKIE_PREFIX',
+      detail:
+        'left at the default, so a second process UI on the same host would share this one’s session cookie and sign its users out',
+    })
   }
 
-  return parsed.data
+  return { productionReady: warnings.length === 0, warnings }
 }

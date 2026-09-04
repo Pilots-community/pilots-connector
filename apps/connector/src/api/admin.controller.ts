@@ -37,6 +37,7 @@ import {
 import { API_KEYS, ApiKeyService } from '../auth/api-key.tokens.js'
 import { AdminGuard, auditRequest, type AdminRequest } from '../auth/guards.js'
 import { CONFIG, type ConnectorConfig } from '../config/config.js'
+import { postureOf } from '../config/posture.js'
 import { DEFINITION_REGISTRY, type DefinitionRegistry } from '../definitions/definition-registry.js'
 import { ProblemException } from '../http/problem.js'
 import { IDENTITY, type Identity } from '../identity/identity.service.js'
@@ -285,6 +286,9 @@ export class AdminController {
         ephemeral: this.identity.report.ephemeral,
       },
       sessions: this.sessions.sessionCount,
+      // The detail behind `/healthz`'s boolean, for somebody who has already
+      // proved they operate this connector.
+      posture: postureOf(this.config),
     }
   }
 

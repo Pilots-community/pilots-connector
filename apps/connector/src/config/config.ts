@@ -85,7 +85,14 @@ export type SeededSubscription = z.infer<typeof SeededSubscription>
 export const ConnectorConfig = z.strictObject({
   port: z.int().min(0).max(65535),
   host: z.string().min(1),
-  /** `development` relaxes nothing that matters; it only changes log formatting. */
+  /**
+   * How the process runs, **not** who the audience is.
+   *
+   * It changes log formatting and framework behaviour, and nothing else. It is
+   * deliberately not a feature gate: every affordance has its own environment
+   * variable with a production-ready default, because a deployed demo node runs
+   * `production` and still needs its affordances. See `posture.ts`.
+   */
   environment: z.enum(['development', 'production', 'test']),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']),
   store: StoreConfig,
@@ -112,7 +119,9 @@ export const ConnectorConfig = z.strictObject({
    * **This weakens the domain-binding check to "an operator configured it"**,
    * which is the one property `did:web` was chosen for. It exists because the
    * demo runs on the reserved `.example` TLD, where nothing resolves publicly.
-   * `loadConfig` refuses to return a production config with it on.
+   *
+   * Defaults to **off**, so an unset environment is a safe one, and it is
+   * reported by `postureOf` whenever it is on.
    */
   devDidDirectory: z.boolean(),
   /** How often the delivery scan loops run. `0` disables them; tests drive the pumps by hand. */
@@ -120,24 +129,25 @@ export const ConnectorConfig = z.strictObject({
   /**
    * An API key whose value was decided outside the connector, registered at boot.
    *
-   * **Development only**, and refused under production config. The demo hands
-   * the same value to a connector and to its UI from one `.env` file — which is
-   * gitignored, so no credential is ever committed — and `docker compose up`
-   * reaches a working screen without a human minting anything first. In a real
-   * deployment an operator mints a key in the admin UI and the value arrives
-   * from a secret manager.
+   * A demo convenience: the same value reaches a connector and its UI from one
+   * gitignored `.env`, so `docker compose up` finds a working screen without a
+   * human minting anything first. In a real deployment an operator mints a key
+   * in the admin UI and the value arrives from a secret manager.
+   *
+   * **Used when supplied, never refused** — a deployed demo node needs it — and
+   * reported by `postureOf` so an operator can alert on it.
    */
   seedApiKey: z.union([z.string().min(1), z.null()]),
   /**
    * The admin bootstrap token, decided outside the connector.
    *
-   * **Development only**, and refused under production config — the same shape
-   * as `seedApiKey`, for the same reason: `/api/admin/v1` is meant to sit
-   * behind network-level access control rather than be its own perimeter, so a
-   * fixed, `.env`-visible value costs a real deployment nothing (see
-   * ARCHITECTURE.md §4). Without it the connector generates one at first boot
-   * and prints it once; with it, the demo can sign in without reading a
-   * container log first.
+   * The same shape as `seedApiKey`, for the same reason: `/api/admin/v1` is
+   * meant to sit behind network-level access control rather than be its own
+   * perimeter (see ARCHITECTURE.md §4). Without it the connector generates one
+   * at first boot and prints it once; with it, a demo signs in without reading
+   * a container log.
+   *
+   * **Used when supplied, never refused**, and reported by `postureOf`.
    */
   seedAdminToken: z.union([z.string().min(1), z.null()]),
   /**
@@ -281,32 +291,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
     }
   }
 
-  // The one config combination that is refused rather than warned about. A
-  // deployment that resolves peer identity from its own configuration has given
-  // up the property `did:web` was chosen for, and that must not be reachable by
-  // forgetting to unset a variable.
-  if (config.seedApiKey !== null && config.environment === 'production') {
-    throw new ConfigError(
-      'PILOTS_SEED_API_KEY registers an API key whose value was decided elsewhere. It is a demo ' +
-        'convenience and cannot be used with NODE_ENV=production; mint a key in the admin UI and ' +
-        'inject the value instead.',
-    )
-  }
-
-  if (config.seedAdminToken !== null && config.environment === 'production') {
-    throw new ConfigError(
-      'PILOTS_SEED_ADMIN_TOKEN sets the admin bootstrap token from configuration. It is a demo ' +
-        'convenience and cannot be used with NODE_ENV=production; let the connector generate one ' +
-        'and read it from the log instead.',
-    )
-  }
-
-  if (config.devDidDirectory && config.environment === 'production') {
-    throw new ConfigError(
-      'PILOTS_DEV_DID_DIRECTORY resolves peer DIDs from configuration instead of did:web, ' +
-        'which defeats the domain-binding check. It cannot be used with NODE_ENV=production.',
-    )
-  }
+  /*
+   * Nothing here is refused for being a demo convenience.
+   *
+   * These settings used to throw under `NODE_ENV=production`, which conflated
+   * "how the code was built" with "who the audience is" and made a deployed
+   * demo node impossible to start. A value supplied by configuration is now
+   * used and reported instead — see `posture.ts`, which is logged at boot and
+   * exposed for monitoring.
+   */
 
   return config
 }
