@@ -52,6 +52,7 @@ import type {
   DefinitionRegistry,
   RegisteredDefinition,
 } from '../definitions/definition-registry.js'
+import type { DefinitionAvailability } from '../definitions/definition.service.js'
 import type { InstanceDocument, Store } from '../store/store.js'
 import type { EventWrite } from '../store/types.js'
 
@@ -189,6 +190,25 @@ export class InstanceService {
      * second chance to forget one.
      */
     private readonly observers: readonly WriteObserver[] = [],
+    /**
+     * Make a definition we do not hold usable, or say why not. Only the
+     * peer-facing write path needs it — a local caller cannot name a definition
+     * this connector has never registered.
+     *
+     * Defaults to "whatever the registry already knows", so every existing test
+     * and the single-party profile behave exactly as before.
+     */
+    private readonly acquireDefinition: (
+      participant: ParticipantConfig,
+      peerDid: string,
+      ref: string,
+      expectedHash: string,
+    ) => Promise<DefinitionAvailability> = (_participant, _peerDid, ref) =>
+      Promise.resolve(
+        this.definitions.has(ref)
+          ? { status: 'usable' }
+          : { status: 'unavailable', detail: `this connector does not hold ${ref}` },
+      ),
   ) {}
 
   /** Fan a committed write out to everything that reacts to writes. */
@@ -510,6 +530,33 @@ export class InstanceService {
     creating: boolean
   }): Promise<ServiceResult<WriteOutcome>> {
     const { identity, event } = input
+
+    /*
+     * The home node may be the side that has never seen the definition.
+     *
+     * A peer authors a process and starts an instance we host: the create is
+     * relayed here, and refusing it outright would mean nobody could ever run a
+     * process they did not ship with. So the document is fetched from the peer,
+     * checked against the hash the genesis pins, and held for an operator —
+     * and the write is deferred rather than denied, because it will succeed
+     * once they accept.
+     */
+    const availability = await this.acquireDefinition(
+      input.home,
+      input.actorDid,
+      identity.definition,
+      identity.definitionHash,
+    )
+    if (availability.status === 'pending') {
+      return fail(
+        Problem.definitionPending,
+        `${availability.ref} is held here awaiting an operator's decision; retry after it is accepted`,
+      )
+    }
+    if (availability.status !== 'usable') {
+      return fail(Problem.definitionInvalid, availability.detail)
+    }
+
     const registered = this.definitions.get(identity.definition)
     if (!registered) {
       return fail(Problem.definitionInvalid, `this connector does not hold ${identity.definition}`)

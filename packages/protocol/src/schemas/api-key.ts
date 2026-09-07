@@ -23,6 +23,16 @@ export const Scope = z.enum([
   'attachments:write',
   'connections:read',
   'definitions:read',
+  /**
+   * Publish a process definition.
+   *
+   * Deliberately on the integration surface rather than behind an admin
+   * session: anything our own UI can do, a third party's UI or an integrator's
+   * build pipeline must be able to do over the same surface. Accepting a
+   * *peer's* definition is a different act and stays on the admin surface,
+   * because it is a trust decision rather than a process one.
+   */
+  'definitions:write',
 ])
 export type Scope = z.infer<typeof Scope>
 
@@ -56,6 +66,8 @@ export const REQUIRED_SCOPES = {
   'attachments.write': 'attachments:write',
   'connections.read': 'connections:read',
   'definitions.read': 'definitions:read',
+  'definitions.lint': 'definitions:write',
+  'definitions.publish': 'definitions:write',
   'offerings.read': 'definitions:read',
 } as const satisfies Record<string, Scope>
 

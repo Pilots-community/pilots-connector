@@ -152,6 +152,7 @@ export {
 } from './engine/reachability.js'
 
 // — validation and linting —
+export { diffDefinitions, type DefinitionChange, type DefinitionChangeKind } from './lint/diff.js'
 export {
   createSchemaValidator,
   defaultSchemaValidator,

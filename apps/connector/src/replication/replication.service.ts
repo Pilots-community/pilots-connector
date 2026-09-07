@@ -39,6 +39,7 @@ import {
 
 import type { ParticipantConfig } from '../config/config.js'
 import type { DefinitionRegistry } from '../definitions/definition-registry.js'
+import type { DefinitionAvailability } from '../definitions/definition.service.js'
 import type { LogService } from '../logging/log.service.js'
 import type { WriteNotice } from '../notifications/notification.service.js'
 import type { Store } from '../store/store.js'
@@ -67,6 +68,19 @@ export class ReplicationService {
     private readonly now: () => string,
     private readonly localParticipants: () => readonly ParticipantConfig[],
     private readonly onWrite: (notice: WriteNotice) => Promise<void>,
+    /**
+     * Make a definition we do not hold usable, or say why not.
+     *
+     * A callback rather than the definition service itself: replication has no
+     * business knowing how a definition is fetched or who decides about it, and
+     * a test can answer this with a literal.
+     */
+    private readonly acquireDefinition: (
+      participant: ParticipantConfig,
+      peerDid: string,
+      ref: string,
+      expectedHash: string,
+    ) => Promise<DefinitionAvailability>,
   ) {}
 
   /** Apply a whole batch, one instance at a time. */
@@ -119,6 +133,44 @@ export class ReplicationService {
         Problem.notAParticipant,
         `${peerDid} is not a participant in this instance and may not replicate it`,
       )
+    }
+
+    /*
+     * A definition we have never seen.
+     *
+     * This used to be a flat refusal, which made "author a process and run it
+     * with a peer" impossible without an operator installing the file on both
+     * sides. Now it is fetched from the peer, checked against the hash the
+     * genesis pins, and held for an operator to accept — and the delivery is
+     * *deferred* rather than failed, because it will succeed once they do.
+     */
+    const availability = await this.acquireDefinition(
+      participant,
+      peerDid,
+      identity.definition,
+      identity.definitionHash,
+    )
+    if (availability.status === 'pending') {
+      /*
+       * Not `refuse`: nothing was denied, and the sender retries on a schedule,
+       * so an audit entry per attempt would bury the log in a normal wait.
+       */
+      this.log.info(
+        { instance: identity.id, definition: availability.ref, peer: peerDid },
+        'holding a delivery until an operator decides about this definition',
+      )
+      return {
+        ok: false,
+        errors: [
+          protocolError(
+            Problem.definitionPending,
+            `${availability.ref} is held here awaiting an operator's decision; retry after it is accepted`,
+          ),
+        ],
+      }
+    }
+    if (availability.status !== 'usable') {
+      return this.refuse(participant, identity.id, Problem.definitionInvalid, availability.detail)
     }
 
     const registered = this.definitions.get(identity.definition)

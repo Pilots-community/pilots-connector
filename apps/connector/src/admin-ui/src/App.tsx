@@ -17,8 +17,10 @@ import {
   storedSession,
   type ApiKey,
   type AuditEntry,
+  type DefinitionChange,
   type DefinitionSummary,
   type Offering,
+  type PendingDefinition,
   type Connection,
   type Participant,
   type Status,
@@ -26,11 +28,13 @@ import {
   type TrustedPeer,
 } from './api.js'
 
-type Tab = 'overview' | 'connections' | 'keys' | 'audit' | 'subscriptions' | 'offerings'
+type Tab =
+  'overview' | 'connections' | 'definitions' | 'keys' | 'audit' | 'subscriptions' | 'offerings'
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'connections', label: 'Connections' },
+  { id: 'definitions', label: 'Processes' },
   { id: 'keys', label: 'API keys' },
   { id: 'audit', label: 'Audit log' },
   { id: 'subscriptions', label: 'Notifications' },
@@ -63,12 +67,15 @@ function Button({
   variant = 'primary',
   type = 'button',
   disabled,
+  testId,
 }: {
   children: React.ReactNode
   onClick?: () => void
   variant?: 'primary' | 'ghost' | 'danger'
   type?: 'button' | 'submit'
   disabled?: boolean
+  /** For the end-to-end suite, which drives this UI as an operator would. */
+  testId?: string
 }) {
   const styles = {
     primary: 'bg-slate-900 text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900',
@@ -82,6 +89,7 @@ function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      {...(testId === undefined ? {} : { 'data-testid': testId })}
       className={`rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-40 ${styles}`}
     >
       {children}
@@ -241,6 +249,7 @@ export function App() {
         {tab === 'subscriptions' && (
           <Subscriptions session={session} participantId={participantId} />
         )}
+        {tab === 'definitions' && <Definitions session={session} participantId={participantId} />}
         {tab === 'offerings' && <Offerings session={session} participantId={participantId} />}
       </main>
     </div>
@@ -838,15 +847,201 @@ function ConnectionStatus({ status }: { status: Connection['status'] }) {
   )
 }
 
+/**
+ * Processes this connector holds, and the ones a peer has asked it to run.
+ *
+ * Adopting somebody else's process is a **trust decision**, which is why it
+ * lives on this surface next to connections and trusted peers rather than in
+ * the process UI. It is decided once per definition: accept it and every later
+ * instance under the same ref runs without asking anybody again.
+ */
+function Definitions({ session, participantId }: { session: string; participantId: string }) {
+  const [held, setHeld] = useState<DefinitionSummary[]>([])
+  const [pending, setPending] = useState<PendingDefinition[]>([])
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const reload = useCallback(() => {
+    void api.definitions(session).then(({ definitions }) => setHeld(definitions))
+    if (participantId) {
+      void api
+        .pendingDefinitions(session, participantId)
+        .then(({ pending: list }) => setPending(list))
+        .catch(() => setPending([]))
+    }
+  }, [session, participantId])
+
+  useEffect(reload, [reload])
+
+  const decide = (ref: string, decision: 'accept' | 'reject'): void => {
+    setBusy(ref)
+    setError(null)
+    void api
+      .decideDefinition(session, participantId, ref, decision)
+      .then(() => reload())
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(null))
+  }
+
+  return (
+    <>
+      <Card title="Awaiting a decision">
+        <p className="mb-3 text-xs text-slate-500">
+          A peer has started a process under a definition this connector had never seen. It was
+          fetched from them and checked against the hash their events are signed against — nothing
+          runs under it until you accept it. The decision is about the <em>definition</em>: accept
+          once and every later instance under it proceeds without asking.
+        </p>
+
+        {error !== null && <p className="mb-3 text-xs text-rose-600">{error}</p>}
+
+        {pending.length === 0 ? (
+          <p className="text-sm text-slate-500">Nothing is waiting.</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {pending.map((entry) => (
+              <li
+                key={entry.document.ref}
+                data-testid="pending-definition"
+                className="rounded-md border border-amber-300 p-3 dark:border-amber-800"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span>
+                    <span className="block font-mono text-sm">{entry.document.ref}</span>
+                    <span className="block text-xs text-slate-500">
+                      from {entry.document.adoption?.peerDid ?? 'a peer'}
+                    </span>
+                  </span>
+                  <span className="flex gap-2">
+                    <Button
+                      testId="accept"
+                      disabled={busy === entry.document.ref}
+                      onClick={() => decide(entry.document.ref, 'accept')}
+                    >
+                      Accept
+                    </Button>
+                    <Button
+                      variant="danger"
+                      testId="reject"
+                      disabled={busy === entry.document.ref}
+                      onClick={() => decide(entry.document.ref, 'reject')}
+                    >
+                      Reject
+                    </Button>
+                  </span>
+                </div>
+
+                {entry.diffAgainst === null ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Nothing to compare against — this is the first version of this process you have
+                    been asked about.
+                  </p>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-xs text-slate-500">
+                      What changed since <span className="font-mono">{entry.diffAgainst}</span>,
+                      which you already accepted:
+                    </p>
+                    <ul className="mt-1 flex flex-col gap-1 text-xs">
+                      {entry.changes.length === 0 ? (
+                        <li className="text-slate-500">
+                          Nothing structural — only fields this comparison does not track.
+                        </li>
+                      ) : (
+                        entry.changes.map((change: DefinitionChange) => (
+                          <li key={`${change.kind}-${change.id}`}>
+                            <span
+                              className={
+                                change.change === 'removed'
+                                  ? 'font-mono text-rose-600'
+                                  : change.change === 'added'
+                                    ? 'font-mono text-emerald-700'
+                                    : 'font-mono text-amber-700'
+                              }
+                            >
+                              {change.change}
+                            </span>{' '}
+                            {change.detail}
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                {entry.warnings.length > 0 && (
+                  <ul className="mt-2 flex flex-col gap-1 text-xs text-amber-700 dark:text-amber-400">
+                    {entry.warnings.map((warning: string) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                )}
+
+                <button
+                  type="button"
+                  className="mt-2 text-xs text-slate-500 underline"
+                  onClick={() =>
+                    setExpanded(expanded === entry.document.ref ? null : entry.document.ref)
+                  }
+                >
+                  {expanded === entry.document.ref ? 'Hide the document' : 'Read the document'}
+                </button>
+                {expanded === entry.document.ref && (
+                  <pre className="mt-2 max-h-64 overflow-auto rounded bg-slate-50 p-2 text-[11px] dark:bg-slate-900">
+                    {JSON.stringify(entry.document.raw, null, 2)}
+                  </pre>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card title="Processes this connector holds">
+        <ul className="flex flex-col gap-2">
+          {held.map((definition) => (
+            <li
+              key={definition.ref}
+              className="rounded-md border border-slate-200 p-3 text-xs dark:border-slate-700"
+            >
+              <span className="block font-mono text-sm">{definition.ref}</span>
+              <span className="block text-slate-500">
+                {definition.title} · hosted by {definition.hostedBy} · roles{' '}
+                {definition.roles.join(', ')}
+              </span>
+              {definition.warnings.length > 0 && (
+                <ul className="mt-1 flex flex-col gap-1 text-amber-700 dark:text-amber-400">
+                  {definition.warnings.map((warning) => (
+                    <li key={`${warning.code}-${warning.path ?? ''}`}>
+                      {warning.code}: {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </>
+  )
+}
+
 function Offerings({ session, participantId }: { session: string; participantId: string }) {
   const [offerings, setOfferings] = useState<Offering[]>([])
   const [definitions, setDefinitions] = useState<DefinitionSummary[]>([])
+  /*
+   * Nothing here names a domain. The id and title are derived from the service
+   * definition this connector actually holds, which is both neutral and more
+   * useful than a fixed example — the previous placeholder produced offerings
+   * whose title had nothing to do with the definitions they pointed at.
+   */
   const [form, setForm] = useState({
-    id: 'urn:offering:example:container-weighing',
-    title: 'Container weighing',
+    id: '',
+    title: '',
     quotationDefinition: '',
     serviceDefinition: '',
-    price: '45',
+    price: '',
   })
 
   const reload = useCallback(() => {
@@ -859,15 +1054,25 @@ function Offerings({ session, participantId }: { session: string; participantId:
     reload()
     void api.definitions(session).then(({ definitions: list }) => {
       setDefinitions(list)
-      setForm((current) => ({
-        ...current,
-        quotationDefinition:
-          current.quotationDefinition || (list.find((d) => d.kind === 'quotation')?.ref ?? ''),
-        serviceDefinition:
-          current.serviceDefinition || (list.find((d) => d.kind === 'service')?.ref ?? ''),
-      }))
+      setForm((current) => {
+        const quotation = list.find((one) => one.kind === 'quotation')
+        const service = list.find((one) => one.kind === 'service')
+        return {
+          ...current,
+          quotationDefinition: current.quotationDefinition || (quotation?.ref ?? ''),
+          serviceDefinition: current.serviceDefinition || (service?.ref ?? ''),
+          // Named after the process on offer, not after an example someone
+          // shipped. An operator can still change both.
+          title: current.title || (service?.title ?? ''),
+          id:
+            current.id ||
+            (service && participantId
+              ? `urn:offering:${participantId}:${service.ref.split('@')[0] ?? ''}`
+              : ''),
+        }
+      })
     })
-  }, [reload, session])
+  }, [reload, session, participantId])
 
   return (
     <>

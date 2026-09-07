@@ -212,6 +212,73 @@ export function runStoreConformance(name: string, context: ConformanceContext): 
         )
       })
 
+      /*
+       * Definitions are the newest collection and the one whose documents are
+       * the largest — a whole process document per row. Held to the same
+       * contract as everything else so the adapters cannot diverge on it.
+       */
+      it('round-trips a definition, raw document and all', async () => {
+        await store.definitions.insert({
+          id: 'p@1.0.0',
+          participantId: ORG_A,
+          ref: 'p@1.0.0',
+          definitionId: 'p',
+          version: '1.0.0',
+          contentHash: `sha256:${'c'.repeat(64)}`,
+          raw: { id: 'p', version: '1.0.0', states: [{ id: 'START' }] },
+          origin: 'local',
+          adoption: null,
+          createdAt: AT,
+        })
+
+        const found = await store.definitions.get(ORG_A, 'p@1.0.0')
+        expect(found?.origin).toBe('local')
+        // The raw document must survive intact: it is what the content hash
+        // covers, and a peer adopting it checks the bytes.
+        expect(found?.raw).toEqual({ id: 'p', version: '1.0.0', states: [{ id: 'START' }] })
+      })
+
+      it('queries definitions by adoption status, which is how pending ones are found', async () => {
+        const base = {
+          participantId: ORG_A,
+          definitionId: 'q',
+          contentHash: `sha256:${'d'.repeat(64)}`,
+          raw: {},
+          origin: 'peer' as const,
+          createdAt: AT,
+        }
+        await store.definitions.insert({
+          ...base,
+          id: 'q@1.0.0',
+          ref: 'q@1.0.0',
+          version: '1.0.0',
+          adoption: {
+            status: 'pending',
+            peerDid: 'did:web:org-b.example',
+            decidedAt: null,
+            decidedBy: null,
+            reason: null,
+          },
+        })
+        await store.definitions.insert({
+          ...base,
+          id: 'q@0.9.0',
+          ref: 'q@0.9.0',
+          version: '0.9.0',
+          adoption: {
+            status: 'accepted',
+            peerDid: 'did:web:org-b.example',
+            decidedAt: AT,
+            decidedBy: 'admin',
+            reason: null,
+          },
+        })
+
+        const held = await store.definitions.find(ORG_A)
+        const pending = held.filter((one) => one.adoption?.status === 'pending')
+        expect(pending.map((one) => one.ref)).toEqual(['q@1.0.0'])
+      })
+
       it('finds an API key by id alone, because an inbound request has nothing else', async () => {
         await store.apiKeys.insert(key('ak_00000000000000000000000002', ORG_B))
         const found = await store.findApiKeyById('ak_00000000000000000000000002')

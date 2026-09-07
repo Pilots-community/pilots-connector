@@ -75,7 +75,7 @@ export const DataPath = z
   .string()
   .regex(
     /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/,
-    'expected a dotted path into the data document, e.g. grossMass.value',
+    'expected a dotted path into the data document, e.g. total.amount',
   )
 
 /** An ISO 8601 duration restricted to the subset a `deadline` may use. */

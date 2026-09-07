@@ -34,7 +34,8 @@
           "attachments:read",
           "attachments:write",
           "connections:read",
-          "definitions:read"
+          "definitions:read",
+          "definitions:write"
         ]
       }
     },

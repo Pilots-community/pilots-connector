@@ -145,6 +145,7 @@ export class ConnectionService {
       inbound: input.delivery,
       outbound: PENDING_DELIVERY,
       lastError: null,
+      waitingOn: null,
       deliveryCursor: null,
       receiveCursor: null,
       createdAt: now,
@@ -271,6 +272,7 @@ export class ConnectionService {
       outbound: body.delivery,
       inbound: PENDING_DELIVERY,
       lastError: null,
+      waitingOn: null,
       deliveryCursor: null,
       receiveCursor: null,
       createdAt: now,
@@ -419,6 +421,7 @@ export class ConnectionService {
       status: 'ACTIVE',
       outbound: delivery,
       lastError: null,
+      waitingOn: null,
     })
     await this.audit(
       participant.id,
@@ -494,6 +497,7 @@ export class ConnectionService {
       inbound: seedInput.inbound,
       outbound: seedInput.outbound,
       lastError: null,
+      waitingOn: null,
       deliveryCursor: null,
       receiveCursor: null,
       createdAt: now,

@@ -284,6 +284,52 @@ Two properties matter more than they look:
   immediately — it is how an agreed quotation starts the service execution waiting behind it — and it
   generalises to linking genuinely separate processes later.
 
+#### 5.1.1 Where definitions come from, and who agrees to them
+
+A definition is not a file the operator installs. It is a **store record**, content-addressed and
+immutable, and the boot directory is only a seed — a definition read from disk and one published at
+runtime are the same kind of record afterwards.
+
+**Authoring is an ordinary integration act.** `POST /api/local/v1/definitions` publishes one behind a
+`definitions:write` scope, and `POST /api/local/v1/definitions/lint` validates a candidate without
+storing anything — which is what an editor calls on every keystroke. It is on the integration surface
+rather than behind an admin session on purpose: anything our own UI can do, a third party's UI or an
+integrator's pipeline must be able to do the same way. A published definition never changes; the same
+bytes again is a no-op, and different bytes under one `id@version` is a **conflict**, because a version
+is an identity that instances are pinned to and peers adopt by hash.
+
+**Adopting somebody else's is a trust decision**, and it is decided once per definition. When a peer's
+delivery names a definition this connector has never seen, the connector fetches it over
+`GET /api/peer/v1/definitions/{ref}`, checks the bytes against the `definitionHash` the instance's
+genesis pins, lints it, and holds it *pending*. An operator accepts or rejects it on
+`/api/admin/v1/definitions/pending`, seeing a structural diff against the version they last accepted —
+because the question they are answering is "what changed since the one I agreed to", which a text diff
+answers badly. Every later instance under that ref proceeds without asking.
+
+A pending adoption is a **wait, not a fault**. The peer is not broken; a person has been asked a
+question. So the connection stays `ACTIVE` and carries a `waitingOn` note, nothing is written to the
+audit log per retry, and — on the `stream` channel — the line is held open rather than dropped. Which
+side learns about the wait depends on the channel, and that asymmetry is real: on `webhook` the sender
+reads the 409, and on `stream` the receiver dialled out and is the one applying, so the sender is told
+nothing.
+
+The decisions themselves (`definition.accept`, `definition.reject`) are audited, because they produce
+no event and would otherwise leave no record that anyone agreed to run somebody else's process here.
+
+#### 5.1.2 A valid definition can still yield an unrunnable instance
+
+`links` are declared per definition but **anchored per instance**: relation `quotation` resolves through
+`instance.quotationId`. So a link-fired transition — `by: []`, fireable only by the runtime — is
+walkable only for an instance that has that relation set.
+
+`container-transport` is the case. It is coherent: it declares the link that fires `startExecution`.
+But an instance created with no `quotationId` can reach nothing but `CANCELLED`, and since the relation
+lives in the immutable genesis it can never be supplied later. So the connector walks the definition at
+creation across only the edges *something can fire for this instance*, and refuses when no `fulfilled`
+state is reachable — `urn:pilots:problem:instance-unfulfillable`, naming the relation that would unlock
+it. The same computation, run with nothing anchored, answers "can this be started on its own", which is
+what `startableStandalone` on the definitions listing reports so a client never offers a dead end.
+
 ### 5.2 Instance
 
 ```jsonc
@@ -330,7 +376,11 @@ quotation reaches `AGREED`.
   instance from a signed event in another. A `by: []` transition is one no participant may invoke, so
   without this it would be the single place a host could invent history unchallenged. A deadline-fired
   transition carries `null`; nothing signed the passing of time.
-- `genesis` commits to the instance's fixed identity — its definition, kind and participants map.
+- `genesis` commits to the instance's fixed identity — its definition **and that definition's content
+  hash**, its kind, and its participants map. The hash is the load-bearing half: pinning `id@version`
+  alone means two connectors can hold different documents under one ref and each believe the other
+  agreed, which was invisible while every connector mounted the same directory and became real the
+  moment definitions could be authored at runtime and fetched from a peer.
   Those fields are what authority is judged against and they do not live in the log, so they travel
   beside it; without this a replica would have to believe the sender about who the counterparty is.
   It is on every event, so an incremental delivery binds identity as well as a full replay does.

@@ -35,7 +35,13 @@ export function Offerings({ onStart }: { onStart: (offering: Offering) => void }
                 <span className="block truncate text-sm font-medium">{offering.title}</span>
                 <span className="block truncate text-xs text-slate-500">
                   {offering.price ? `${offering.price.value} ${offering.price.currency} · ` : ''}
-                  {offering.serviceDefinition}
+                  {/*
+                    The quotation, because that is what a consumer instantiates
+                    first. Naming the service definition here was misleading: it
+                    is the thing the quotation *authorises*, and it cannot be
+                    started on its own.
+                  */}
+                  {offering.quotationDefinition} → {offering.serviceDefinition}
                 </span>
               </span>
               <button

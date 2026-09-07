@@ -189,6 +189,37 @@ Because the triggering event is signed and chained, a cross-process advance is *
 instance can show exactly why it moved. This construct earns itself immediately by starting a service
 instance when its quotation is agreed, and it generalises to linking genuinely independent processes.
 
+## 2.1 What the linter checks that a schema cannot
+
+A definition is agreed once between companies and then executed identically everywhere, so the checks
+are deliberately unsubtle: one that fails does not load. Most of the rules are the obvious ones —
+undefined roles and states, duplicate ids, dangling references, deadline coherence, JSON Schema
+validity of `data`, `patch` and `guards`. Four are worth explaining, because they catch a class of
+mistake that looks fine until somebody tries to run the process.
+
+| Code | Severity | What it means |
+|---|---|---|
+| `no-fulfilled-path` | error | No state with `outcome: "fulfilled"` is reachable from `initialState`. The process can never succeed. |
+| `no-fireable-exit` | error | A reachable non-terminal state that **nothing** can leave: no transition out of it names a role in `by`, is `auto`, is fired by a link, or has a deadline arming in it. |
+| `starts-link-dependent` | warning | Correct, but not startable on its own — every route to fulfilment crosses a transition only a linked instance can fire. |
+| `unfulfillable-state` | warning | Reachable, and no fulfilled ending is reachable from it. Legitimate (a dispute that can only end badly), but worth saying out loud. |
+
+There was already a rule that looked like the first of those:
+
+> `dead-end-state` — no path to any terminal state.
+
+It asks about *an* ending, not a *good* one. Every shipped definition has `cancel` with `from: ["*"]`
+to a terminal `CANCELLED`, so every state reaches a terminal state trivially and the rule could
+essentially never fire. That is why a process with no way to succeed used to lint clean.
+
+**Every diagnostic carries a JSON Pointer** into the document, and the graph rules emit one diagnostic
+per offending state rather than one listing them all — so an editor can highlight exactly the node at
+fault. `pnpm lint:definitions` groups them back together for reading.
+
+`container-transport` and `container-transport-with-terminal` both raise `starts-link-dependent`, which
+is correct: they are contracted by a quotation, and the connector refuses an instance created without
+one. See [ARCHITECTURE.md §5.1.2](ARCHITECTURE.md#512-a-valid-definition-can-still-yield-an-unrunnable-instance).
+
 ## 3. Available definitions
 
 | File | Kind | Roles | Used by |

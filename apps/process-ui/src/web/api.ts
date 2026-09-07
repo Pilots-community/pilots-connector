@@ -140,6 +140,33 @@ export interface DefinitionSummary {
   title: string
   kind: 'quotation' | 'service'
   contentHash: string
+  /**
+   * Whether an instance under it can reach a fulfilled state with no relation
+   * anchored at creation.
+   *
+   * `false` means the process is contracted by another one — every route to
+   * success crosses a transition a link fires — so starting it on its own is
+   * refused. Offer it accordingly rather than letting somebody walk into a
+   * process whose only remaining action is cancel.
+   */
+  startableStandalone: boolean
+  /** What would make it startable. Empty when it already is. */
+  requiresRelations: string[]
+}
+
+export interface DefinitionDiagnostic {
+  severity: 'error' | 'warning'
+  code: string
+  message: string
+  /** A JSON Pointer into the document, so an editor can point at the node. */
+  path?: string
+}
+
+export interface DefinitionLintResult {
+  ok: boolean
+  diagnostics: DefinitionDiagnostic[]
+  ref?: string
+  startableStandalone?: boolean
 }
 
 export interface Offering {
@@ -210,6 +237,24 @@ export const api = {
 
   applyTransition: (id: string, body: Record<string, unknown>) =>
     request<{ instance: InstanceView }>(`/api/ui/instances/${encodeURIComponent(id)}/transitions`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  lintDefinition: (definition: Record<string, unknown>) =>
+    request<DefinitionLintResult>('/api/ui/definitions/lint', {
+      method: 'POST',
+      body: JSON.stringify({ definition }),
+    }),
+
+  publishDefinition: (definition: Record<string, unknown>) =>
+    request<{ ref: string; created: boolean; warnings: DefinitionDiagnostic[] }>(
+      '/api/ui/definitions',
+      { method: 'POST', body: JSON.stringify({ definition }) },
+    ),
+
+  startFromOffering: (body: Record<string, unknown>) =>
+    request<{ quotation: InstanceView; service: InstanceView }>('/api/ui/offerings/start', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

@@ -11,13 +11,20 @@ This repo is a **clean slate** — ignore the sibling directories (`../pilots-da
 `../pilots-process-service`, etc.) and the parent's earlier documentation. They describe an abandoned
 approach.
 
-Current status: **M6 complete** — measured and hardened. Every topology is started cold and counted by
+Current status: **M6.5 complete** — an open foundation. A participant **writes their own process in the
+UI or as JSON**, publishes it over the integration surface, and runs it with a counterparty who has
+never seen it: the peer's connector fetches the document, checks it against the hash the events are
+signed against, and holds it for an operator who accepts once per definition and is never asked again.
+The connector refuses a definition with no reachable good ending, and refuses an *instance* that could
+only ever be cancelled. Nothing in the connector, the protocol, the client or either base UI names a
+logistics term. 644 tests (~5 s, no containers) and 15 Playwright specs.
+
+M6 before it is measured and hardened: every topology started cold and counted by
 `pnpm bench:topologies` (2 containers headless, 4 with a UI, 4 with a backoffice, **0 databases** in all
 of them, first transaction 5.6–11.4 s). A party with no UI is a container of its own
 (`apps/mock-backoffice`); a large party adds one overlay file for a managed document store; a host that
-loses its store re-hosts from the replicas of the peers it was hosting for. 506 tests, ~4 s, no
-containers. M7 (publish and deploy) is **event-triggered** — it starts on the supervisor's word, not on
-M6 finishing.
+loses its store re-hosts from the replicas of the peers it was hosting for. M7 (publish and deploy) is
+**event-triggered** — it starts on the supervisor's word, not on a milestone finishing.
 
 ## What we're building
 
@@ -111,7 +118,19 @@ wording is in [AGENT.md](AGENT.md).
    filesystem outside a temp dir. Default signer is local Ed25519; key management never blocks the state
    machine.
 
-11. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states
+11. **A definition is data, not deployment.** Any valid process must run on an unmodified connector:
+    authored at runtime, published over the local API, adopted by a peer who has never seen it. **No
+    domain vocabulary in the connector, the protocol, the client or either base UI** — no logistics
+    terms in identifiers, user-visible strings or placeholder values. A definition-specific branch
+    anywhere in the connector is a design bug, not a shortcut.
+
+12. **Validity is the linter's job, and viability is the connector's.** A definition must have a
+    reachable fulfilled ending and no state nothing can leave. Separately, an *instance* whose
+    definition reaches fulfilment only through a link relation it has not anchored is refused at
+    creation — a valid definition can still yield an unrunnable instance, and `dead-end-state` cannot
+    see it because `cancel` from `*` satisfies it for every state.
+
+13. **Timers and abort paths from the start.** `deadline` / `onDeadline` on transitions, terminal states
     reachable via `from: ["*"]`.
 
 ## The honest limitations
@@ -148,6 +167,10 @@ pilots-service/
                          permission derived from `visibility` rather than declared again.
     src/recovery/        `rebuild` (refold from our own log, refuse an edited one) and `recover`
                          (pull an instance back from a peer). The re-hosting path.
+    src/definitions/     The registry, the `definitions` store collection, and the service that
+                         publishes ours and adopts a peer's. Authoring is on the **local** surface
+                         (`definitions:write`); adopting is on the **admin** surface, because it is a
+                         trust decision. A published definition is immutable and content-addressed.
     src/store/           Repository port, memory/file/mongo adapters, conformance suite.
                          Connector-internal by design — do not promote to a shared package.
     src/admin-ui/        Minimal admin UI: connections, API keys, offerings, subscriptions, audit log.
@@ -241,8 +264,10 @@ container count *is* the argument, so it is counted rather than asserted.
 | Full self-hosting | 2 | 4 | **0** | 11.1 s | 11.3 s |
 | Fully hosted | **0** | 0 | **0** | — | — |
 
-Against a 60 s target. Memory as the cgroup reports it: connector ~80–86 MiB / 1 GB · UI ~44 MiB /
-512 MB · backoffice ~33 MiB / 256 MB. Image size: connector 236 MB · UI 264 MB.
+Against a 60 s target. Memory as the cgroup reports it: connector ~84–89 MiB / 1 GB · UI ~50–52 MiB /
+512 MB · backoffice ~33 MiB / 256 MB. (Re-measured at M6.5, which added the definitions collection
+and the authoring surface: the connector grew ~3 MiB and the UI ~7 MiB, both still under 11% of their
+limits.) Image size: connector 236 MB · UI 264 MB.
 
 *Fully hosted* has nothing to time — the hosted party runs no containers, which is the claim rather
 than a gap; the shape is proven in the scenario tier (`hosted-tenants.test.ts`). *Automated party* and
@@ -295,6 +320,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
 | **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `org-a-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
 | **M6** — measure and harden ✅ **done** | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Met: every topology started cold and counted — 2/4/4/0 containers, **0 databases** in all of them, first transaction 5.6–11.4 s against 60 s; 506 tests, ~4 s. Found three real bugs, including a large party regenerating its signing key on every restart |
+| **M6.5** — open foundation ✅ **done** | Definition authoring in the UI and from JSON (`definitions:write` on the local surface, dry-run lint + immutable publish), four new lint rules (`no-fulfilled-path`, `no-fireable-exit`, `starts-link-dependent`, `unfulfillable-state`), `definitionHash` in the instance genesis, creation refused when no fulfilled state is reachable, peer definitions fetched and adopted once per definition with a structural diff, all domain vocabulary removed from the connector and base UIs | Met: a process authored in Org A's browser, adopted by Org B's operator and run to completion across two containers; 644 tests, 15 Playwright specs; the demo's dead end is prevented rather than encountered |
 | **M7** — publish and deploy *(current target, event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
 ## Working agreements

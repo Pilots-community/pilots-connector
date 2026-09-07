@@ -38,6 +38,26 @@ const CreateInstanceBody = z.strictObject({
   offering: z.string().nullish(),
 })
 
+/** A candidate definition, as the editor has it. Validated by the connector's linter. */
+const DefinitionBody = z.strictObject({ definition: z.record(z.string(), z.unknown()) })
+
+/**
+ * Start a process from an offering.
+ *
+ * The offering names **two** definitions: the quotation a consumer instantiates
+ * first, and the service that quotation authorises. Both instances are created
+ * here, with the service pointing at the quotation — which is what lets the
+ * link fire `startExecution` when the quotation is agreed. Leaving that to the
+ * SPA would mean every client had to know the rule.
+ */
+const StartFromOfferingBody = z.strictObject({
+  offering: z.string().min(1),
+  quotationDefinition: z.string().min(1),
+  serviceDefinition: z.string().min(1),
+  participants: z.record(z.string(), z.union([z.string(), z.array(z.string()).min(1)])),
+  data: z.record(z.string(), z.json()).optional(),
+})
+
 const TransitionBody = z.strictObject({
   transition: z.string().min(1),
   patch: z.union([z.record(z.string(), z.json()), z.null()]).optional(),
@@ -157,6 +177,30 @@ export function registerRoutes(
     if (found) return reply.send(found)
   })
 
+  fastify.post('/api/ui/definitions/lint', async (request, reply) => {
+    const acting = await actingClient(request, reply)
+    if (!acting) return
+
+    const parsed = DefinitionBody.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues[0]?.message ?? 'invalid body' })
+    }
+    const result = await relay(reply, () => acting.lintDefinition(parsed.data.definition))
+    if (result) return reply.send(result)
+  })
+
+  fastify.post('/api/ui/definitions', async (request, reply) => {
+    const acting = await actingClient(request, reply)
+    if (!acting) return
+
+    const parsed = DefinitionBody.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues[0]?.message ?? 'invalid body' })
+    }
+    const published = await relay(reply, () => acting.publishDefinition(parsed.data.definition))
+    if (published) return reply.status(201).send(published)
+  })
+
   fastify.get('/api/ui/offerings', async (request, reply) => {
     const acting = await actingClient(request, reply)
     if (!acting) return
@@ -229,6 +273,67 @@ export function registerRoutes(
     })
 
     return reply.send({ events, instance, verification })
+  })
+
+  /**
+   * Start a process from an offering: the quotation, and the execution it
+   * authorises, in one call.
+   *
+   * This is the piece that was missing. An offering names both definitions, and
+   * the service instance has to be created **with `quotationId` set** — the
+   * relation lives in the immutable genesis, so it cannot be added later, and
+   * without it the link that fires `startExecution` has nothing to fire from.
+   * The result was a process that reached agreement and then sat forever with
+   * cancel as the only option.
+   *
+   * Both instances are created here rather than in the SPA so that no client
+   * has to know the rule, and so a client that only wanted the quotation
+   * cannot accidentally produce an execution that can never start.
+   */
+  fastify.post('/api/ui/offerings/start', async (request, reply) => {
+    const acting = await actingClient(request, reply)
+    if (!acting) return
+
+    const parsed = StartFromOfferingBody.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.issues[0]?.message ?? 'invalid body' })
+    }
+
+    const me = await relay(reply, () => acting.me())
+    if (!me) return
+    const participants = Object.fromEntries(
+      Object.entries(parsed.data.participants).map(([role, who]) => [
+        role,
+        who === SELF ? me.did : who,
+      ]),
+    )
+
+    const quotation = await relay(reply, () =>
+      acting.createInstance({
+        definition: parsed.data.quotationDefinition,
+        participants,
+        ...(parsed.data.data === undefined ? {} : { data: parsed.data.data }),
+        offering: parsed.data.offering,
+      }),
+    )
+    if (!quotation) return
+
+    /*
+     * The execution, anchored to the quotation. Its own `data` starts empty:
+     * the quotation's schema and the service's are different documents, and
+     * copying one into the other would fail validation as often as not.
+     */
+    const service = await relay(reply, () =>
+      acting.createInstance({
+        definition: parsed.data.serviceDefinition,
+        participants,
+        quotationId: quotation.instance.id,
+        offering: parsed.data.offering,
+      }),
+    )
+    if (!service) return
+
+    return reply.status(201).send({ quotation: quotation.instance, service: service.instance })
   })
 
   fastify.post('/api/ui/instances', async (request, reply) => {

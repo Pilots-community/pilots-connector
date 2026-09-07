@@ -22,6 +22,7 @@ import type {
   StoredInstance,
 } from '@pilots/protocol'
 
+import type { DefinitionDocument } from '../definitions/definition-store.js'
 import type {
   AppendEventResult,
   AttachmentStore,
@@ -55,6 +56,7 @@ export interface Store {
   readonly apiKeys: Collection<ApiKeyDocument>
   readonly connections: Collection<ConnectionDocument>
   readonly offerings: Collection<OfferingDocument>
+  readonly definitions: Collection<DefinitionDocument>
   readonly subscriptions: Collection<SubscriptionDocument>
   readonly instances: Collection<InstanceDocument>
   readonly notifications: Collection<NotificationDocument>

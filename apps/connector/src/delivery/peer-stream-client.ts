@@ -11,7 +11,7 @@
  * delivery would. There is no resync tool and no operator step, because the
  * cursor and the verified chain between them make one unnecessary. That is S4a.
  */
-import { carriesTraffic } from '@pilots/protocol'
+import { Problem, carriesTraffic } from '@pilots/protocol'
 
 import type { ParticipantConfig } from '../config/config.js'
 import type { ConnectionService } from '../connections/connection.service.js'
@@ -37,6 +37,14 @@ export class PeerStreamClient {
     private readonly replication: ReplicationService,
     private readonly log: LogService,
     private readonly localParticipants: () => readonly ParticipantConfig[],
+    /**
+     * Whether a definition an operator was asked about may now govern
+     * instances. A callback rather than the definition service, so this stays a
+     * transport concern; defaults to "still waiting", which is what every test
+     * that does not care about adoption wants.
+     */
+    private readonly isAdopted: (participantId: string, ref: string) => Promise<boolean> = () =>
+      Promise.resolve(false),
   ) {}
 
   /**
@@ -54,6 +62,24 @@ export class PeerStreamClient {
           this.drop(connection.id)
           continue
         }
+        /*
+         * A connection that was waiting on a definition an operator has since
+         * accepted must go and fetch what it skipped.
+         *
+         * The line is still open and the sender has nothing new to push, so
+         * the batch we declined is not coming again on its own. Dropping the
+         * line makes the next attach send `Last-Event-ID` from our own cursor,
+         * and the peer replays from there — which is exactly the mechanism an
+         * ordinary reconnect already uses.
+         */
+        if (
+          connection.waitingOn !== null &&
+          (await this.isAdopted(participant.id, connection.waitingOn))
+        ) {
+          await this.store.connections.replace({ ...connection, waitingOn: null })
+          this.drop(connection.id)
+        }
+
         if (this.held.has(connection.id)) continue
         await this.attach(participant, connection.id)
       }
@@ -109,6 +135,35 @@ export class PeerStreamClient {
   ): Promise<void> {
     const applied = await this.replication.applyBatch(participant, peerDid, data)
     if (!applied.ok) {
+      /*
+       * A definition an operator here has not decided about yet is a **wait**,
+       * not a rewritten history.
+       *
+       * Treating it like a verification failure did real damage: it dropped the
+       * line, marked the connection DEGRADED, and wrote a `delivery.fail` entry
+       * — then reconnected, received the same batch, and did it all again. The
+       * delivery did eventually arrive after acceptance, but only by churning
+       * through dropped streams and inventing a fault that did not exist.
+       *
+       * So: hold the line open, leave the cursor where it is, and record what
+       * we are waiting for. On this channel *we* dialled out, so we are the side
+       * that learns — the sender sees nothing, which is the honest asymmetry of
+       * a stream.
+       */
+      const pending = applied.errors.find((one) => one.type === Problem.definitionPending)
+      if (pending) {
+        const waiting = await this.store.connections.get(participant.id, connectionId)
+        const ref = pending.detail.split(' ')[0] ?? null
+        if (waiting && waiting.waitingOn !== ref) {
+          await this.store.connections.replace({ ...waiting, waitingOn: ref })
+        }
+        this.log.info(
+          { peer: peerDid, definition: ref },
+          'a delivery is waiting for an operator here to decide about this definition',
+        )
+        return
+      }
+
       // A hard stop. A chain that does not verify means the peer rewrote
       // history, and carrying on down the same line would apply whatever came
       // next on top of a record we have just refused.
@@ -146,7 +201,13 @@ export class PeerStreamClient {
 
     const connection = await this.store.connections.get(participant.id, connectionId)
     if (connection) {
-      await this.store.connections.replace({ ...connection, receiveCursor: cursor })
+      // Whatever we were waiting for has been decided, or this batch would not
+      // have applied.
+      await this.store.connections.replace({
+        ...connection,
+        receiveCursor: cursor,
+        waitingOn: null,
+      })
     }
   }
 

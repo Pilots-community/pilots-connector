@@ -22,6 +22,7 @@
  * that there isn't one.
  */
 import {
+  Problem,
   filterEvent,
   rolesOf,
   type Clock,
@@ -149,6 +150,36 @@ export class PeerDeliveryService {
           body: { deliveries: batch.deliveries, cursor: batch.cursor },
         },
       )
+      /*
+       * A pending adoption is a **wait, not a fault**.
+       *
+       * The peer's operator has been asked to accept a definition they have
+       * never seen. Nothing is broken: the same delivery will succeed once they
+       * do. Treating it like every other non-2xx would mark the connection
+       * DEGRADED and write a `delivery.fail` audit entry on every attempt —
+       * misreporting a normal wait as an outage, and burying the audit log in a
+       * process that is working exactly as designed.
+       */
+      const pending = pendingDefinition(response)
+      if (pending !== null) {
+        const attempt = (this.attempts.get(connection.id) ?? 0) + 1
+        this.attempts.set(connection.id, attempt)
+        this.retryAfter.set(
+          connection.id,
+          this.clock.now() + (BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length) - 1] ?? 600_000),
+        )
+
+        const current = await this.store.connections.get(participant.id, connection.id)
+        if (current && current.waitingOn !== pending) {
+          await this.store.connections.replace({ ...current, waitingOn: pending })
+        }
+        this.log.info(
+          { peer: connection.peerDid, definition: pending },
+          'the peer has not yet adopted this definition; delivery is waiting, not failing',
+        )
+        return { delivered: 0, failed: 0 }
+      }
+
       if (response.status >= 300) throw new Error(`the peer answered ${response.status}`)
     } catch (cause) {
       const attempt = (this.attempts.get(connection.id) ?? 0) + 1
@@ -185,6 +216,8 @@ export class PeerDeliveryService {
       await this.store.connections.replace({
         ...current,
         deliveryCursor: batch.cursor,
+        // Whatever we were waiting for has been decided, or we would not be here.
+        waitingOn: null,
         ...(current.status === 'DEGRADED' ? { status: 'ACTIVE' as const, lastError: null } : {}),
       })
     }
@@ -385,3 +418,20 @@ export function identityOf(instance: InstanceDocument): InstanceIdentity {
 }
 
 export const PEER_DELIVERY = Symbol('PeerDeliveryService')
+
+/**
+ * The definition ref a peer is waiting to have adopted, or `null` if this
+ * response is not that.
+ *
+ * Read from the RFC 7807 body rather than the status code: 409 alone does not
+ * distinguish "an operator has not decided yet" from a sequence conflict, and
+ * the two want opposite handling.
+ */
+function pendingDefinition(response: { status: number; body?: unknown }): string | null {
+  if (response.status !== 409) return null
+  const body = response.body as { type?: unknown; detail?: unknown } | null | undefined
+  if (!body || body.type !== Problem.definitionPending) return null
+  const detail = typeof body.detail === 'string' ? body.detail : ''
+  // The detail opens with the ref, which is the only part worth surfacing.
+  return detail.split(' ')[0] ?? 'a definition'
+}

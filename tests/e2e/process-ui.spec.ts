@@ -265,3 +265,98 @@ test.describe('the form helps rather than waits to refuse', () => {
     await expect(page.getByTestId('state')).toHaveText('ORDERED')
   })
 })
+
+test.describe('a process nobody shipped', () => {
+  /**
+   * A definition written in the browser, published, and started — the claim
+   * this milestone exists for. Nothing here is one of the five committed
+   * examples: if it were, the test would prove only that a file on disk works.
+   */
+  const authored = (id: string) => ({
+    '@context': 'https://pilots.example/process/v1',
+    id,
+    version: '1.0.0',
+    kind: 'service',
+    title: `Authored ${id}`,
+    roles: [
+      { id: 'buyer', title: 'Buyer', cardinality: 1, protocolRole: 'requester' },
+      { id: 'seller', title: 'Seller', cardinality: 1, protocolRole: 'provider' },
+    ],
+    hostedBy: 'buyer',
+    initialState: 'OPEN',
+    states: [
+      { id: 'OPEN', title: 'Open' },
+      { id: 'SETTLED', title: 'Settled', outcome: 'fulfilled' },
+      { id: 'DROPPED', title: 'Dropped', outcome: 'abandoned' },
+    ],
+    defaultVisibility: 'all',
+    data: {
+      type: 'object',
+      required: ['reference'],
+      properties: { reference: { type: 'string' } },
+    },
+    transitions: [
+      { id: 'settle', title: 'Settle it', from: ['OPEN'], to: 'SETTLED', by: ['buyer'] },
+      { id: 'drop', title: 'Drop it', from: ['*'], to: 'DROPPED', by: ['buyer', 'seller'] },
+    ],
+    visibility: [],
+    links: [],
+  })
+
+  test('is written in the browser, validated as you type, and then started', async ({ page }) => {
+    await page.goto('/')
+    await signIn(page, ORG_A)
+    await page.getByTestId('tab-authoring').click()
+
+    // A process that cannot succeed is refused *before* anyone tries to run it,
+    // and the diagnostic names the rule rather than saying "invalid".
+    const unwinnable = {
+      ...authored('unwinnable'),
+      states: [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'DROPPED', title: 'Dropped', outcome: 'abandoned' },
+      ],
+      transitions: [{ id: 'drop', title: 'Drop it', from: ['OPEN'], to: 'DROPPED', by: ['buyer'] }],
+    }
+    await page.fill('[data-testid="definition-source"]', JSON.stringify(unwinnable, null, 2))
+    await expect(page.getByTestId('diagnostics')).toContainText('no-fulfilled-path')
+    await expect(page.getByTestId('publish')).toBeDisabled()
+
+    // The real one lints clean and publishes.
+    const id = `e2e-${Date.now()}`
+    await page.fill('[data-testid="definition-source"]', JSON.stringify(authored(id), null, 2))
+    await expect(page.getByTestId('diagnostics')).toContainText('No problems')
+    await page.getByTestId('publish').click()
+    await expect(page.getByTestId('published')).toContainText(`${id}@1.0.0`)
+
+    // And it is immediately startable, with no redeploy and no file copied.
+    await page.getByTestId('tab-start').click()
+    await page.selectOption('select[name="definition"]', `${id}@1.0.0`)
+    await page.selectOption('select[data-role="buyer"]', '__self__')
+    await page.selectOption('select[data-role="seller"]', 'did:web:org-b.example')
+    await page.fill('input[data-field="reference"]', 'REF-E2E')
+    await page.getByTestId('start').click()
+
+    await expect(page.getByTestId('state')).toHaveText('OPEN')
+  })
+
+  test('says which processes cannot be started on their own, instead of failing later', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await signIn(page, ORG_A)
+    await page.getByTestId('tab-start').click()
+
+    // Contracted by a quotation: every route to success crosses a transition a
+    // link fires, so starting it here would produce a process whose only
+    // remaining action is cancel.
+    await page.selectOption('select[name="definition"]', 'container-transport@1.0.0')
+    await expect(page.getByTestId('not-standalone')).toContainText('cannot be started on its own')
+    await expect(page.getByTestId('start')).toBeDisabled()
+
+    // A process that stands alone is offered normally.
+    await page.selectOption('select[name="definition"]', 'container-weighing@1.0.0')
+    await expect(page.getByTestId('not-standalone')).toHaveCount(0)
+    await expect(page.getByTestId('start')).toBeEnabled()
+  })
+})

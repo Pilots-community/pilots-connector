@@ -54,6 +54,15 @@ export const Connection = z.strictObject({
   /** Set when the connection last failed; cleared on recovery. */
   lastError: z.union([z.string().max(1024), z.null()]).default(null),
   /**
+   * A definition ref this peer has not adopted yet, so delivery to them is
+   * paused rather than failing.
+   *
+   * Distinct from `lastError` on purpose: nothing has gone wrong, and a screen
+   * that showed this as an error would send an operator hunting for a fault
+   * while the real answer is "their colleague has a button to press".
+   */
+  waitingOn: z.union([z.string().max(255), z.null()]).default(null),
+  /**
    * How far our **webhook** deliveries to this peer have got.
    *
    * Durable, and on the connection rather than in a queue, because "what has

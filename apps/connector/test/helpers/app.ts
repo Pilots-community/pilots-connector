@@ -93,6 +93,7 @@ export async function provision(
     'instances:write',
     'events:read',
     'definitions:read',
+    'definitions:write',
     'connections:read',
   ],
 ): Promise<{ session: string; apiKey: string }> {

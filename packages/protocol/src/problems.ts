@@ -38,6 +38,17 @@ export const Problem = {
    * be supplied later: the instance could only ever be abandoned.
    */
   instanceUnfulfillable: `${PROBLEM_PREFIX}instance-unfulfillable`,
+  /**
+   * A definition is already published under this `id@version` with different
+   * content. A version is an identity, not a label: instances are pinned to it
+   * and peers adopt it by hash, so the answer is to bump the version.
+   */
+  definitionConflict: `${PROBLEM_PREFIX}definition-conflict`,
+  /**
+   * A peer's definition is held, but no operator has decided about it yet.
+   * Not a failure — the delivery will succeed once somebody accepts it.
+   */
+  definitionPending: `${PROBLEM_PREFIX}definition-pending`,
 
   // — concurrency and idempotency —
   /** `If-Match` did not equal the current `seq`. */
@@ -85,6 +96,8 @@ export const PROBLEM_STATUS: Record<ProblemType, number> = {
   [Problem.notAParticipant]: 403,
   [Problem.definitionInvalid]: 422,
   [Problem.instanceUnfulfillable]: 422,
+  [Problem.definitionConflict]: 409,
+  [Problem.definitionPending]: 409,
   [Problem.seqConflict]: 409,
   [Problem.preconditionRequired]: 428,
   [Problem.credentialInvalid]: 401,

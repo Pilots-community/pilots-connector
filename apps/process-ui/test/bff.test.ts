@@ -52,11 +52,44 @@ function fakeConnector(): { app: FastifyInstance; seen: Seen[]; url: () => strin
   app.get('/api/local/v1/instances', async () => ({ instances: [] }))
   app.get('/api/local/v1/connections', async () => ({ connections: [] }))
   app.get('/api/local/v1/definitions', async () => ({ definitions: [] }))
+  let createdCount = 0
   app.post('/api/local/v1/instances', async (request, reply) => {
     seen[seen.length - 1]!.body = request.body
+    createdCount += 1
     return reply.status(201).send({
-      instance: { id: '01J0', state: 'ORDERED', seq: 1, available: [], redacted: false },
+      // A distinct id per create, so a test can tell the quotation from the
+      // execution that points at it.
+      instance: {
+        id: `01J${String(createdCount).padStart(23, '0')}`,
+        state: 'ORDERED',
+        seq: 1,
+        available: [],
+        redacted: false,
+      },
       events: [],
+    })
+  })
+  app.post('/api/local/v1/definitions/lint', async (request, reply) => {
+    seen[seen.length - 1]!.body = request.body
+    return reply.status(200).send({
+      ok: false,
+      diagnostics: [
+        {
+          severity: 'error',
+          code: 'no-fulfilled-path',
+          message: 'this process can never succeed',
+          path: '/states',
+        },
+      ],
+    })
+  })
+  app.post('/api/local/v1/definitions', async (request, reply) => {
+    seen[seen.length - 1]!.body = request.body
+    return reply.status(409).send({
+      type: 'urn:pilots:problem:definition-conflict',
+      title: 'Conflict',
+      status: 409,
+      detail: 'already published with different content',
     })
   })
   app.post('/api/local/v1/instances/:id/transitions', async (_request, reply) =>
@@ -348,5 +381,112 @@ describe('configuration posture', () => {
       'PILOTS_UI_COOKIE_PREFIX',
       'PILOTS_UI_DEMO_TOOLS',
     ])
+  })
+})
+
+describe('authoring, relayed to the connector', () => {
+  it('returns the linter’s diagnostics unchanged, pointers included', async () => {
+    const response = await ui.inject({
+      method: 'POST',
+      url: '/api/ui/definitions/lint',
+      headers: { ...signedIn(), 'content-type': 'application/json' },
+      payload: { definition: { id: 'x' } },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const body = response.json<{ diagnostics: Array<{ code: string; path: string }> }>()
+    expect(body.diagnostics[0]?.code).toBe('no-fulfilled-path')
+    // The pointer must survive the relay, or an editor cannot highlight a node.
+    expect(body.diagnostics[0]?.path).toBe('/states')
+  })
+
+  it('passes a publish conflict through as the problem it is', async () => {
+    const response = await ui.inject({
+      method: 'POST',
+      url: '/api/ui/definitions',
+      headers: { ...signedIn(), 'content-type': 'application/json' },
+      payload: { definition: { id: 'x' } },
+    })
+
+    expect(response.statusCode).toBe(409)
+    expect(response.json<{ type: string }>().type).toBe('urn:pilots:problem:definition-conflict')
+  })
+
+  it('refuses authoring to a caller who has not signed in', async () => {
+    for (const url of [
+      '/api/ui/definitions/lint',
+      '/api/ui/definitions',
+      '/api/ui/offerings/start',
+    ]) {
+      const response = await ui.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/json' },
+        payload: { definition: {} },
+      })
+      expect(response.statusCode).toBe(401)
+    }
+    expect(connector.seen).toHaveLength(0)
+  })
+})
+
+describe('starting from an offering', () => {
+  it('creates the quotation and anchors the execution to it', async () => {
+    const response = await ui.inject({
+      method: 'POST',
+      url: '/api/ui/offerings/start',
+      headers: { ...signedIn(), 'content-type': 'application/json' },
+      payload: {
+        offering: 'urn:offering:org-b:weighing',
+        quotationDefinition: 'q@1.0.0',
+        serviceDefinition: 's@1.0.0',
+        participants: { shipper: '__self__', weigher: 'did:web:org-b.example' },
+        data: { reference: 'R-1' },
+      },
+    })
+
+    expect(response.statusCode).toBe(201)
+
+    const creates = connector.seen.filter(
+      (one) => one.method === 'POST' && one.path === '/api/local/v1/instances',
+    )
+    expect(creates).toHaveLength(2)
+
+    const quotation = creates[0]?.body as Record<string, unknown>
+    const service = creates[1]?.body as Record<string, unknown>
+
+    expect(quotation['definition']).toBe('q@1.0.0')
+    expect(quotation['data']).toEqual({ reference: 'R-1' })
+
+    /*
+     * The execution, pointing at the quotation. This is the anchor the whole
+     * negotiated flow depends on: without it, agreeing the quotation contracts
+     * nothing and the execution sits with cancel as its only action.
+     */
+    expect(service['definition']).toBe('s@1.0.0')
+    expect(service['quotationId']).toBe('01J00000000000000000000001')
+  })
+
+  it('resolves __self__ to our own DID on both instances', async () => {
+    await ui.inject({
+      method: 'POST',
+      url: '/api/ui/offerings/start',
+      headers: { ...signedIn(), 'content-type': 'application/json' },
+      payload: {
+        offering: 'urn:offering:org-b:weighing',
+        quotationDefinition: 'q@1.0.0',
+        serviceDefinition: 's@1.0.0',
+        participants: { shipper: '__self__', weigher: 'did:web:org-b.example' },
+      },
+    })
+
+    const creates = connector.seen.filter(
+      (one) => one.method === 'POST' && one.path === '/api/local/v1/instances',
+    )
+    expect(creates).toHaveLength(2)
+    for (const create of creates) {
+      const participants = (create.body as { participants: Record<string, string> }).participants
+      expect(participants['shipper']).toBe('did:web:org-a.example')
+    }
   })
 })

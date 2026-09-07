@@ -20,6 +20,15 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
   const [participants, setParticipants] = useState<Record<string, string>>({})
   const [data, setData] = useState<Record<string, unknown>>({})
   const [error, setError] = useState<UiError | null>(null)
+  /**
+   * The offering this start came from, if any.
+   *
+   * Kept because it decides *how* to start: an offering knows the service its
+   * quotation authorises, so the two instances can be created together with the
+   * service anchored to the quotation. Without that anchor the agreement
+   * contracts nothing.
+   */
+  const [offering, setOffering] = useState<Offering | null>(null)
 
   const demoTools = useQuery(queries.session()).data?.demoTools ?? false
   const definitions = useQuery(queries.definitions()).data ?? []
@@ -34,14 +43,24 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
    * looking at can no longer overwrite the one you are looking at now.
    */
   const definition = useQuery({ ...queries.definition(ref), enabled: ref !== '' }).data?.definition
+  /** The summary for the chosen ref, which carries whether it can be started alone. */
+  const selected = definitions.find((one) => one.ref === ref)
 
   useEffect(() => {
     if (ref === '' && definitions[0]) setRef(definitions[0].ref)
   }, [ref, definitions])
 
-  /** Start from an offering: pick its service definition and fill in the supplier. */
+  /**
+   * Start from an offering.
+   *
+   * The **quotation** is what a consumer instantiates — the offering says so —
+   * and agreeing it is what contracts the service. Selecting the service
+   * definition here used to land on a process that cannot be started on its
+   * own, so the screen offered a Start button that could only ever fail.
+   */
   const fromOffering = (offering: Offering): void => {
-    setRef(offering.serviceDefinition)
+    setRef(offering.quotationDefinition)
+    setOffering(offering)
     setParticipants({})
     setData({})
     setError(null)
@@ -61,6 +80,7 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
                 // Synchronous, so a half-filled form for one definition can
                 // never be submitted against another.
                 setRef(event.target.value)
+                setOffering(null)
                 setParticipants({})
                 setData({})
               }}
@@ -120,17 +140,54 @@ export function Start({ onStarted }: { onStarted: (id: string) => void }) {
             />
           )}
 
+          {/*
+            A process contracted by another one cannot be started here. Saying
+            so — and saying what would start it — is the difference between a
+            screen that guides and one that lets somebody create a process whose
+            only remaining action is cancel.
+          */}
+          {selected !== undefined && !selected.startableStandalone && (
+            <p
+              data-testid="not-standalone"
+              className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+            >
+              This process is started by another one reaching agreement — it needs a{' '}
+              {selected.requiresRelations.join(' or ')} — so it cannot be started on its own. Start
+              the matching quotation instead, or pick it from an offering below.
+            </p>
+          )}
+
           {error && <Problem error={error} />}
 
           <button
             className={button}
             type="button"
             data-testid="start"
+            disabled={selected !== undefined && !selected.startableStandalone}
             onClick={() => {
               setError(null)
-              void api
-                .createInstance({ definition: ref, participants, data })
-                .then(({ instance }) => onStarted(instance.id))
+              /*
+               * From an offering, the quotation and the execution it authorises
+               * are created together, with the execution pointing at the
+               * quotation. Otherwise this is an ordinary single instance.
+               */
+              const started =
+                offering === null
+                  ? api
+                      .createInstance({ definition: ref, participants, data })
+                      .then(({ instance }) => instance.id)
+                  : api
+                      .startFromOffering({
+                        offering: offering.id,
+                        quotationDefinition: offering.quotationDefinition,
+                        serviceDefinition: offering.serviceDefinition,
+                        participants,
+                        data,
+                      })
+                      .then(({ quotation }) => quotation.id)
+
+              void started
+                .then((id) => onStarted(id))
                 .catch((cause: unknown) => {
                   if (cause instanceof UiError) setError(cause)
                 })

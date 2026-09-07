@@ -18,6 +18,7 @@ import { useLiveSync } from './live/useLiveSync.js'
 import { queries } from './queries.js'
 import { button, ghost } from './ui.js'
 import { ProcessDetail } from './views/ProcessDetail.js'
+import { Authoring } from './views/Authoring.js'
 import { Processes } from './views/Processes.js'
 import { SignIn } from './views/SignIn.js'
 import { Start } from './views/Start.js'
@@ -27,7 +28,7 @@ import { Start } from './views/Start.js'
 export function App() {
   const client = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<'processes' | 'start'>('processes')
+  const [tab, setTab] = useState<'processes' | 'start' | 'authoring'>('processes')
 
   /*
    * Why the two feeds are built once, outside render.
@@ -117,9 +118,19 @@ export function App() {
             >
               Start something
             </button>
+            <button
+              type="button"
+              className={tab === 'authoring' ? button : ghost}
+              data-testid="tab-authoring"
+              onClick={() => setTab('authoring')}
+            >
+              Write a process
+            </button>
           </nav>
 
-          {tab === 'start' ? (
+          {tab === 'authoring' ? (
+            <Authoring />
+          ) : tab === 'start' ? (
             <Start
               onStarted={(id) => {
                 setSelected(id)

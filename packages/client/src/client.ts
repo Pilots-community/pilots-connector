@@ -15,6 +15,8 @@
  */
 import { ProblemError, TransportError, isProblemDocument, type ProblemDocument } from './errors.js'
 import type {
+  DefinitionLintResult,
+  PublishedDefinition,
   AttachmentRef,
   ClientOptions,
   Connection,
@@ -86,6 +88,33 @@ export class PilotsClient {
     options: RequestOptions = {},
   ): Promise<{ ref: string; contentHash: string; definition: ProcessDefinition }> {
     return this.request('GET', `/definitions/${encodeURIComponent(ref)}`, options)
+  }
+
+  /**
+   * Validate a candidate definition without publishing it.
+   *
+   * Answers 200 whether or not the document is valid: the diagnostics are the
+   * answer, and each carries a JSON Pointer into the document so an editor can
+   * point at the offending node.
+   */
+  async lintDefinition(
+    definition: Record<string, unknown>,
+    options: RequestOptions = {},
+  ): Promise<DefinitionLintResult> {
+    return this.request('POST', '/definitions/lint', options, { definition })
+  }
+
+  /**
+   * Publish a definition, making it immediately usable.
+   *
+   * Immutable once published: the same bytes again is a no-op, and different
+   * bytes under the same `id@version` is a conflict rather than an update.
+   */
+  async publishDefinition(
+    definition: Record<string, unknown>,
+    options: RequestOptions = {},
+  ): Promise<PublishedDefinition> {
+    return this.request('POST', '/definitions', options, { definition })
   }
 
   /**

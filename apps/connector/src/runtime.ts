@@ -27,6 +27,7 @@ import { ApiKeyService } from './auth/api-key.service.js'
 import type { ConnectorConfig } from './config/config.js'
 import { ConnectionService } from './connections/connection.service.js'
 import { DefinitionRegistry } from './definitions/definition-registry.js'
+import { isUsable } from './definitions/definition-store.js'
 import { PeerDeliveryService } from './delivery/peer-delivery.service.js'
 import { PeerStreamClient } from './delivery/peer-stream-client.js'
 import { StreamHub } from './delivery/stream-hub.js'
@@ -45,6 +46,7 @@ import { PeerSurface } from './peer/peer.server.js'
 import { Relay } from './peer/relay.js'
 import { PeerReplayCache } from './peer/replay-cache.js'
 import { RecoveryService } from './recovery/recovery.service.js'
+import { DefinitionService } from './definitions/definition.service.js'
 import { NO_TRANSPORT, type PeerTransport } from './peer/transport.js'
 import { ReplicationService } from './replication/replication.service.js'
 import { FileSecretStore, MemorySecretStore, type SecretStore } from './secrets/secret-store.js'
@@ -67,6 +69,7 @@ export interface Runtime {
   peerDelivery: PeerDeliveryService
   peerStreams: PeerStreamClient
   recovery: RecoveryService
+  definitions: DefinitionService
   links: LinkService
   deadlines: DeadlineService
   attachments: AttachmentService
@@ -181,6 +184,26 @@ export async function createRuntime(
     ...(overrides.logDestination === undefined ? {} : { destination: overrides.logDestination }),
   })
 
+  /*
+   * Definitions published or adopted at runtime, brought back after a restart.
+   *
+   * The boot directory is a seed; these are the authority, so they are applied
+   * second and win on a clash. One that a lint rule added since publication now
+   * refuses is reported and skipped — a stricter linter must not make a running
+   * connector unstartable, and the definition's instances are still readable
+   * from their logs.
+   */
+  for (const participant of config.participants) {
+    const held = await store.definitions.find(participant.id)
+    const usable = held.filter(isUsable)
+    for (const refused of registry.hydrate(usable)) {
+      log.warn(
+        { participantId: participant.id, definition: refused.source },
+        `a stored definition no longer passes the linter and was not registered: ${refused.message}`,
+      )
+    }
+  }
+
   const apiKeys = new ApiKeyService(store, identity.pepper, now, () => ids.next())
 
   // ── identity resolution ──
@@ -248,6 +271,8 @@ export async function createRuntime(
     { onWrite: async (notice: WriteNotice) => links.service?.onWrite(notice) },
   ]
 
+  const definitions = new DefinitionService(store, registry, client, now)
+
   const replication = new ReplicationService(
     store,
     registry,
@@ -258,6 +283,8 @@ export async function createRuntime(
     async (notice) => {
       for (const observer of observers) await observer.onWrite(notice)
     },
+    (participant, peerDid, ref, expectedHash) =>
+      definitions.acquire(participant, peerDid, ref, expectedHash),
   )
 
   const peerStreams = new PeerStreamClient(
@@ -267,6 +294,10 @@ export async function createRuntime(
     replication,
     log,
     participants,
+    async (participantId, ref) => {
+      const held = await store.definitions.get(participantId, ref)
+      return held !== undefined && isUsable(held)
+    },
   )
 
   const recovery = new RecoveryService(
@@ -298,6 +329,8 @@ export async function createRuntime(
     resolver,
     relay,
     observers,
+    (participant, peerDid, ref, expectedHash) =>
+      definitions.acquire(participant, peerDid, ref, expectedHash),
   )
 
   const attachments = new AttachmentService(
@@ -355,6 +388,7 @@ export async function createRuntime(
           'instances:write',
           'events:read',
           'definitions:read',
+          'definitions:write',
           'connections:read',
           'attachments:read',
           'attachments:write',
@@ -449,6 +483,7 @@ export async function createRuntime(
     peerDelivery,
     peerStreams,
     recovery,
+    definitions,
     links: links.service,
     deadlines,
     attachments,

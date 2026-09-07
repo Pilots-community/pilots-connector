@@ -126,6 +126,18 @@
         }
       ]
     },
+    "waitingOn": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 255
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "deliveryCursor": {
       "default": null,
       "anyOf": [

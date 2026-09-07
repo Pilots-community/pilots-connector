@@ -284,6 +284,56 @@ as the *same participant*, pulls its hosted processes from the replicas of the p
 verifies every signature including its own, and carries on writing at the next `seq`. What it cannot
 recover are fields the peer was never allowed to see; `recover` counts them rather than pretending.
 
+## M6.5 — Open foundation: authoring, validating and adopting definitions ✅ done
+
+The demonstrator's point is **process sharing**, not the five processes that happen to be committed.
+M6.5 is what makes that true in the software rather than in the prose: a participant writes their own
+process, publishes it on their own integration surface, and runs it with a counterparty who has never
+seen it — no shared definitions directory, no redeploy, no operator copying a file.
+
+Prompted by a failure. Driving the demo by hand dead-ended in a state whose only offered action was
+*cancel*, because `container-transport` is contracted by a quotation and the process UI never set
+`quotationId`. The tempting fix — teach the UI about that pair of definitions — was the wrong one, and
+what came out of asking why is the shape of the milestone.
+
+**What it delivered**
+
+- **A definition can be valid while an instance under it is not.** `links` are declared per definition
+  and anchored per instance, so a link-fired transition is walkable only when the relation it names is
+  set. The connector now walks the definition at creation across only the edges *something can fire for
+  this instance*, and refuses a creation from which no `fulfilled` state is reachable — naming the
+  relation that would unlock it. Pure graph reachability; no definition is named anywhere in the code.
+- **Four lint rules the previous twenty-five could not express.** `dead-end-state` asks whether *a*
+  terminal state is reachable, and a `cancel` from `*` satisfies that for every state — so it could
+  essentially never fire. Added: `no-fulfilled-path`, `no-fireable-exit` (nothing at all can leave this
+  state), `starts-link-dependent` (a warning: correct, but not startable alone) and
+  `unfulfillable-state`. The two transport definitions now warn, correctly.
+- **`definitionHash` in the instance genesis.** It pinned `id@version` — a name, not the bytes — so two
+  connectors could hold different documents under one ref and each believe the other agreed. Breaking,
+  and done while nothing was published.
+- **Authoring on the integration surface.** `POST /api/local/v1/definitions/lint` (dry run, stores
+  nothing) and `POST /api/local/v1/definitions` behind a new `definitions:write` scope, so a third
+  party's UI or a build pipeline can publish exactly as our own UI does. Definitions live in the store;
+  the boot directory is a seed. Immutable once published: identical bytes are idempotent, different
+  bytes under one `id@version` are a conflict.
+- **Adoption, decided once per definition.** A peer's unknown definition is fetched over the peer
+  surface that already served it, checked against the hash the genesis pins, and held pending. An
+  operator accepts or rejects it in the admin UI, with a **structural diff** against the version they
+  last accepted; every later instance under that ref runs without asking. A pending adoption is a
+  **wait, not a fault** — the connection stays healthy, nothing is written to the audit log per retry,
+  and the line is not dropped.
+- **A JSON editor in the process UI** with diagnostics from the connector as you type and the state
+  diagram redrawing beside it. The document stays authoritative; the diagram is a projection, which is
+  what a canvas editor will mutate later. Editor **layout is stored outside the document**, because the
+  hash covers the bytes and dragging a box must not invalidate instances.
+- **No domain vocabulary** in the connector, the protocol, the client or either base UI.
+
+**Exit** — met: a process authored in Org A's browser, adopted by Org B's operator, and run to
+completion across two containers; 644 unit/contract/scenario tests and 15 Playwright specs; the demo's
+dead end is now prevented rather than encountered.
+
+Full design record: [2026-09-04-open-foundation-design.md](superpowers/specs/2026-09-04-open-foundation-design.md).
+
 ## M7 — Publish and deploy
 
 Nothing here changes the application; it packages and ships what M1–M6 built.
@@ -405,6 +455,33 @@ Named so they are choices rather than omissions:
   and it is built in M1; publication is plumbing.
 - **Horizontal scaling of the small profile.** The file adapter is single-writer by design. Scaling out
   means moving to the document-store profile, not making the file store clever.
+- **Visual editing of definitions.** M6.5 chose its pieces for it — `toGraph` works from a definition
+  with no instance, every diagnostic carries a JSON Pointer so a canvas can highlight the offending
+  node, and layout is stored outside the document — but no canvas is built.
+- **Migration.** Two halves, and only one is hard. *Completed instances staying readable across
+  connector versions* is largely already true: the event log is the record and the materialised
+  instance is a cache `rebuild` regenerates from it, so the question is only whether an old event still
+  parses. If a schema-version marker is ever wanted for that, it belongs on the **unsigned**
+  `StoredEvent` wrapper, where it can be added at any time with no chain break — nothing about
+  migration needs to be inside a signed header, so nothing got cheaper by riding along with M6.5's
+  `definitionHash` change. *Migrating an in-flight instance to a new definition version* is the hard
+  half, and it is a **protocol** question rather than an operational one: `definition` and
+  `definitionHash` sit in the immutable genesis, so an instance is pinned to `id@version` for life —
+  which is exactly what makes its authority checkable. "Migrate in-flight to 1.1.0" therefore means
+  either a successor instance linked to the original, or breaking the invariant the chain's
+  trustworthiness rests on. It deserves its own design record.
+- **Splitting the audit log from a process-event query.** The audit log currently records both
+  `auth.apiKey` denials and successful `transition.apply`. The first is the only record that the thing
+  happened; the second duplicates an event already signed, chained and replicated — which is why
+  `audit/prune` had to exist at M6, pruning a chain that should have been small. The test is *"is this
+  entry the only record that this happened?"*: keep `auth.*` (especially denials), `apiKey.create`,
+  `session.create`, `admin.tokenSeed`, `connection.gate`, `chain.verify`, `definition.accept`,
+  `definition.reject` and every `denied`/`failed` outcome; drop the successful process traffic. The
+  "connector-owned, filterable process log" that motivates this is best built as a **query over the
+  events already stored** — cross-instance history filterable by peer, definition, state, transition
+  and time — rather than a fourth log. Today `GET /api/local/v1/events` is a live stream only, so the
+  gap is history, not records. An index has nothing to keep consistent. M6.5's adoption entries are
+  already written against the sharpened rule.
 - **Anything that requires a counterparty to run a workflow engine.** A party must always be able to
   integrate with two HTTP calls and one event connection. If that stops being true, the design has
   regressed.

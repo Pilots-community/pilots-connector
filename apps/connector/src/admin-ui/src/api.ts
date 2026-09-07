@@ -66,6 +66,7 @@ export const SCOPES: Scope[] = [
   { value: 'attachments:write', label: 'Upload attachments' },
   { value: 'connections:read', label: 'List connections' },
   { value: 'definitions:read', label: 'Read definitions and offerings' },
+  { value: 'definitions:write', label: 'Publish process definitions' },
 ]
 
 export interface ApiKey {
@@ -154,6 +155,34 @@ export interface DefinitionSummary {
   hostedBy: string
   roles: string[]
   contentHash: string
+  /** Anything the linter flagged that does not prevent the definition loading. */
+  warnings: Array<{ code: string; message: string; path?: string }>
+}
+
+/** One structural change between two versions of a definition. */
+export interface DefinitionChange {
+  kind: string
+  change: 'added' | 'removed' | 'changed'
+  id: string
+  detail: string
+}
+
+/** A peer's definition nobody here has decided about yet. */
+export interface PendingDefinition {
+  document: {
+    ref: string
+    definitionId: string
+    version: string
+    contentHash: string
+    origin: string
+    adoption: { status: string; peerDid: string } | null
+    createdAt: string
+    raw: unknown
+  }
+  /** The highest version already accepted, if any. */
+  diffAgainst: string | null
+  changes: DefinitionChange[]
+  warnings: string[]
 }
 
 export const api = {
@@ -169,6 +198,30 @@ export const api = {
     request<{ participants: Participant[] }>('/participants', {}, session),
   definitions: (session: string) =>
     request<{ definitions: DefinitionSummary[] }>('/definitions', {}, session),
+
+  pendingDefinitions: (session: string, participantId: string) =>
+    request<{ pending: PendingDefinition[] }>(
+      `/definitions/pending?participantId=${encodeURIComponent(participantId)}`,
+      {},
+      session,
+    ),
+
+  decideDefinition: (
+    session: string,
+    participantId: string,
+    ref: string,
+    decision: 'accept' | 'reject',
+    reason?: string,
+  ) =>
+    request(
+      `/definitions/${encodeURIComponent(ref)}/${decision}?participantId=${encodeURIComponent(participantId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(reason === undefined ? {} : { reason }),
+        headers: { 'content-type': 'application/json' },
+      },
+      session,
+    ),
 
   apiKeys: (session: string, participantId: string) =>
     request<{ apiKeys: ApiKey[] }>(`/apikeys?participantId=${participantId}`, {}, session),

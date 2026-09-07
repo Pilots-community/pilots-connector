@@ -15,6 +15,7 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
   Inject,
   Param,
   Post,
@@ -25,10 +26,11 @@ import {
 } from '@nestjs/common'
 import type { FastifyReply } from 'fastify'
 
-import { Problem, analyseReachability } from '@pilots/protocol'
+import { Problem, analyseReachability, type AuditSubject, type JsonValue } from '@pilots/protocol'
 import { z } from 'zod'
 
 import { ApiKeyGuard, RequireScope, auditRequest, type LocalRequest } from '../auth/guards.js'
+import { DEFINITIONS, type DefinitionService } from '../definitions/definition.service.js'
 import { DEFINITION_REGISTRY, type DefinitionRegistry } from '../definitions/definition-registry.js'
 import { ProblemException } from '../http/problem.js'
 import { INSTANCE_SERVICE } from '../instances/instance.tokens.js'
@@ -41,6 +43,16 @@ import type { Relay } from '../peer/relay.js'
 import { toSseFrame } from '../peer/http-transport.js'
 import { StreamHub } from '../delivery/stream-hub.js'
 import { STORE, type Store } from '../store/store.js'
+
+/**
+ * A candidate definition, as an arbitrary JSON object.
+ *
+ * Deliberately not validated against the definition schema here: the *linter*
+ * is what answers that question, and it answers with diagnostics an editor can
+ * point at rather than a flat 400.
+ */
+const LintDefinitionBody = z.strictObject({ definition: z.record(z.string(), z.unknown()) })
+const PublishDefinitionBody = LintDefinitionBody
 
 const CreateInstanceBody = z.strictObject({
   definition: z.string().min(1),
@@ -114,6 +126,7 @@ export class LocalController {
   constructor(
     @Inject(INSTANCE_SERVICE) private readonly instances: InstanceService,
     @Inject(DEFINITION_REGISTRY) private readonly definitions: DefinitionRegistry,
+    @Inject(DEFINITIONS) private readonly definitionService: DefinitionService,
     @Inject(STORE) private readonly store: Store,
     @Inject(LOG_SERVICE) private readonly log: LogService,
     @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
@@ -171,6 +184,78 @@ export class LocalController {
           requiresRelations: standalone.fulfilmentReachable ? [] : standalone.unlockingRelations,
         }
       }),
+    }
+  }
+
+  /**
+   * Validate a candidate definition and store nothing.
+   *
+   * An editor calls this on every change, so it must be cheap and must answer
+   * 200 whether or not the document is valid — the diagnostics *are* the
+   * answer, not an error condition.
+   */
+  @Post('definitions/lint')
+  // 200, not Nest's default 201: nothing is created, and a document with
+  // diagnostics is a successful answer to "what is wrong with this".
+  @HttpCode(200)
+  @RequireScope('definitions.lint')
+  lintDefinition(@Body() body: unknown) {
+    const parsed = parse(LintDefinitionBody, body)
+    const result = this.definitionService.lint(parsed.definition)
+    return {
+      ok: result.ok,
+      diagnostics: result.diagnostics,
+      ...(result.definition === undefined
+        ? {}
+        : {
+            ref: `${result.definition.id}@${result.definition.version}`,
+            startableStandalone: analyseReachability(result.definition).fulfilmentReachable,
+          }),
+    }
+  }
+
+  /** Publish a definition. Immutable once published; bumping the version is the only way to change one. */
+  @Post('definitions')
+  @RequireScope('definitions.publish')
+  async publishDefinition(
+    @Req() request: LocalRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+    @Body() body: unknown,
+  ) {
+    const context = caller(request)
+    const parsed = parse(PublishDefinitionBody, body)
+
+    /*
+     * `unknown` from the wire to `JsonValue` for the store. The document has
+     * been through `JSON.parse`, so it is JSON by construction; the linter is
+     * what decides whether it is a *definition*.
+     */
+    const result = await this.definitionService.publish(
+      context.participant.id,
+      parsed.definition as JsonValue,
+    )
+    if (!result.ok) {
+      await this.audit(
+        request,
+        context,
+        'definition.publish',
+        'denied',
+        result.errors[0]?.type,
+        null,
+      )
+      throw ProblemException.from(result.errors)
+    }
+
+    await this.audit(request, context, 'definition.publish', 'ok', null, null, {
+      definition: result.value.registered.ref,
+    })
+    // 201 for a new definition, 200 for an idempotent repeat of the same bytes.
+    void reply.status(result.value.created ? 201 : 200)
+    return {
+      ref: result.value.registered.ref,
+      contentHash: result.value.registered.contentHash,
+      warnings: result.value.registered.warnings,
+      created: result.value.created,
     }
   }
 
@@ -614,6 +699,12 @@ export class LocalController {
     outcome: 'ok' | 'denied',
     problem: string | null | undefined,
     instance: string | null,
+    /**
+     * What the entry is about, when it is not an instance. `AuditSubject`
+     * validates `instance` as a ULID, so a definition ref cannot travel in
+     * that slot — it has a field of its own.
+     */
+    subject: Partial<AuditSubject> = {},
   ): Promise<void> {
     await this.log.record({
       level: outcome === 'ok' ? 'info' : 'warn',
@@ -629,7 +720,7 @@ export class LocalController {
         },
         outcome,
         problem: problem ?? null,
-        subject: { instance },
+        subject: { instance, ...subject },
         request: auditRequest(request),
       },
     })

@@ -46,8 +46,12 @@ import { CONNECTIONS, type ConnectionService } from '../connections/connection.s
 import { NOTIFICATIONS, type NotificationService } from '../notifications/notification.service.js'
 import { PEER_STREAMS, RECOVERY } from '../runtime.tokens.js'
 import type { PeerStreamClient } from '../delivery/peer-stream-client.js'
+import { DEFINITIONS, type DefinitionService } from '../definitions/definition.service.js'
 import type { RecoveryService } from '../recovery/recovery.service.js'
 import { STORE, type Store } from '../store/store.js'
+
+/** Why a peer's definition was refused, so an instance's refusal can say. */
+const RejectDefinitionBody = z.object({ reason: z.string().max(1024).optional() })
 
 const RecoverBody = z.strictObject({
   /** Which peer to pull from. Omitted, every connection that carries traffic is tried. */
@@ -209,6 +213,7 @@ export class AdminController {
     @Inject(CONFIG) private readonly config: ConnectorConfig,
     @Inject(CONNECTIONS) private readonly connections: ConnectionService,
     @Inject(NOTIFICATIONS) private readonly notifications: NotificationService,
+    @Inject(DEFINITIONS) private readonly definitionService: DefinitionService,
     @Inject(PEER_STREAMS) private readonly streams: PeerStreamClient,
     @Inject(RECOVERY) private readonly recovery: RecoveryService,
   ) {}
@@ -312,6 +317,72 @@ export class AdminController {
         warnings: registered.warnings,
       })),
     }
+  }
+
+  /**
+   * Definitions a peer sent that nobody here has decided about yet.
+   *
+   * The decision is about the **definition**, not the instance that prompted
+   * it: accept once and every later instance under the same ref runs without
+   * asking. Where a lower version was already accepted, the diff says what is
+   * different about this one — which is the question an operator is actually
+   * being asked.
+   */
+  @Get('definitions/pending')
+  async pendingDefinitions(@Query('participantId') participantId?: string) {
+    const pending = await this.definitionService.pending(this.participantId(participantId))
+    return { pending }
+  }
+
+  @Post('definitions/:ref/accept')
+  async acceptDefinition(
+    @Req() request: AdminRequest,
+    @Param('ref') ref: string,
+    @Query('participantId') participantId?: string,
+  ) {
+    const owner = this.participantId(participantId)
+    const result = await this.definitionService.decide(
+      owner,
+      ref,
+      'accepted',
+      this.session(request).label ?? this.session(request).id,
+    )
+    if (!result.ok) {
+      await this.audit(request, 'definition.accept', 'denied', owner, { definition: ref })
+      throw ProblemException.from(result.errors)
+    }
+
+    // Audited because it produces no event and would otherwise leave no record
+    // that anyone agreed to run somebody else's process here.
+    await this.audit(request, 'definition.accept', 'ok', owner, { definition: ref })
+    return { definition: result.value }
+  }
+
+  @Post('definitions/:ref/reject')
+  async rejectDefinition(
+    @Req() request: AdminRequest,
+    @Param('ref') ref: string,
+    @Body() body: unknown,
+    @Query('participantId') participantId?: string,
+  ) {
+    const owner = this.participantId(participantId)
+    const parsed = RejectDefinitionBody.safeParse(body ?? {})
+    const reason = parsed.success ? (parsed.data.reason ?? null) : null
+
+    const result = await this.definitionService.decide(
+      owner,
+      ref,
+      'rejected',
+      this.session(request).label ?? this.session(request).id,
+      reason,
+    )
+    if (!result.ok) {
+      await this.audit(request, 'definition.reject', 'denied', owner, { definition: ref })
+      throw ProblemException.from(result.errors)
+    }
+
+    await this.audit(request, 'definition.reject', 'ok', owner, { definition: ref })
+    return { definition: result.value }
   }
 
   // ── API keys ─────────────────────────────────────────────────────────────

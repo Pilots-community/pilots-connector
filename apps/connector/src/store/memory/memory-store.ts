@@ -15,6 +15,7 @@ import {
   type StoredInstance,
 } from '@pilots/protocol'
 
+import type { DefinitionDocument } from '../../definitions/definition-store.js'
 import type {
   ApiKeyDocument,
   ConnectionDocument,
@@ -423,6 +424,7 @@ export class MemoryStore implements Store {
   readonly apiKeys: Collection<ApiKeyDocument>
   readonly connections: Collection<ConnectionDocument>
   readonly offerings: Collection<OfferingDocument>
+  readonly definitions: Collection<DefinitionDocument>
   readonly subscriptions: Collection<SubscriptionDocument>
   readonly instances: Collection<InstanceDocument>
   readonly notifications: Collection<NotificationDocument>
@@ -440,6 +442,7 @@ export class MemoryStore implements Store {
     this.apiKeys = new MapCollection('apiKeys', state, journal)
     this.connections = new MapCollection('connections', state, journal)
     this.offerings = new MapCollection('offerings', state, journal)
+    this.definitions = new MapCollection('definitions', state, journal)
     this.subscriptions = new MapCollection('subscriptions', state, journal)
     this.instances = new MapCollection('instances', state, journal)
     this.notifications = new MapCollection('notifications', state, journal)

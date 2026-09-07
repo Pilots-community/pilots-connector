@@ -95,6 +95,33 @@ export interface DefinitionSummary {
   requiresRelations: string[]
 }
 
+/** One thing wrong with a candidate definition, and where in the document it is. */
+export interface DefinitionDiagnostic {
+  severity: 'error' | 'warning'
+  /** A stable rule name, e.g. `no-fulfilled-path`. */
+  code: string
+  message: string
+  /** A JSON Pointer into the document, so an editor can highlight the node. */
+  path?: string
+}
+
+export interface DefinitionLintResult {
+  /** True when there are no errors. Warnings do not prevent publishing. */
+  ok: boolean
+  diagnostics: DefinitionDiagnostic[]
+  /** Present when the document parsed at all. */
+  ref?: string
+  startableStandalone?: boolean
+}
+
+export interface PublishedDefinition {
+  ref: string
+  contentHash: string
+  warnings: DefinitionDiagnostic[]
+  /** False when the identical document was already published. */
+  created: boolean
+}
+
 export interface CreateInstanceRequest {
   /** `container-transport@1.0.0` — the definition, pinned by version. */
   definition: string

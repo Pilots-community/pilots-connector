@@ -548,7 +548,7 @@ export function localApiDocument(): Record<string, unknown> {
                   type: 'string',
                   enum: ['running', 'fulfilled', 'abandoned'],
                   description:
-                    'Whether the process is over, and how — computed from the definition. The generic companion to `state`: `state` is the definition’s own vocabulary, this is the half you can act on without holding that definition. Close a ticket on `fulfilled` rather than hardcoding that `VGM_ISSUED` is one process’s good ending.',
+                    'Whether the process is over, and how — computed from the definition. The generic companion to `state`: `state` is the definition’s own vocabulary, this is the half you can act on without holding that definition. Close a ticket on `fulfilled` rather than hardcoding one process’s own name for its good ending.',
                 },
               },
             },

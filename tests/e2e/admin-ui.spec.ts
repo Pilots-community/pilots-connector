@@ -18,6 +18,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const ADMIN_UI = process.env['PILOTS_E2E_ORG_A_ADMIN'] ?? 'http://localhost:3000/admin/'
 const REPO = resolve(dirname(__filename), '..', '..')
+const ORG_B_UI = process.env['PILOTS_E2E_ORG_B_UI'] ?? 'http://localhost:4001'
 
 /**
  * The admin token, the way an operator would get it.
@@ -125,5 +126,108 @@ test.describe('the operator surface', () => {
     // design forbids.
     expect(tabs.join(' ').toLowerCase()).not.toContain('start')
     expect(tabs.join(' ').toLowerCase()).not.toContain('transition')
+  })
+})
+
+test.describe('adopting a process a peer wrote', () => {
+  const ORG_A_UI = process.env['PILOTS_E2E_ORG_A_UI'] ?? 'http://localhost:4000'
+  const ORG_B_ADMIN = process.env['PILOTS_E2E_ORG_B_ADMIN'] ?? 'http://localhost:3001/admin/'
+
+  /**
+   * Org A writes a process and starts it, so Org B has something to decide
+   * about. Self-contained rather than depending on another spec having run:
+   * a test that needs its neighbour to go first is a test that fails alone.
+   */
+  async function orgAAuthorsAndStarts(page: Page, id: string): Promise<void> {
+    await page.goto(ORG_A_UI)
+    await page.fill('input[name="email"]', 'alice@org-a.example')
+    await page.fill('input[name="password"]', 'OrgA_123')
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.getByTestId('participant')).toBeVisible()
+
+    await page.getByTestId('tab-authoring').click()
+    await page.fill(
+      '[data-testid="definition-source"]',
+      JSON.stringify(
+        {
+          '@context': 'https://pilots.example/process/v1',
+          id,
+          version: '1.0.0',
+          kind: 'service',
+          title: `Authored ${id}`,
+          roles: [
+            { id: 'buyer', title: 'Buyer', cardinality: 1, protocolRole: 'requester' },
+            { id: 'seller', title: 'Seller', cardinality: 1, protocolRole: 'provider' },
+          ],
+          // Hosted by the author, so the create succeeds here and it is the
+          // *delivery* to the peer that waits for their decision.
+          hostedBy: 'buyer',
+          initialState: 'OPEN',
+          states: [
+            { id: 'OPEN', title: 'Open' },
+            { id: 'SETTLED', title: 'Settled', outcome: 'fulfilled' },
+            { id: 'DROPPED', title: 'Dropped', outcome: 'abandoned' },
+          ],
+          defaultVisibility: 'all',
+          data: {
+            type: 'object',
+            required: ['reference'],
+            properties: { reference: { type: 'string' } },
+          },
+          transitions: [
+            { id: 'settle', title: 'Settle it', from: ['OPEN'], to: 'SETTLED', by: ['buyer'] },
+            { id: 'drop', title: 'Drop it', from: ['*'], to: 'DROPPED', by: ['buyer', 'seller'] },
+          ],
+          visibility: [],
+          links: [],
+        },
+        null,
+        2,
+      ),
+    )
+    await expect(page.getByTestId('diagnostics')).toContainText('No problems')
+    await page.getByTestId('publish').click()
+    await expect(page.getByTestId('published')).toContainText(`${id}@1.0.0`)
+
+    await page.getByTestId('tab-start').click()
+    await page.selectOption('select[name="definition"]', `${id}@1.0.0`)
+    await page.selectOption('select[data-role="buyer"]', '__self__')
+    await page.selectOption('select[data-role="seller"]', 'did:web:org-b.example')
+    await page.fill('input[data-field="reference"]', 'ADOPT-1')
+    await page.getByTestId('start').click()
+    await expect(page.getByTestId('state')).toHaveText('OPEN')
+  }
+
+  test('shows it as pending, with the document, and runs it once accepted', async ({ page }) => {
+    const id = `adopt-${Date.now()}`
+    await orgAAuthorsAndStarts(page, id)
+
+    // Org B's operator, on their own connector's admin surface.
+    await page.goto(ORG_B_ADMIN)
+    await page.fill('input[type="password"]', adminToken('org-b'))
+    await page.getByRole('button', { name: /sign in/i }).click()
+    await page.getByRole('button', { name: 'Processes' }).click()
+
+    const pending = page.getByTestId('pending-definition').filter({ hasText: id })
+    await expect(pending).toBeVisible({ timeout: 15_000 })
+    // Who sent it, so the decision is not made blind.
+    await expect(pending).toContainText('did:web:org-a.example')
+
+    // The document itself is readable before agreeing to run it.
+    await pending.getByRole('button', { name: /read the document/i }).click()
+    await expect(pending).toContainText('"hostedBy": "buyer"')
+
+    await pending.getByTestId('accept').click()
+    await expect(page.getByTestId('pending-definition').filter({ hasText: id })).toHaveCount(0)
+
+    // And the replica that was waiting arrives. Matched on *this run's*
+    // definition rather than on the reference, which earlier runs also used.
+    await page.goto(ORG_B_UI)
+    await page.fill('input[name="email"]', 'bob@org-b.example')
+    await page.fill('input[name="password"]', 'OrgB_123')
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.getByText(`Authored ${id}`, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    })
   })
 })

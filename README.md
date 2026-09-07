@@ -205,6 +205,42 @@ distinguished, because a process that finished and one that was cancelled are no
    is the result of a check the UI's backend ran itself against the published keys — not something
    the connector asserted about itself.
 
+### Writing your own process, and the other side agreeing to run it
+
+The five committed definitions are examples, not the product. This is the sequence that shows it, and
+it is the most convincing thing in the demo — nobody edits a file, restarts a container, or copies
+anything between the two organisations.
+
+1. **In Org A's UI, open *Write a process*.** A working skeleton is already there. The **connector**
+   validates it as you type — the same linter it applies to a definition a peer sends — and the state
+   machine redraws beside the document as you edit.
+2. **Break it on purpose.** Delete the transition into the `COMPLETED` state and the diagnostics say
+   `no-fulfilled-path` with a pointer at the offending node: *this process can never succeed*. Publish
+   stays disabled. Give one state no way out and you get `no-fireable-exit`. These are the checks that
+   matter, and they are not something a JSON Schema can express — see
+   [DEFINITIONS.md §2.1](docs/DEFINITIONS.md#21-what-the-linter-checks-that-a-schema-cannot).
+3. **Fix it and publish.** Change `id` to something of your own and press **Publish**. It is usable
+   immediately: switch to **Start**, and it is in the dropdown.
+4. **Start it with Org B**, who has never seen it. Pick *Us* for one role and Org B for the other.
+5. **Go to Org B's admin UI** (`:3001/admin/`) → **Processes**. Org A's definition is waiting, showing
+   who sent it, and the document itself is there to read before agreeing to anything. Org B's connector
+   fetched it from Org A and checked its bytes against the hash Org A's events are signed against.
+   Meanwhile Org B's connection is still **healthy**, not degraded — a person being asked a question is
+   not a fault.
+6. **Accept it.** The instance that was waiting arrives in Org B's process UI, and the process runs to
+   completion like any other. Start a second one: **nobody is asked again.** The decision was about the
+   definition, not the order.
+7. **Publish a second version** — same `id`, `version` bumped, and give one more role the right to fire
+   a transition. Org B is asked once more, and this time the screen shows a **structural diff** against
+   the version they already accepted: `transition settle changed: by`. Try republishing `1.0.0` with
+   different content instead and it is refused as a conflict: a version is an identity, not a label.
+
+Worth pointing out while you are on the Start screen: pick **Container road transport** and it says it
+*cannot be started on its own* and disables the button. That process is contracted by a quotation — the
+only transition out of its first state is one a link fires — so starting it directly would produce a
+process whose sole remaining action is *cancel*. The connector works that out from the graph, for any
+definition, including one it has never seen.
+
 ### The UI is a client, not the runtime
 
 ```bash

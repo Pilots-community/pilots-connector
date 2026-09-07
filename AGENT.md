@@ -123,7 +123,24 @@ These are settled. Do not re-litigate them; if you think one is wrong, say so ex
    process. The default signer holds a local Ed25519 key; key management never sits on the critical
    path of the state machine.
 
-11. **Timers and abort paths exist from the start.** `deadline` / `onDeadline` on transitions, and
+11. **A definition is data, not deployment.** Any valid process must run on an unmodified connector:
+    written at runtime, published over `/api/local/v1` with `definitions:write`, and adopted by a peer
+    who has never seen it. Content-addressed and immutable — a version is an identity, so changing a
+    published definition means publishing a new version. **No domain vocabulary anywhere in the
+    connector, the protocol, the client or either base UI**: no logistics terms in identifiers,
+    user-visible strings or placeholder values, and no branch on a particular definition. The five
+    committed definitions are examples; if the connector needs to know about one of them, that is a
+    design bug.
+
+12. **Validity is the linter's job; viability is the connector's.** A definition must have a fulfilled
+    ending reachable from `initialState` and no reachable state that nothing can leave. Separately, an
+    **instance** is refused at creation when no fulfilled state is reachable *for it* — a link-fired
+    transition is walkable only when the relation it names is anchored, and that relation lives in the
+    immutable genesis, so it can never be supplied later. A valid definition can yield an unrunnable
+    instance, and a rule about paths to *any* terminal state cannot see it, because a `cancel` from
+    `["*"]` satisfies that for every state.
+
+13. **Timers and abort paths exist from the start.** `deadline` / `onDeadline` on transitions, and
     terminal states reachable via `from: ["*"]`. Both are cheap now and miserable to retrofit.
 
 ## The honest limitations

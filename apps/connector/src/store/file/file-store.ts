@@ -44,6 +44,7 @@ const COLLECTIONS = [
   'apiKeys',
   'connections',
   'offerings',
+  'definitions',
   'subscriptions',
   'instances',
   'notifications',

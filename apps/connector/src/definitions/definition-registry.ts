@@ -23,6 +23,7 @@ import {
   lintDefinition,
   type JsonValue,
   type LintDiagnostic,
+  type LintResult,
   type ProcessDefinition,
 } from '@pilots/protocol'
 
@@ -36,6 +37,12 @@ export interface RegisteredDefinition {
   source: string
   /** Warnings the linter raised. They do not prevent loading; they are reported. */
   warnings: LintDiagnostic[]
+}
+
+/** The part of a stored definition document this class needs. */
+export interface StoredDefinition {
+  ref: string
+  raw: JsonValue
 }
 
 export class DefinitionLoadError extends Error {
@@ -70,6 +77,41 @@ export class DefinitionRegistry {
     return new DefinitionRegistry(loaded)
   }
 
+  /**
+   * Adopt definitions held in the store.
+   *
+   * Called once at boot, after the boot directory has been read. A stored
+   * definition wins on a clash: it is the one this connector published or
+   * accepted, and the directory is only a seed. Anything the linter now refuses
+   * is skipped rather than fatal — a rule added after a definition was published
+   * must not make the connector unstartable.
+   */
+  hydrate(documents: readonly StoredDefinition[]): DefinitionLoadError[] {
+    const refused: DefinitionLoadError[] = []
+    for (const document of documents) {
+      try {
+        this.byRef.set(
+          document.ref,
+          DefinitionRegistry.register(document.raw, `store:${document.ref}`),
+        )
+      } catch (cause) {
+        if (cause instanceof DefinitionLoadError) refused.push(cause)
+        else throw cause
+      }
+    }
+    return refused
+  }
+
+  /** Validate a candidate document without registering or storing anything. */
+  static lint(raw: unknown): LintResult {
+    return lintDefinition(raw)
+  }
+
+  /** Register a definition the caller has already validated and stored. */
+  adopt(registered: RegisteredDefinition): void {
+    this.byRef.set(registered.ref, registered)
+  }
+
   /** For tests and for a future admin-side upload. Lints before accepting. */
   static fromDocuments(documents: Array<{ raw: JsonValue; source: string }>): DefinitionRegistry {
     return new DefinitionRegistry(
@@ -77,7 +119,7 @@ export class DefinitionRegistry {
     )
   }
 
-  private static register(raw: JsonValue, source: string): RegisteredDefinition {
+  static register(raw: JsonValue, source: string): RegisteredDefinition {
     const result = lintDefinition(raw)
     if (!result.ok || !result.definition) {
       throw new DefinitionLoadError(
