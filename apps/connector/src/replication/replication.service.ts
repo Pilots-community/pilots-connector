@@ -404,6 +404,7 @@ export class ReplicationService {
       id: identity.id,
       kind: identity.kind,
       definition: identity.definition,
+      definitionHash: identity.definitionHash,
       participants: identity.participants,
       quotationId: identity.quotationId,
       offering: identity.offering,

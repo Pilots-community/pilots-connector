@@ -75,34 +75,67 @@ function unwrap<T>(result: ServiceResult<T>): T {
   return result.value
 }
 
+const QUOTATION = 'container-transport-quotation@1.0.0'
+
+/**
+ * Start a transport service the way the definition intends: the quotation
+ * first, then the execution anchored to it.
+ *
+ * This used to create the service on its own, which the connector now refuses —
+ * `container-transport` reaches `DELIVERED` only through a transition a link
+ * fires, so an instance with no quotation could never have succeeded. The old
+ * shortcut passed because S5 asserts role symmetry rather than completion,
+ * which is exactly the kind of fiction that hides a real defect.
+ */
+async function startTransport(
+  node: ReturnType<Scenario['node']>,
+  shipper: string,
+  transporter: string,
+) {
+  const participants = { shipper, transporter }
+  const quotation = unwrap(
+    await node.runtime.instances.create(node.caller(), {
+      definition: QUOTATION,
+      participants,
+      data: {
+        pickup: { location: 'origin' },
+        dropoff: { location: 'destination' },
+        containerType: '40HC',
+      },
+    }),
+  )
+  return unwrap(
+    await node.runtime.instances.create(node.caller(), {
+      definition: DEFINITION,
+      participants,
+      data: { containerType: '40HC' },
+      quotationId: quotation.instance.id,
+    }),
+  )
+}
+
 describe('S5 — supplier and consumer are per-instance roles', () => {
   it('resolves the home node per instance, not per definition', async () => {
     const ff = scenario.node('ff')
     const a = scenario.node('a')
 
     // 3. FF starts instance 1 — A is the transporter, so **A** is the home node.
-    const first = unwrap(
-      await ff.runtime.instances.create(ff.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: FORWARDER.did, transporter: TRANSPORTER_A.did },
-        data: { containerType: '40HC' },
-      }),
-    )
+    const first = await startTransport(ff, FORWARDER.did, TRANSPORTER_A.did)
 
     // 4. A starts instance 2 of the **same definition** — B is the transporter,
     // so **B** is the home node and A holds a replica of its own subcontract.
-    const second = unwrap(
-      await a.runtime.instances.create(a.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: TRANSPORTER_A.did, transporter: TRANSPORTER_B.did },
-        data: { containerType: '40HC' },
-      }),
-    )
+    const second = await startTransport(a, TRANSPORTER_A.did, TRANSPORTER_B.did)
     await scenario.settle()
 
     // 5. A's list holds both, one authoritative and one a replica.
     const held = await a.runtime.instances.list(a.caller())
-    const byId = new Map(held.map((view) => [view.instance.id, view]))
+    // Only the executions: each is now preceded by its own quotation, and the
+    // claim under test is about the two service instances.
+    const byId = new Map(
+      held
+        .filter((view) => view.instance.definition === DEFINITION)
+        .map((view) => [view.instance.id, view]),
+    )
     expect(byId.size).toBe(2)
 
     expect(byId.get(first.instance.id)?.home).toBe(true)
@@ -131,20 +164,8 @@ describe('S5 — supplier and consumer are per-instance roles', () => {
     // One subscription. No per-role configuration anywhere.
     await a.subscribe({ notify: ['action.required', 'action.cleared'] })
 
-    const asProvider = unwrap(
-      await ff.runtime.instances.create(ff.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: FORWARDER.did, transporter: TRANSPORTER_A.did },
-        data: { containerType: '40HC' },
-      }),
-    )
-    const asRequester = unwrap(
-      await a.runtime.instances.create(a.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: TRANSPORTER_A.did, transporter: TRANSPORTER_B.did },
-        data: { containerType: '40HC' },
-      }),
-    )
+    const asProvider = await startTransport(ff, FORWARDER.did, TRANSPORTER_A.did)
+    const asRequester = await startTransport(a, TRANSPORTER_A.did, TRANSPORTER_B.did)
     await scenario.settle()
 
     const required = a.channel.ofType('action.required')
@@ -202,20 +223,8 @@ describe('S5 — supplier and consumer are per-instance roles', () => {
     const ff = scenario.node('ff')
     const a = scenario.node('a')
 
-    const asProvider = unwrap(
-      await ff.runtime.instances.create(ff.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: FORWARDER.did, transporter: TRANSPORTER_A.did },
-        data: { containerType: '40HC' },
-      }),
-    )
-    const asRequester = unwrap(
-      await a.runtime.instances.create(a.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: TRANSPORTER_A.did, transporter: TRANSPORTER_B.did },
-        data: { containerType: '40HC' },
-      }),
-    )
+    const asProvider = await startTransport(ff, FORWARDER.did, TRANSPORTER_A.did)
+    const asRequester = await startTransport(a, TRANSPORTER_A.did, TRANSPORTER_B.did)
     await scenario.settle()
 
     const { verifyChain } = await import('@pilots/protocol')
@@ -259,13 +268,7 @@ describe('S5 — supplier and consumer are per-instance roles', () => {
       updatedAt: scenario.clock.instant(),
     })
 
-    const running = unwrap(
-      await ff.runtime.instances.create(ff.caller(), {
-        definition: DEFINITION,
-        participants: { shipper: FORWARDER.did, transporter: TRANSPORTER_A.did },
-        data: { containerType: '40HC' },
-      }),
-    )
+    const running = await startTransport(ff, FORWARDER.did, TRANSPORTER_A.did)
     await scenario.settle()
 
     // 10. Withdrawing stops discovery. It does not stop a process.

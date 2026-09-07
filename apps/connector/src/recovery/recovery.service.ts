@@ -287,6 +287,7 @@ function toIdentity(stored: StoredInstance): InstanceIdentity {
     id: stored.id,
     kind: stored.kind,
     definition: stored.definition,
+    definitionHash: stored.definitionHash,
     participants: stored.participants,
     quotationId: stored.quotationId,
     offering: stored.offering,

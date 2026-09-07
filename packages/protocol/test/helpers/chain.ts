@@ -45,9 +45,17 @@ export interface AppendSpec {
  * A default identity for logs whose test does not care about one. Real
  * verification pins it; these helpers only need every event in a log to agree.
  */
+/**
+ * A stand-in for the definition document's hash. The genesis commits to the
+ * bytes as well as the ref, so every helper that builds an identity needs one;
+ * what it is does not matter as long as a log agrees with itself.
+ */
+export const DEFAULT_DEFINITION_HASH = `sha256:${'d'.repeat(64)}`
+
 export const DEFAULT_GENESIS: InstanceGenesis = instanceGenesis({
   kind: 'service',
   definition: 'container-weighing@1.0.0',
+  definitionHash: DEFAULT_DEFINITION_HASH,
   participants: { shipper: ORG_A, weigher: ORG_B },
 })
 

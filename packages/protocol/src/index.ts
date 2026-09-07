@@ -140,6 +140,17 @@ export {
   type Filtered,
 } from './engine/visibility.js'
 
+export {
+  analyseReachability,
+  definitionEdges,
+  statesWithoutFireableExit,
+  statesWithoutFulfilment,
+  type DefinitionEdge,
+  type EdgeDriver,
+  type Reachability,
+  type ReachabilityOptions,
+} from './engine/reachability.js'
+
 // — validation and linting —
 export {
   createSchemaValidator,

@@ -376,6 +376,7 @@ export function identityOf(instance: InstanceDocument): InstanceIdentity {
     id: instance.id,
     kind: instance.kind,
     definition: instance.definition,
+    definitionHash: instance.definitionHash,
     participants: instance.participants,
     quotationId: instance.quotationId,
     offering: instance.offering,

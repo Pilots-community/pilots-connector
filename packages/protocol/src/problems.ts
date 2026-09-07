@@ -29,6 +29,15 @@ export const Problem = {
   notAParticipant: `${PROBLEM_PREFIX}not-a-participant`,
   /** The definition itself does not load: bad schema, or the linter refused it. */
   definitionInvalid: `${PROBLEM_PREFIX}definition-invalid`,
+  /**
+   * The instance, as asked for, has no path to any fulfilled state.
+   *
+   * Almost always because the definition reaches fulfilment only through a
+   * transition a link fires, and the relation that link names was not set at
+   * creation. That relation is part of the immutable genesis, so it can never
+   * be supplied later: the instance could only ever be abandoned.
+   */
+  instanceUnfulfillable: `${PROBLEM_PREFIX}instance-unfulfillable`,
 
   // — concurrency and idempotency —
   /** `If-Match` did not equal the current `seq`. */
@@ -75,6 +84,7 @@ export const PROBLEM_STATUS: Record<ProblemType, number> = {
   [Problem.attachmentsInvalid]: 422,
   [Problem.notAParticipant]: 403,
   [Problem.definitionInvalid]: 422,
+  [Problem.instanceUnfulfillable]: 422,
   [Problem.seqConflict]: 409,
   [Problem.preconditionRequired]: 428,
   [Problem.credentialInvalid]: 401,

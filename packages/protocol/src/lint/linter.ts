@@ -9,6 +9,11 @@
  * Replaces tools/lint-definitions.py, which was a stopgap until this existed.
  */
 import { DURATION_SUBSET } from '../duration.js'
+import {
+  analyseReachability,
+  statesWithoutFireableExit,
+  statesWithoutFulfilment,
+} from '../engine/reachability.js'
 import type { JsonValue } from '../json.js'
 import {
   ANY_STATE,
@@ -299,14 +304,18 @@ export function lintDefinition(raw: unknown): LintResult {
   }
 
   // — reachability, both directions —
+  /*
+   * One diagnostic per offending state, not one listing them all: a future
+   * editor highlights the node a diagnostic points at, and a pointer at
+   * `/states` names the collection rather than the node at fault.
+   */
   if (states.has(definition.initialState)) {
     const forward = reachable(edges, [definition.initialState], 'forward')
-    const unreachable = [...states].filter((state) => !forward.has(state))
-    if (unreachable.length > 0) {
+    for (const state of [...states].filter((one) => !forward.has(one)).sort()) {
       error(
         'unreachable-state',
-        `unreachable from ${definition.initialState}: ${unreachable.sort().join(', ')}`,
-        '/states',
+        `${state} is unreachable from ${definition.initialState}`,
+        `/states/${indexOfState(definition, state)}`,
       )
     }
   }
@@ -314,12 +323,59 @@ export function lintDefinition(raw: unknown): LintResult {
   const declaredTerminals = [...terminal]
   if (declaredTerminals.length > 0) {
     const backward = reachable(edges, declaredTerminals, 'backward')
-    const deadEnds = [...states].filter((state) => !backward.has(state))
-    if (deadEnds.length > 0) {
+    for (const state of [...states].filter((one) => !backward.has(one)).sort()) {
       error(
         'dead-end-state',
-        `no path to any terminal state from: ${deadEnds.sort().join(', ')}`,
+        `no path to any terminal state from ${state}`,
+        `/states/${indexOfState(definition, state)}`,
+      )
+    }
+  }
+
+  /*
+   * — can this process succeed, and can anyone make it —
+   *
+   * `dead-end-state` above asks whether *a* terminal state is reachable. Every
+   * definition with a `cancel` from `*` satisfies that trivially, so it cannot
+   * answer the question an author actually has: is there a path to a **good**
+   * ending, and can somebody walk it.
+   */
+  if (states.has(definition.initialState)) {
+    const forSomeInstance = analyseReachability(definition, { anchoredRelations: 'all' })
+    if (!forSomeInstance.fulfilmentReachable) {
+      error(
+        'no-fulfilled-path',
+        `no state with outcome "fulfilled" is reachable from ${definition.initialState}: this process can never succeed`,
         '/states',
+      )
+    } else {
+      // Correct, but not startable on its own: every route to success crosses
+      // an edge only a linked instance can fire.
+      const standalone = analyseReachability(definition)
+      if (!standalone.fulfilmentReachable && standalone.unlockingRelations.length > 0) {
+        warn(
+          'starts-link-dependent',
+          `every path to fulfilment crosses a transition fired by the ${standalone.unlockingRelations
+            .map((relation) => `"${relation}"`)
+            .join(' or ')} relation, so an instance created without it can never succeed`,
+          '/links',
+        )
+      }
+    }
+
+    for (const state of statesWithoutFireableExit(definition)) {
+      error(
+        'no-fireable-exit',
+        `${state} is not terminal, and nothing can leave it: no transition out of it names a role in "by", is "auto", is fired by a link, or has a deadline arming in it`,
+        `/states/${indexOfState(definition, state)}`,
+      )
+    }
+
+    for (const state of statesWithoutFulfilment(definition)) {
+      warn(
+        'unfulfillable-state',
+        `${state} can be reached, but no fulfilled ending can be reached from it`,
+        `/states/${indexOfState(definition, state)}`,
       )
     }
   }
@@ -329,6 +385,11 @@ export function lintDefinition(raw: unknown): LintResult {
     diagnostics,
     definition,
   }
+}
+
+/** Where a state sits in the document, so a diagnostic can point at that node. */
+function indexOfState(definition: ProcessDefinition, id: string): number {
+  return definition.states.findIndex((state) => state.id === id)
 }
 
 /**

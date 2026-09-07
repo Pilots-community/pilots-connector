@@ -22,6 +22,7 @@ import {
   evaluateCreate,
   evaluateTransition,
   filterEvent,
+  analyseReachability,
   filterInstance,
   genesisHash,
   verifyChain,
@@ -304,8 +305,38 @@ export class InstanceService {
       )
     }
 
+    /*
+     * Can this instance, as asked for, ever succeed?
+     *
+     * `links` are declared per definition and anchored per instance: a
+     * link-fired transition is walkable only when the relation it names is set
+     * here. Created without it, the instance can reach nothing but an abandoned
+     * ending — and since the relation lives in the immutable genesis, it can
+     * never be supplied afterwards. So this is a refusal rather than a warning.
+     *
+     * Nothing here knows what a quotation *is*. The relation names come from
+     * the definition's own links, so a definition this connector has never seen
+     * is checked exactly the same way.
+     */
+    const anchored: string[] = []
+    if ((request.quotationId ?? null) !== null) anchored.push('quotation')
+
+    const viable = analyseReachability(registered.definition, { anchoredRelations: anchored })
+    if (!viable.fulfilmentReachable) {
+      return fail(
+        Problem.instanceUnfulfillable,
+        viable.unlockingRelations.length > 0
+          ? `${request.definition} reaches fulfilment only through a transition fired by the ${viable.unlockingRelations
+              .map((relation) => `"${relation}"`)
+              .join(' or ')} relation; create it with that relation set`
+          : `${request.definition} has no path from ${registered.definition.initialState} to any fulfilled state, so this instance could only ever be abandoned`,
+        '/definition',
+      )
+    }
+
     const evaluated = evaluateCreate(registered.definition, {
       id: this.nextId(),
+      definitionHash: registered.contentHash,
       participants: request.participants,
       data: request.data ?? {},
       quotationId: request.quotationId ?? null,
@@ -559,6 +590,7 @@ export class InstanceService {
     if (input.creating) {
       const evaluated = evaluateCreate(registered.definition, {
         id: identity.id,
+        definitionHash: identity.definitionHash,
         participants: identity.participants,
         data: event.payload ?? {},
         quotationId: identity.quotationId,
@@ -907,6 +939,7 @@ export function identityOf(instance: Instance): InstanceIdentity {
     id: instance.id,
     kind: instance.kind,
     definition: instance.definition,
+    definitionHash: instance.definitionHash,
     participants: instance.participants,
     quotationId: instance.quotationId,
     offering: instance.offering,

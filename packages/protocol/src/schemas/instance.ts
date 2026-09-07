@@ -18,6 +18,7 @@ import {
   Identifier,
   Instant,
   JsonObjectSchema,
+  Sha256,
   StateId,
   Ulid,
 } from './common.js'
@@ -61,6 +62,17 @@ export function participantDids(participants: ParticipantMap): string[] {
 export const InstanceGenesis = z.strictObject({
   kind: ProcessKind,
   definition: DefinitionRef,
+  /**
+   * `sha256` of the definition document as published, so the genesis commits to
+   * the **bytes** and not merely to `id@version`.
+   *
+   * Without it, two connectors can hold different documents under one ref and
+   * each believe the other agrees — which is exactly the guarantee this object
+   * exists to provide. It was invisible while every connector mounted the same
+   * definitions directory, and became load-bearing the moment definitions could
+   * be authored at runtime and fetched from a peer.
+   */
+  definitionHash: Sha256,
   participants: ParticipantMap,
   quotationId: z.union([Ulid, z.null()]),
   offering: z.union([z.string().max(255), z.null()]),
@@ -71,6 +83,7 @@ export type InstanceGenesis = z.infer<typeof InstanceGenesis>
 export function instanceGenesis(instance: {
   kind: string
   definition: string
+  definitionHash: string
   participants: ParticipantMap
   quotationId?: string | null
   offering?: string | null
@@ -78,6 +91,7 @@ export function instanceGenesis(instance: {
   return InstanceGenesis.parse({
     kind: instance.kind,
     definition: instance.definition,
+    definitionHash: instance.definitionHash,
     participants: instance.participants,
     quotationId: instance.quotationId ?? null,
     offering: instance.offering ?? null,
@@ -88,6 +102,8 @@ export const Instance = z.strictObject({
   id: Ulid,
   kind: ProcessKind,
   definition: DefinitionRef,
+  /** The bytes of the definition this instance is pinned to. See `InstanceGenesis`. */
+  definitionHash: Sha256,
   participants: ParticipantMap,
   /** The quotation that authorised this service execution, if any. */
   quotationId: z.union([Ulid, z.null()]).default(null),

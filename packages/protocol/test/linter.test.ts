@@ -55,9 +55,21 @@ describe('M1 exit criterion: the five shipped definitions lint', () => {
     expect(result.ok).toBe(true)
   })
 
-  it.each(shippedDefinitions)('$name has no warnings either', ({ raw }) => {
+  /**
+   * The two service definitions that a quotation contracts are *correctly*
+   * warned about: every path to fulfilment crosses a link-fired transition, so
+   * they cannot be started on their own. Named here rather than tolerated
+   * wholesale, so a new, unexpected warning still fails this test.
+   */
+  const EXPECTED_WARNINGS: Record<string, string[]> = {
+    'container-transport.json': ['starts-link-dependent'],
+    'container-transport-with-terminal.json': ['starts-link-dependent'],
+  }
+
+  it.each(shippedDefinitions)('$name warns only where it should', ({ name, raw }) => {
     const result = lintDefinition(raw)
-    expect(result.diagnostics.map(formatDiagnostic)).toEqual([])
+    expect(warningCodes(result)).toEqual(EXPECTED_WARNINGS[name] ?? [])
+    expect(errorCodes(result)).toEqual([])
   })
 
   it('accepts the three-party definition under exactly the same schema', () => {
@@ -374,5 +386,175 @@ describe('warnings — worth saying, not worth refusing', () => {
       ;(d.transitions as Record<string, JsonValue>[])[0]!.auto = true
     })
     expect(warningCodes(result)).toContain('auto-with-by')
+  })
+})
+
+describe('a definition must be able to succeed, and someone must be able to make it', () => {
+  /**
+   * The regression that motivated `no-fulfilled-path`. `dead-end-state` asks
+   * whether *a* terminal state is reachable, and a `cancel` from `*` satisfies
+   * that for every state — so it stays silent on a process that can only ever
+   * be abandoned.
+   */
+  it('errors when no fulfilled ending exists, where dead-end-state cannot', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'CANCELLED', title: 'Cancelled', outcome: 'abandoned' },
+      ]
+      d['transitions'] = [
+        { id: 'cancel', title: 'Cancel', from: ['*'], to: 'CANCELLED', by: ['requester'] },
+      ]
+    })
+
+    expect(errorCodes(result)).toContain('no-fulfilled-path')
+    expect(errorCodes(result)).not.toContain('dead-end-state')
+  })
+
+  it('does not fire merely because a cancel path exists alongside a good one', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'WORKING', title: 'Working' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+        { id: 'CANCELLED', title: 'Cancelled', outcome: 'abandoned' },
+      ]
+      d['transitions'] = [
+        { id: 'start', title: 'Start', from: ['OPEN'], to: 'WORKING', by: ['provider'] },
+        { id: 'finish', title: 'Finish', from: ['WORKING'], to: 'DONE', by: ['provider'] },
+        { id: 'cancel', title: 'Cancel', from: ['*'], to: 'CANCELLED', by: ['requester'] },
+      ]
+    })
+
+    expect(errorCodes(result)).toEqual([])
+    expect(warningCodes(result)).toEqual([])
+  })
+
+  it('errors on a reachable state nothing can leave', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'STUCK', title: 'Stuck' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+      ]
+      d['transitions'] = [
+        { id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['provider'] },
+        { id: 'stick', title: 'Stick', from: ['OPEN'], to: 'STUCK', by: ['requester'] },
+      ]
+    })
+
+    const stuck = result.diagnostics.find((one) => one.code === 'no-fireable-exit')
+    expect(stuck?.severity).toBe('error')
+    expect(stuck?.message).toContain('STUCK')
+  })
+
+  it('does not call a transition nobody may fire an exit, unless something else can', () => {
+    // `escape` has `by: []` and no auto, no deadline, no link — so STUCK is
+    // still stuck, and declaring a transition out of it changes nothing.
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'STUCK', title: 'Stuck' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+      ]
+      d['transitions'] = [
+        { id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['provider'] },
+        { id: 'stick', title: 'Stick', from: ['OPEN'], to: 'STUCK', by: ['requester'] },
+        { id: 'escape', title: 'Escape', from: ['STUCK'], to: 'DONE', by: [] },
+      ]
+    })
+
+    expect(errorCodes(result)).toContain('no-fireable-exit')
+  })
+
+  it('warns that a link-driven definition cannot be started standalone', () => {
+    const result = lintWith((d) => {
+      d['transitions'] = [
+        { id: 'start', title: 'Start', from: ['OPEN'], to: 'WORKING', by: [] },
+        { id: 'finish', title: 'Finish', from: ['WORKING'], to: 'DONE', by: ['provider'] },
+      ]
+      d['links'] = [{ onEvent: 'quotation:AGREED', triggers: 'start' }]
+    })
+
+    // A warning, not an error: the definition is correct. The mistake it
+    // predicts is made at instance creation, where the connector refuses it.
+    expect(result.ok).toBe(true)
+    const warning = result.diagnostics.find((one) => one.code === 'starts-link-dependent')
+    expect(warning?.severity).toBe('warning')
+    expect(warning?.message).toContain('quotation')
+  })
+
+  it('warns about a reachable state that can only end badly', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'DOOMED', title: 'Doomed' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+        { id: 'CANCELLED', title: 'Cancelled', outcome: 'abandoned' },
+      ]
+      d['transitions'] = [
+        { id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['provider'] },
+        { id: 'doom', title: 'Doom', from: ['OPEN'], to: 'DOOMED', by: ['requester'] },
+        { id: 'quit', title: 'Quit', from: ['DOOMED'], to: 'CANCELLED', by: ['requester'] },
+      ]
+    })
+
+    expect(result.ok).toBe(true)
+    const warning = result.diagnostics.find((one) => one.code === 'unfulfillable-state')
+    expect(warning?.message).toContain('DOOMED')
+  })
+})
+
+describe('diagnostics point at nodes, so an editor can highlight them', () => {
+  it('gives every diagnostic a JSON pointer', () => {
+    const result = lintWith((d) => {
+      d['data'] = { type: 'object', properties: { x: { type: 'not-a-type' } } }
+      d['transitions'] = [{ id: 'go', title: 'Go', from: ['NOPE'], to: 'DONE', by: ['provider'] }]
+      d['visibility'] = [{ path: 'note', roles: ['nobody'] }]
+    })
+
+    expect(result.diagnostics.length).toBeGreaterThan(0)
+    for (const diagnostic of result.diagnostics) {
+      expect(diagnostic.path, `${diagnostic.code} has no path`).toBeDefined()
+      expect(diagnostic.path, `${diagnostic.code} path is not a pointer`).toMatch(/^\/[^ ]*$/)
+    }
+  })
+
+  it('names one state per diagnostic rather than listing them together', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'ISLAND_A', title: 'Island A' },
+        { id: 'ISLAND_B', title: 'Island B' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+      ]
+      d['transitions'] = [
+        { id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['provider'] },
+      ]
+    })
+
+    const unreachable = result.diagnostics.filter((one) => one.code === 'unreachable-state')
+    expect(unreachable).toHaveLength(2)
+    expect(unreachable.map((one) => one.path).sort()).toEqual(['/states/1', '/states/2'])
+  })
+
+  it('names one state per dead-end diagnostic too', () => {
+    const result = lintWith((d) => {
+      d['states'] = [
+        { id: 'OPEN', title: 'Open' },
+        { id: 'LIMBO_A', title: 'Limbo A' },
+        { id: 'LIMBO_B', title: 'Limbo B' },
+        { id: 'DONE', title: 'Done', outcome: 'fulfilled' },
+      ]
+      d['transitions'] = [
+        { id: 'finish', title: 'Finish', from: ['OPEN'], to: 'DONE', by: ['provider'] },
+        { id: 'driftA', title: 'Drift A', from: ['OPEN'], to: 'LIMBO_A', by: ['provider'] },
+        { id: 'driftB', title: 'Drift B', from: ['LIMBO_A'], to: 'LIMBO_B', by: ['provider'] },
+        { id: 'back', title: 'Back', from: ['LIMBO_B'], to: 'LIMBO_A', by: ['provider'] },
+      ]
+    })
+
+    const deadEnds = result.diagnostics.filter((one) => one.code === 'dead-end-state')
+    expect(deadEnds.map((one) => one.path).sort()).toEqual(['/states/1', '/states/2'])
   })
 })

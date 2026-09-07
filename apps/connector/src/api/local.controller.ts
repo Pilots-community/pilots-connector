@@ -25,7 +25,7 @@ import {
 } from '@nestjs/common'
 import type { FastifyReply } from 'fastify'
 
-import { Problem } from '@pilots/protocol'
+import { Problem, analyseReachability } from '@pilots/protocol'
 import { z } from 'zod'
 
 import { ApiKeyGuard, RequireScope, auditRequest, type LocalRequest } from '../auth/guards.js'
@@ -154,12 +154,23 @@ export class LocalController {
   @RequireScope('definitions.read')
   listDefinitions() {
     return {
-      definitions: this.definitions.list().map((registered) => ({
-        ref: registered.ref,
-        title: registered.definition.title,
-        kind: registered.definition.kind,
-        contentHash: registered.contentHash,
-      })),
+      definitions: this.definitions.list().map((registered) => {
+        /*
+         * Whether an instance under this definition can succeed with no
+         * relation anchored. A client uses it to avoid offering a process that
+         * would be refused at creation — computed from the graph, so a
+         * definition this connector has never seen answers the same way.
+         */
+        const standalone = analyseReachability(registered.definition)
+        return {
+          ref: registered.ref,
+          title: registered.definition.title,
+          kind: registered.definition.kind,
+          contentHash: registered.contentHash,
+          startableStandalone: standalone.fulfilmentReachable,
+          requiresRelations: standalone.fulfilmentReachable ? [] : standalone.unlockingRelations,
+        }
+      }),
     }
   }
 

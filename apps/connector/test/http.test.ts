@@ -618,3 +618,44 @@ describe('a node says whether it is configured for production', () => {
     expect(body).not.toContain('did:web')
   })
 })
+
+describe('a client can tell which processes it may start on their own', () => {
+  it('marks a link-contracted definition, and names what would unlock it', async () => {
+    const response = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/local/v1/definitions',
+      headers: local(orgAKey),
+    })
+    expect(response.statusCode).toBe(200)
+
+    const listed = response.json<{
+      definitions: Array<{ ref: string; startableStandalone: boolean; requiresRelations: string[] }>
+    }>().definitions
+    const byRef = new Map(listed.map((one) => [one.ref, one]))
+
+    // Contracted by a quotation: offering it as a standalone start walks a
+    // person into a process that can only be cancelled.
+    expect(byRef.get('container-transport@1.0.0')?.startableStandalone).toBe(false)
+    expect(byRef.get('container-transport@1.0.0')?.requiresRelations).toEqual(['quotation'])
+
+    expect(byRef.get('container-weighing@1.0.0')?.startableStandalone).toBe(true)
+    expect(byRef.get('container-weighing@1.0.0')?.requiresRelations).toEqual([])
+    expect(byRef.get('container-transport-quotation@1.0.0')?.startableStandalone).toBe(true)
+  })
+
+  it('refuses the creation the listing warned about, over HTTP', async () => {
+    const response = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/local/v1/instances',
+      headers: local(orgAKey),
+      payload: {
+        definition: 'container-transport@1.0.0',
+        participants: { shipper: ORG_A.did, transporter: ORG_B.did },
+        data: { containerType: '40HC' },
+      },
+    })
+
+    expect(response.statusCode).toBe(422)
+    expect(response.json<{ type: string }>().type).toBe(Problem.instanceUnfulfillable)
+  })
+})

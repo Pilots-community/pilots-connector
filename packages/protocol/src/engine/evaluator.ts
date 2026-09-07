@@ -295,6 +295,8 @@ export function autoTransitions(
 
 export interface CreateRequest {
   id: string
+  /** `sha256` of the definition document, so the genesis pins the bytes. */
+  definitionHash: string
   participants: ParticipantMap
   data?: JsonObject
   quotationId?: string | null
@@ -382,6 +384,7 @@ export function evaluateCreate(
     id: request.id,
     kind: definition.kind,
     definition: `${definition.id}@${definition.version}`,
+    definitionHash: request.definitionHash,
     participants: request.participants,
     quotationId: request.quotationId ?? null,
     offering: request.offering ?? null,

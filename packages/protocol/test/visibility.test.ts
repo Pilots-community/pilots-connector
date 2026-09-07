@@ -22,6 +22,7 @@ function weighingInstance(state: string): Instance {
     id: '01J0000000000000000000000A',
     kind: 'service',
     definition: 'container-weighing@1.0.0',
+    definitionHash: `sha256:${'d'.repeat(64)}`,
     participants: { shipper: 'did:web:org-a.example', weigher: 'did:web:org-b.example' },
     quotationId: null,
     offering: null,

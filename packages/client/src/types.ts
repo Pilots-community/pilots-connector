@@ -81,6 +81,18 @@ export interface DefinitionSummary {
   title: string
   kind: 'quotation' | 'service'
   contentHash: string
+  /**
+   * Whether an instance under this definition can reach a fulfilled state with
+   * no relation anchored at creation.
+   *
+   * `false` means the definition is contracted by another process — every path
+   * to success crosses a transition a link fires — so creating one on its own
+   * is refused. Offer it accordingly rather than letting a person walk into a
+   * process that can only be cancelled.
+   */
+  startableStandalone: boolean
+  /** The relations that would make it startable. Empty when it already is. */
+  requiresRelations: string[]
 }
 
 export interface CreateInstanceRequest {

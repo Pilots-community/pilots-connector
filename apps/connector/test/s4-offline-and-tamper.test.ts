@@ -171,7 +171,10 @@ describe('S4b — tamper detection', () => {
     const events = await orgB.runtime.store.events.read(ORG_B.id, id, 0)
     const target = events[1]!
     const tampered = {
-      instance: { ...identityOf(id), createdAt: events[0]!.header.at },
+      instance: {
+        ...identityOf(id, orgA.runtime.registry.require('container-weighing@1.0.0').contentHash),
+        createdAt: events[0]!.header.at,
+      },
       events: [
         {
           header: target.header,
@@ -204,7 +207,10 @@ describe('S4b — tamper detection', () => {
     const events = await orgB.runtime.store.events.read(ORG_B.id, id, 0)
     const target = events[1]!
     const rewritten = {
-      instance: { ...identityOf(id), createdAt: events[0]!.header.at },
+      instance: {
+        ...identityOf(id, orgA.runtime.registry.require('container-weighing@1.0.0').contentHash),
+        createdAt: events[0]!.header.at,
+      },
       events: [
         {
           header: { ...target.header, to: 'WEIGHED' },
@@ -241,7 +247,7 @@ describe('S4b — tamper detection', () => {
     // package, where the rule lives.
     const swapped = {
       instance: {
-        ...identityOf(id),
+        ...identityOf(id, orgA.runtime.registry.require('container-weighing@1.0.0').contentHash),
         createdAt: events[0]!.header.at,
         definition: 'container-weighing-quotation@1.0.0',
       },
@@ -267,7 +273,7 @@ describe('S4b — tamper detection', () => {
 
     const foreign = {
       instance: {
-        ...identityOf(id),
+        ...identityOf(id, orgA.runtime.registry.require('container-weighing@1.0.0').contentHash),
         createdAt: events[0]!.header.at,
         participants: {
           shipper: 'did:web:someone.example',
@@ -291,11 +297,15 @@ describe('S4b — tamper detection', () => {
   })
 })
 
-function identityOf(id: string) {
+function identityOf(id: string, definitionHash: string) {
   return {
     id,
     kind: 'service' as const,
     definition: 'container-weighing@1.0.0',
+    // The real hash, read from the registry: the genesis commits to the bytes,
+    // so a stand-in here would fail the chain check for the wrong reason and
+    // this test would stop testing tampering.
+    definitionHash,
     participants: PARTICIPANTS,
     quotationId: null,
     offering: null,

@@ -450,6 +450,7 @@ describe('every event commits to the instance it belongs to', () => {
       genesis: instanceGenesis({
         kind: 'service',
         definition: 'container-weighing@1.0.0',
+        definitionHash: `sha256:${'d'.repeat(64)}`,
         participants: { shipper: THIRD, weigher: ORG_B },
       }),
     })
@@ -467,6 +468,7 @@ describe('every event commits to the instance it belongs to', () => {
       genesis: instanceGenesis({
         kind: 'service',
         definition: 'container-transport@1.0.0',
+        definitionHash: `sha256:${'d'.repeat(64)}`,
         participants,
       }),
     })
@@ -481,6 +483,7 @@ describe('every event commits to the instance it belongs to', () => {
       instanceGenesis({
         kind: 'service',
         definition: 'container-weighing@1.0.0',
+        definitionHash: `sha256:${'d'.repeat(64)}`,
         participants: { shipper: THIRD, weigher: ORG_B },
       }),
     )
@@ -514,12 +517,18 @@ describe('every event commits to the instance it belongs to', () => {
   it('hashes genesis independently of key order', () => {
     expect(
       genesisHash(
-        instanceGenesis({ kind: 'service', definition: 'container-weighing@1.0.0', participants }),
+        instanceGenesis({
+          kind: 'service',
+          definition: 'container-weighing@1.0.0',
+          definitionHash: `sha256:${'d'.repeat(64)}`,
+          participants,
+        }),
       ),
     ).toBe(
       genesisHash(
         instanceGenesis({
           participants: { weigher: ORG_B, shipper: ORG_A },
+          definitionHash: `sha256:${'d'.repeat(64)}`,
           definition: 'container-weighing@1.0.0',
           kind: 'service',
         }),

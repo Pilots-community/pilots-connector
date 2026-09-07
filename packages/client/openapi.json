@@ -792,6 +792,10 @@
             "type": "string",
             "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?@(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
           },
+          "definitionHash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
           "participants": {
             "type": "object",
             "propertyNames": {
@@ -874,6 +878,7 @@
           "id",
           "kind",
           "definition",
+          "definitionHash",
           "participants",
           "quotationId",
           "offering",

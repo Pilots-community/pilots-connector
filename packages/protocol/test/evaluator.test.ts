@@ -24,6 +24,7 @@ function instanceOf(overrides: Partial<Instance> = {}): Instance {
     id: '01J0000000000000000000000A',
     kind: 'service',
     definition: 'container-weighing@1.0.0',
+    definitionHash: `sha256:${'d'.repeat(64)}`,
     participants: { shipper: ORG_A, weigher: ORG_B },
     quotationId: null,
     offering: null,
@@ -405,6 +406,7 @@ describe('autoTransitions — what makes a standing quotation a definition conce
 describe('evaluateCreate', () => {
   const base = {
     id: '01J0000000000000000000000A',
+    definitionHash: `sha256:${'d'.repeat(64)}`,
     participants: { shipper: ORG_A, weigher: ORG_B },
     data: { containerNumber: 'MSCU1234567', terminal: '869' },
     actorDid: ORG_A,

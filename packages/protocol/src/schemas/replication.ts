@@ -14,7 +14,7 @@
  */
 import { z } from 'zod'
 
-import { DefinitionRef, Instant, Ulid } from './common.js'
+import { DefinitionRef, Instant, Sha256, Ulid } from './common.js'
 import { ProcessKind } from './definition.js'
 import { SignedEvent } from './event.js'
 import { ParticipantMap } from './instance.js'
@@ -30,6 +30,9 @@ export const InstanceIdentity = z.strictObject({
   id: Ulid,
   kind: ProcessKind,
   definition: DefinitionRef,
+  /** The bytes, not only the name. A receiver that must fetch this definition
+   *  checks what it is given against this. */
+  definitionHash: Sha256,
   participants: ParticipantMap,
   quotationId: z.union([Ulid, z.null()]).default(null),
   offering: z.union([z.string().max(255), z.null()]).default(null),
