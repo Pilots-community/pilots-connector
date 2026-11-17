@@ -1,6 +1,6 @@
 # AGENT.md — standing context for `pilots-service`
 
-Read this first. It is the entry point for any session working in this repo. test
+Read this first. It is the entry point for any session working in this repo.
 
 ## Scope of this file
 
