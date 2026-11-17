@@ -11,7 +11,7 @@
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm --filter @pilots/protocol build && pnpm --filter @pilots/client build && pnpm -r typecheck",
+    "typecheck": "pnpm --filter @pilots/protocol build && pnpm --filter @pilots/client build && pnpm --filter @pilots/bpmn build && pnpm -r typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

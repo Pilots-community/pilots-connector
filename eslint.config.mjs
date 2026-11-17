@@ -40,6 +40,8 @@ export default tseslint.config(
       'boundaries/elements': [
         { type: 'protocol', pattern: 'packages/protocol/*' },
         { type: 'client', pattern: 'packages/client/*' },
+        { type: 'bpmn', pattern: 'packages/bpmn/*' },
+        { type: 'connector-test', pattern: 'apps/connector/test/**' },
         { type: 'connector', pattern: 'apps/connector/*' },
         { type: 'process-ui', pattern: 'apps/process-ui/*' },
         { type: 'backoffice', pattern: 'apps/mock-backoffice/*' },
@@ -83,6 +85,23 @@ export default tseslint.config(
             {
               from: { element: { type: 'client' } },
               allow: { to: { element: { types: { anyOf: ['client', 'protocol'] } } } },
+            },
+            // The diagram is a projection of the spec and depends on nothing else.
+            {
+              from: { element: { type: 'bpmn' } },
+              allow: { to: { element: { types: { anyOf: ['bpmn', 'protocol'] } } } },
+            },
+            // A scenario test may build its fixture with the editor's commands, to
+            // prove an editor-made process runs here. The connector itself may not.
+            {
+              from: { element: { type: 'connector-test' } },
+              allow: {
+                to: {
+                  element: {
+                    types: { anyOf: ['connector-test', 'connector', 'client', 'protocol', 'bpmn'] },
+                  },
+                },
+              },
             },
             {
               from: { element: { type: 'connector' } },

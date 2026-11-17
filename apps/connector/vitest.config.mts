@@ -21,6 +21,7 @@ export default defineConfig({
       // More specific entries first: these are prefix matches, so a bare
       // '@pilots/protocol' alias would rewrite the subpath entries into
       // `.../src/index.ts/did-web` and fail with ENOTDIR.
+      '@pilots/bpmn': resolve(here, '../../packages/bpmn/src/index.ts'),
       '@pilots/client': resolve(here, '../../packages/client/src/index.ts'),
       '@pilots/protocol/did-web': resolve(here, '../../packages/protocol/src/did-web.ts'),
       '@pilots/protocol/testing': resolve(here, '../../packages/protocol/src/testing/index.ts'),
