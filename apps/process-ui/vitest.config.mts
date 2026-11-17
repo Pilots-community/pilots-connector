@@ -11,6 +11,7 @@ export default defineConfig({
       // Against source, so a change to the client or the spec is visible here
       // without a build step. Note what is *not* aliased: `apps/connector`. It
       // must not be reachable from this app, and the lint rule says so too.
+      '@pilots/bpmn': resolve(here, '../../packages/bpmn/src/index.ts'),
       '@pilots/client': resolve(here, '../../packages/client/src/index.ts'),
       '@pilots/protocol': resolve(here, '../../packages/protocol/src/index.ts'),
     },

@@ -113,7 +113,7 @@ export default tseslint.config(
             {
               from: { element: { type: 'process-ui' } },
               allow: {
-                to: { element: { types: { anyOf: ['process-ui', 'client', 'protocol'] } } },
+                to: { element: { types: { anyOf: ['process-ui', 'client', 'protocol', 'bpmn'] } } },
               },
             },
             // The backoffice is an ordinary integrator: the client and nothing
