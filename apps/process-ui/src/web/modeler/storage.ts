@@ -4,7 +4,7 @@
  * guarded: a private window or blocked site data must cost the author their
  * draft on reload, not the editor.
  */
-import type { DefinitionDocument, DiagramLayout } from '@pilots/bpmn'
+import { isDrawable, type DiagramLayout } from '@pilots/bpmn'
 
 import type { Snapshot } from './draft.js'
 
@@ -34,9 +34,10 @@ export function loadDraft(store: Store | null): Snapshot | null {
     const raw = store.getItem(DRAFT)
     if (raw === null) return null
     const value: unknown = JSON.parse(raw)
-    if (!isRecord(value) || !isRecord(value['document'])) return null
+    // A draft the canvas cannot draw would blank the page on load: start over instead.
+    if (!isRecord(value) || !isDrawable(value['document'])) return null
     return {
-      document: value['document'] as unknown as DefinitionDocument,
+      document: value['document'],
       layout: isRecord(value['layout']) ? (value['layout'] as DiagramLayout) : {},
     }
   } catch {

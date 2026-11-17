@@ -6,12 +6,16 @@
 import {
   LANE_HEIGHT,
   laneAt,
+  pointerOf,
+  type DefinitionDocument,
   type DiagramLayout,
   type DiagramModel,
   type DiagramNode,
   type ElementRef,
 } from '@pilots/bpmn'
 import type { Edge, Node } from '@xyflow/react'
+
+import type { DefinitionDiagnostic } from '../api.js'
 
 export const LANE_WIDTH = 2400
 
@@ -73,4 +77,15 @@ export function refOfKey(model: DiagramModel, key: string): ElementRef | null {
   return (
     model.nodes.find((one) => one.key === key)?.ref ?? model.edges.find((one) => one.key === key)?.ref ?? null
   )
+}
+
+/** The diagnostics about one element: the linter's pointer is the element's own, or inside it. */
+export function diagnosticsOf(
+  document: DefinitionDocument,
+  ref: ElementRef,
+  diagnostics: readonly DefinitionDiagnostic[],
+): DefinitionDiagnostic[] {
+  const pointer = pointerOf(document, ref)
+  if (pointer === null) return []
+  return diagnostics.filter((one) => one.path === pointer || one.path?.startsWith(`${pointer}/`) === true)
 }

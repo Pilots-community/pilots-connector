@@ -3,12 +3,14 @@
  * command is explained — with "remove with dependents" offered when that is
  * what the refusal was about (B6).
  */
-import { toDiagram, withLayout, type Command } from '@pilots/bpmn'
+import { applyCommand, withLayout, type Command, type DiagramModel, type ElementRef } from '@pilots/bpmn'
 import { useMemo, useState } from 'react'
 
+import type { DefinitionDiagnostic } from '../api.js'
 import { ghost } from '../ui.js'
 import { Canvas } from './Canvas.js'
 import type { DraftAction, DraftState } from './draft.js'
+import { refOfKey } from './flow.js'
 import { NewElement, type Pending } from './NewElement.js'
 import { Palette } from './Palette.js'
 import { Properties } from './Properties.js'
@@ -16,15 +18,20 @@ import { Properties } from './Properties.js'
 export function Modeler({
   draft,
   dispatch,
+  model,
   flagged,
+  diagnostics,
 }: {
   draft: DraftState
   dispatch: (action: DraftAction) => void
+  /** Projected by the caller, which projects only a document `isDrawable` accepts. */
+  model: DiagramModel
   flagged: ReadonlySet<string>
+  diagnostics: readonly DefinitionDiagnostic[]
 }) {
-  const model = useMemo(() => toDiagram(draft.document), [draft.document])
   const layout = useMemo(() => withLayout(model, draft.layout), [model, draft.layout])
-  const [selected, setSelected] = useState<string | null>(null)
+  // The element, not its node key: a rename changes the key, and must not drop the selection.
+  const [selected, setSelected] = useState<ElementRef | null>(null)
   // Each request is its own form: the counter is the key, so a second arrow
   // never inherits what was typed for the first.
   const [pending, setPendingState] = useState<{ request: Pending; id: number } | null>(null)
@@ -33,7 +40,19 @@ export function Modeler({
     setPendingState({ request, id: requests })
     setRequests(requests + 1)
   }
-  const run = (command: Command): void => dispatch({ type: 'command', command })
+  const run = (command: Command): void => {
+    if (
+      command.type === 'rename' &&
+      !draft.readOnly &&
+      selected !== null &&
+      selected.kind === command.kind &&
+      selected.id === command.from &&
+      applyCommand(draft.document, command).ok
+    ) {
+      setSelected({ kind: command.kind, id: command.to })
+    }
+    dispatch({ type: 'command', command })
+  }
   const failure = draft.failure
 
   return (
@@ -88,9 +107,15 @@ export function Modeler({
           onMove={(key, x, y) => dispatch({ type: 'move', key, x, y })}
           onMoveTask={(change) => run({ type: 'moveTask', ...change })}
           onConnectStates={(from, to) => setPending({ kind: 'task', from, to })}
-          onSelect={setSelected}
+          onSelect={(key) => setSelected(key === null ? null : refOfKey(model, key))}
         />
-        <Properties document={draft.document} model={model} selected={selected} readOnly={draft.readOnly} run={run} />
+        <Properties
+          document={draft.document}
+          selected={selected}
+          diagnostics={diagnostics}
+          readOnly={draft.readOnly}
+          run={run}
+        />
       </div>
     </div>
   )

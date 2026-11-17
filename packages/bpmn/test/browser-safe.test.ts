@@ -18,15 +18,23 @@ function sources(dir: string): string[] {
   })
 }
 
+/** A value import *or re-export* from the protocol or zod; `import type` / `export type` are erased. */
+const VALUE_FROM = /^(?:import|export)\s+(?!type\b)[^;]*from\s+'(@pilots\/protocol|zod)'/m
+
 describe('browser safety', () => {
   it('imports the protocol and zod as types only, and nothing from node', () => {
     const offenders = sources(SRC).filter((path) => {
       const text = readFileSync(path, 'utf8')
-      return (
-        /^import\s+(?!type\b)[^;]*from\s+'(@pilots\/protocol|zod)'/m.test(text) ||
-        /from\s+'node:/.test(text)
-      )
+      return VALUE_FROM.test(text) || /from\s+'node:/.test(text)
     })
     expect(offenders).toEqual([])
+  })
+
+  it('catches a value re-export as well as a value import', () => {
+    expect(VALUE_FROM.test(`import { hashJson } from '@pilots/protocol'`)).toBe(true)
+    expect(VALUE_FROM.test(`export { hashJson } from '@pilots/protocol'`)).toBe(true)
+    expect(VALUE_FROM.test(`export * from 'zod'`)).toBe(true)
+    expect(VALUE_FROM.test(`import type { z } from 'zod'`)).toBe(false)
+    expect(VALUE_FROM.test(`export type { JsonValue } from '@pilots/protocol'`)).toBe(false)
   })
 })

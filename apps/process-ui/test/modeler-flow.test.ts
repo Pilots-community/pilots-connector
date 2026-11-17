@@ -1,7 +1,7 @@
 import { LANE_HEIGHT, toDiagram, withLayout, type DefinitionDocument } from '@pilots/bpmn'
 import { describe, expect, it } from 'vitest'
 
-import { laneChange, refOfKey, stateOfKey, toFlow } from '../src/web/modeler/flow.js'
+import { diagnosticsOf, laneChange, refOfKey, stateOfKey, toFlow } from '../src/web/modeler/flow.js'
 
 const document: DefinitionDocument = {
   id: 'p',
@@ -54,5 +54,22 @@ describe('keys', () => {
     expect(refOfKey(model, 'lane:beta')).toEqual({ kind: 'role', id: 'beta' })
     expect(refOfKey(model, 'task:finish@alpha')).toEqual({ kind: 'transition', id: 'finish' })
     expect(refOfKey(model, 'nothing')).toBeNull()
+  })
+})
+
+describe('diagnosticsOf', () => {
+  const diagnostics = [
+    { code: 'a', severity: 'error' as const, message: 'the state', path: '/states/1' },
+    { code: 'b', severity: 'warning' as const, message: 'inside the task', path: '/transitions/0/to' },
+    { code: 'c', severity: 'error' as const, message: 'the process', path: '/hostedBy' },
+    { code: 'd', severity: 'error' as const, message: 'no path' },
+    { code: 'e', severity: 'error' as const, message: 'a sibling', path: '/states/10' },
+  ]
+
+  it('lists what the linter said about the selected element, and only that', () => {
+    expect(diagnosticsOf(document, { kind: 'state', id: 'DONE' }, diagnostics).map((d) => d.code)).toEqual(['a'])
+    expect(diagnosticsOf(document, { kind: 'transition', id: 'finish' }, diagnostics).map((d) => d.code)).toEqual(['b'])
+    expect(diagnosticsOf(document, { kind: 'role', id: 'beta' }, diagnostics)).toEqual([])
+    expect(diagnosticsOf(document, { kind: 'state', id: 'GONE' }, diagnostics)).toEqual([])
   })
 })

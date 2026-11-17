@@ -2,8 +2,25 @@
  * Inputs that commit on blur or Enter, not per keystroke: every commit is a
  * command, an undo entry and a lint request, and a title typed letter by letter
  * should be one of each, not twenty.
+ *
+ * A commit can be refused (a rename to an id already taken). The render after a
+ * commit carries the document's answer in `value`, so the text is reset to it
+ * then: the new value if the command took, the old one if it did not.
  */
 import { useEffect, useState, type ReactNode } from 'react'
+
+/** Local text that follows `value`, and falls back to it on the render after a commit. */
+function useCommittedText(value: string): [string, (text: string) => void, () => void] {
+  const [text, setText] = useState(value)
+  const [committed, setCommitted] = useState(false)
+  useEffect(() => setText(value), [value])
+  useEffect(() => {
+    if (!committed) return
+    setText(value)
+    setCommitted(false)
+  }, [committed, value])
+  return [text, setText, () => setCommitted(true)]
+}
 
 import { button, ghost, input } from '../ui.js'
 
@@ -20,10 +37,11 @@ export function TextField({
   testid?: string
   placeholder?: string
 }) {
-  const [text, setText] = useState(value)
-  useEffect(() => setText(value), [value])
+  const [text, setText, settle] = useCommittedText(value)
   const commit = (): void => {
-    if (text !== value) onCommit(text)
+    if (text === value) return
+    onCommit(text)
+    settle()
   }
   return (
     <Labelled label={label}>
@@ -63,12 +81,11 @@ function CommitInput<T>({
   type?: string
 }) {
   const shown = format(value)
-  const [text, setText] = useState(shown)
-  useEffect(() => setText(shown), [shown])
+  const [text, setText, settle] = useCommittedText(shown)
   const commit = (): void => {
     const next = parse(text)
     if (!same(next, value)) onCommit(next)
-    else setText(shown)
+    settle()
   }
   return (
     <input

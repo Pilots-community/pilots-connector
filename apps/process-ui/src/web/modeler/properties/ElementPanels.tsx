@@ -11,6 +11,17 @@ interface Props {
   run: (command: Command) => void
 }
 
+/** The element's raw JSON, folded away: whatever its form cannot express is changed here. */
+function AdvancedSection({ document, pointer, run }: Props & { pointer: string | null }) {
+  if (pointer === null) return null
+  return (
+    <details>
+      <summary className="cursor-pointer text-xs text-slate-500">Advanced (JSON)</summary>
+      <Advanced document={document} pointer={pointer} run={run} />
+    </details>
+  )
+}
+
 const removeButton = (label: string, act: () => void) => (
   <button type="button" className={`${ghost} text-rose-700 dark:text-rose-400`} data-testid="remove-element" onClick={act}>
     {label}
@@ -42,6 +53,7 @@ export function RolePanel({ document, id, run }: Props & { id: string }) {
           <option value="observer">observer</option>
         </select>
       </Labelled>
+      <AdvancedSection document={document} pointer={pointerOf(document, { kind: 'role', id })} run={run} />
       {removeButton('Remove lane', () => run({ type: 'remove', kind: 'role', id }))}
     </>
   )
@@ -74,6 +86,7 @@ export function StatePanel({ document, id, run }: Props & { id: string }) {
           <option value="abandoned">yes — abandoned</option>
         </select>
       </Labelled>
+      <AdvancedSection document={document} pointer={pointerOf(document, { kind: 'state', id })} run={run} />
       {removeButton('Remove state', () => run({ type: 'remove', kind: 'state', id }))}
     </>
   )
@@ -85,7 +98,6 @@ export function TaskPanel({ document, id, run }: Props & { id: string }) {
   const update = (patch: Extract<Command, { type: 'updateTransition' }>['patch']): void =>
     run({ type: 'updateTransition', id, patch })
   const wildcard = transition.from.includes(ANY_STATE)
-  const pointer = pointerOf(document, { kind: 'transition', id })
   return (
     <>
       <h3 className="font-semibold">Task</h3>
@@ -157,12 +169,7 @@ export function TaskPanel({ document, id, run }: Props & { id: string }) {
       <Deadline document={document} id={id} run={run} />
       <h4 className="pt-2 text-xs font-semibold">Data in this step</h4>
       <TaskFieldsEditor document={document} transition={transition} run={run} />
-      {pointer !== null && (
-        <details>
-          <summary className="cursor-pointer text-xs text-slate-500">Advanced (JSON)</summary>
-          <Advanced document={document} pointer={pointer} run={run} />
-        </details>
-      )}
+      <AdvancedSection document={document} pointer={pointerOf(document, { kind: 'transition', id })} run={run} />
       {removeButton('Remove task', () => run({ type: 'remove', kind: 'transition', id }))}
     </>
   )
@@ -232,6 +239,7 @@ export function LinkPanel({ document, index, run }: Props & { index: number }) {
           ))}
         </select>
       </Labelled>
+      <AdvancedSection document={document} pointer={pointerOf(document, { kind: 'link', index })} run={run} />
       {removeButton('Remove message', () => run({ type: 'removeLink', index }))}
     </>
   )

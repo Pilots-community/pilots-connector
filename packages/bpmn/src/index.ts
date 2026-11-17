@@ -72,3 +72,4 @@ export {
 } from './forms/task-fields.js'
 export { readAccess, visibilityPaths, writeAccess, type Access } from './forms/visibility.js'
 export { targetOf, type DiagnosticTarget } from './diagnostics.js'
+export { isDrawable } from './drawable.js'

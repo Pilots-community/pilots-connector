@@ -17,7 +17,10 @@ never seen it: the peer's connector fetches the document, checks it against the 
 signed against, and holds it for an operator who accepts once per definition and is never asked again.
 The connector refuses a definition with no reachable good ending, and refuses an *instance* that could
 only ever be cancelled. Nothing in the connector, the protocol, the client or either base UI names a
-logistics term. 644 tests (~5 s, no containers) and 15 Playwright specs.
+logistics term. On top of it sits the BPMN modeler (sub-project 1 of the BPMN track,
+[spec 2026-11-17](docs/superpowers/specs/2026-11-17-bpmn-modeler-design.md)): a Diagram tab on the
+Authoring view that draws a definition and edits the same JSON. 806 tests (~10 s, no containers) and
+17 Playwright specs.
 
 M6 before it is measured and hardened: every topology started cold and counted by
 `pnpm bench:topologies` (2 containers headless, 4 with a UI, 4 with a backoffice, **0 databases** in all
@@ -151,6 +154,9 @@ pilots-service/
   packages/client/       Typed local-API client + a committed OpenAPI document, so a
                          non-TypeScript integrator generates their own rather than
                          reimplementing this one. Depends on the protocol, never on the connector.
+  packages/bpmn/         A definition as a BPMN-style diagram (`toDiagram`) and every edit as a
+                         command on the definition (`applyCommand`). Pure, browser-safe: the
+                         protocol and zod are type-only imports. Never parsed back, so lossless.
   apps/connector/        NestJS (Fastify adapter). Three API surfaces + admin UI.
     src/peer/            The peer surface as a plain function, the Transport port, the in-process
                          and HTTP adapters, bearer tokens, and the relay. The Nest controller is a
@@ -186,6 +192,8 @@ pilots-service/
       graph/             `toGraph` — definition + event log to nodes and edges, pure and
                          unit-tested — and the React Flow surface. Read-only now; the same
                          model an editor mutates at Iteration 2.
+      modeler/           The Diagram tab: palette, canvas, properties panel, over one draft
+                         shared with the JSON tab. Drafts and layout stay in the browser.
       live/              The `ChangeFeed` port. Polling and window-focus adapters today; a
                          notification-driven nudge is a third adapter, not a rewrite.
   tests/e2e/             Playwright. Wiring and UI only, never protocol behaviour.
@@ -194,6 +202,9 @@ pilots-service/
 
 **Boundary rule, lint-enforced:** `apps/process-ui` may import `packages/client` and `packages/protocol`.
 It may **never** import from `apps/connector`. A gap there is a gap in the local API.
+`apps/process-ui` may also import `packages/bpmn`, which may import only `packages/protocol`; connector
+**tests** may import `packages/bpmn`, the connector itself may not. The SPA consumes `packages/bpmn` as a
+built package, so build `packages/protocol` and then `packages/bpmn` before `dev:web`.
 
 **Stack is finalised — see [docs/STACK.md](docs/STACK.md) before adding any dependency.** pnpm
 workspace, Node 24, TS strict, **Vitest**. `zod` 4 for protocol shapes, **`Ajv`** (2020-12) for the JSON
@@ -232,6 +243,7 @@ pnpm bench:topologies                        # every topology, started cold and 
 # `down` as to `up`, or the overlay's containers and volumes outlive the demo.
 docker compose -f docker-compose.yml -f docker-compose.automated.yml up   # +backoffice
 docker compose -f docker-compose.yml -f docker-compose.mongo.yml up       # +document store
+pnpm --filter @pilots/protocol build && pnpm --filter @pilots/bpmn build   # once, before dev:web — the SPA imports their build
 pnpm --filter @pilots/process-ui dev         # BFF on :4000
 pnpm --filter @pilots/process-ui dev:web     # SPA on :5175, proxying the BFF
 
@@ -320,7 +332,7 @@ Full detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 | **M4** — quotations, links, deadlines ✅ **done** | `quotationId`, `links` evaluation with `cause` in the header, deadline scan loop (fake-clock tested), content-addressed attachments, offering discovery | Met: S2 as a scenario test and across two containers — counter-offer loop, the link firing `startExecution`, `409` through the relay, an offer expiring on `PT24H`; 427 tests, ~2.9 s |
 | **M5** — process UI + integration surface ✅ **done** | `packages/client` + OpenAPI, `apps/process-ui` as its own container, generic transition rendering, event log with verification status, boundary lint rule, Playwright | Met: S1 through the UI on both sides; four containers, 0 databases, first transaction ~12 s; `org-a-ui` stopped mid-process and the connector carried on; 7 Playwright specs. The mock-backoffice container run moves to M6 |
 | **M6** — measure and harden ✅ **done** | Managed document store profile, mock backoffice as a service, `bench` for all four topologies, retries / dead letters / replay / re-hosting, multi-participant test, audit retention | Met: every topology started cold and counted — 2/4/4/0 containers, **0 databases** in all of them, first transaction 5.6–11.4 s against 60 s; 506 tests, ~4 s. Found three real bugs, including a large party regenerating its signing key on every restart |
-| **M6.5** — open foundation ✅ **done** | Definition authoring in the UI and from JSON (`definitions:write` on the local surface, dry-run lint + immutable publish), four new lint rules (`no-fulfilled-path`, `no-fireable-exit`, `starts-link-dependent`, `unfulfillable-state`), `definitionHash` in the instance genesis, creation refused when no fulfilled state is reachable, peer definitions fetched and adopted once per definition with a structural diff, all domain vocabulary removed from the connector and base UIs | Met: a process authored in Org A's browser, adopted by Org B's operator and run to completion across two containers; 644 tests, 15 Playwright specs; the demo's dead end is prevented rather than encountered |
+| **M6.5** — open foundation ✅ **done** | Definition authoring in the UI and from JSON (`definitions:write` on the local surface, dry-run lint + immutable publish), four new lint rules (`no-fulfilled-path`, `no-fireable-exit`, `starts-link-dependent`, `unfulfillable-state`), `definitionHash` in the instance genesis, creation refused when no fulfilled state is reachable, peer definitions fetched and adopted once per definition with a structural diff, all domain vocabulary removed from the connector and base UIs | Met: a process authored in Org A's browser, adopted by Org B's operator and run to completion across two containers; 644 tests, 15 Playwright specs (806 and 17 after the modeler); the demo's dead end is prevented rather than encountered |
 | **M7** — publish and deploy *(current target, event-triggered: starts when collaboration begins, on the supervisor's word — not on M6 completing)* | Two CI systems split by audience: **Bitbucket Pipelines → AWS ECR** (our demos) and **GitHub Actions → GHCR** (participants, maybe public). Terraform **in this repo**, single-org scope. `did:web` hosting as a separate module. Origin migrates to GitHub, Bitbucket becomes mirror | Tagged release publishes both images; Pipelines deploys one participant to ECS from Terraform, no manual step; a third party can run `infra/examples/single-org-aws` with only committed files + their own tfvars; secret scan over full history clean |
 
 ## Working agreements

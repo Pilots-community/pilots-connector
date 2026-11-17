@@ -4,7 +4,7 @@
 `apps/process-ui`. The connector, the protocol and the client are **unchanged**. M7 stays
 event-triggered.*
 
-Status: **accepted**, not yet implemented.
+Status: **accepted**, implemented.
 
 Decisions are numbered `B1…` to avoid colliding with the `D`, `P` and `F` series in the earlier records.
 
@@ -293,3 +293,6 @@ not a change to it.
 2. **Layout persistence beyond the browser.** v1 keeps layout in `localStorage`, so a published
    definition opens with auto-layout on another machine. Acceptable for v1, or should the author's
    layout travel (e.g. as a sidecar beside the published definition, outside its hash)?
+3. **Drafts per definition (deferred).** A draft is one browser slot, not keyed per definition id:
+   opening or starting another process replaces it. v1 protects a draft with unpublished changes by a
+   confirmation instead. Should drafts be kept per id, so several can be in progress at once?

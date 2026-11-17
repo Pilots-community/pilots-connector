@@ -307,6 +307,8 @@ test.describe('a process nobody shipped', () => {
     await page.goto('/')
     await signIn(page, ORG_A)
     await page.getByTestId('tab-authoring').click()
+    // The Diagram tab opens first now; this test is about the JSON route.
+    await page.getByTestId('authoring-tab-json').click()
 
     // A process that cannot succeed is refused *before* anyone tries to run it,
     // and the diagnostic names the rule rather than saying "invalid".

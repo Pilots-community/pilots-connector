@@ -17,6 +17,12 @@ Check a definition with:
 pnpm lint:definitions
 ```
 
+A definition can also be **drawn**: the process UI's Authoring view has a Diagram tab that shows it in
+BPMN notation — roles as lanes, transitions as tasks, states as events, deadlines as timers, links as
+messages — and turns every gesture into an edit of this same document
+([design](superpowers/specs/2026-11-17-bpmn-modeler-design.md)). The JSON stays the source of truth; the
+diagram never adds anything to it, and its layout is kept outside it so it cannot change the hash.
+
 ## 1. Skeleton
 
 ```jsonc

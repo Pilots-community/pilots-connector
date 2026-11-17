@@ -19,7 +19,8 @@ const broken: Pick<Storage, 'getItem' | 'setItem'> = {
 describe('draft storage', () => {
   it('round-trips a draft and a layout per definition', () => {
     const store = memory()
-    const snapshot = { document: { id: 'p' } as never, layout: { 'state:A': { x: 1, y: 2 } } }
+    const document = { id: 'p', roles: [], states: [], transitions: [] } as never
+    const snapshot = { document, layout: { 'state:A': { x: 1, y: 2 } } }
     expect(saveDraft(store, snapshot)).toBe(true)
     expect(loadDraft(store)).toEqual(snapshot)
     expect(saveLayout(store, 'p@1.0.0', snapshot.layout)).toBe(true)
@@ -34,5 +35,16 @@ describe('draft storage', () => {
     store.setItem('pilots.modeler.draft', '{not json')
     expect(loadDraft(store)).toBeNull()
     expect(loadDraft(null)).toBeNull()
+  })
+
+  it('drops a stored draft the canvas cannot draw, so the editor starts from the starter', () => {
+    const store = memory()
+    store.setItem('pilots.modeler.draft', JSON.stringify({ document: {}, layout: {} }))
+    expect(loadDraft(store)).toBeNull()
+    const halfTyped = { id: 'p', roles: [], states: [], transitions: [{ id: 't', title: 'T', by: [] }] }
+    store.setItem('pilots.modeler.draft', JSON.stringify({ document: halfTyped, layout: {} }))
+    expect(loadDraft(store)).toBeNull()
+    store.setItem('pilots.modeler.draft', JSON.stringify({ document: { ...halfTyped, roles: {} }, layout: {} }))
+    expect(loadDraft(store)).toBeNull()
   })
 })
