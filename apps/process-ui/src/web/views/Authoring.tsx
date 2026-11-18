@@ -2,25 +2,31 @@
  * Writing a process definition.
  *
  * The document is the authority and the diagram is a projection of it — not the
- * other way round. That ordering is deliberate: a canvas editor arrives later
- * and will mutate this same document, so anything the canvas cannot express
- * (data schemas, patches, guards, visibility rules) stays expressible here
- * rather than being lost on a round trip.
+ * other way round. The Diagram tab edits this same document through commands
+ * (`@pilots/bpmn`), with forms for the data schema, what each step fills in and
+ * requires, and who sees what, and an Advanced (JSON) section per element for
+ * the rest. The JSON tab is the whole document as text: anything typed there is
+ * kept, so nothing is lost on a round trip — and a JSON object the canvas cannot
+ * draw yet is shown as a notice, not a blank page.
  *
  * Validation comes from the connector, not from a copy of the rules in the
  * browser. The linter is the spec; a second implementation here would drift,
  * and the one that mattered would be whichever was more permissive.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { applyCommand, bumpVersion, isDrawable, targetOf, toDiagram, type DefinitionDocument } from '@pilots/bpmn'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { UiError, api, type DefinitionDiagnostic } from '../api.js'
 import { StateDiagram } from '../graph/StateDiagram.js'
+import { draftReducer, initialDraft } from '../modeler/draft.js'
+import { Modeler } from '../modeler/Modeler.js'
+import { browserStorage, loadDraft, loadLayout, saveDraft, saveLayout } from '../modeler/storage.js'
 import { keys, queries } from '../queries.js'
 import { Card, Problem, button, ghost, input } from '../ui.js'
 
 /** A skeleton that lints clean, so the first thing on screen is a working process. */
-const STARTER = {
+const STARTER: DefinitionDocument = {
   '@context': 'https://pilots.example/process/v1',
   id: 'my-process',
   version: '1.0.0',
@@ -71,6 +77,32 @@ const STARTER = {
   links: [],
 }
 
+/** One identity for "nothing yet", so an unsettled render does not rebuild `flagged`. */
+const NO_DIAGNOSTICS: DefinitionDiagnostic[] = []
+
+/** How long a failed lint waits before it asks again. */
+const LINT_RETRY_MS = 5000
+
+const REPLACE_WARNING = 'Replace the current draft? Changes that are not published will be lost.'
+
+/** An empty canvas. Not a valid process yet — a draft may be incomplete; only publishing is blocked. */
+const BLANK: DefinitionDocument = {
+  '@context': 'https://pilots.example/process/v1',
+  id: 'new-process',
+  version: '1.0.0',
+  kind: 'service',
+  title: 'New process',
+  roles: [],
+  hostedBy: '',
+  initialState: '',
+  states: [],
+  defaultVisibility: 'all',
+  data: { type: 'object' },
+  transitions: [],
+  visibility: [],
+  links: [],
+}
+
 /** What the definition schema needs to draw a diagram, once it parses. */
 interface Drawable {
   id: string
@@ -92,151 +124,345 @@ interface Drawable {
 }
 
 export function Authoring() {
-  const [source, setSource] = useState(() => JSON.stringify(STARTER, null, 2))
-  const [diagnostics, setDiagnostics] = useState<DefinitionDiagnostic[]>([])
+  const storage = useMemo(() => browserStorage(), [])
+  const [restored] = useState(() => loadDraft(storage))
+  const [draft, dispatch] = useReducer(draftReducer, undefined, () =>
+    initialDraft(restored ?? { document: STARTER, layout: {} }),
+  )
+  /*
+   * The revision last opened, created or published: anything after it would be
+   * lost by replacing the draft. A draft restored from the browser may hold such
+   * changes from an earlier visit, so it counts as changed unless it is the starter.
+   */
+  const [savedRevision, setSavedRevision] = useState(() =>
+    restored === null || JSON.stringify(restored.document) === JSON.stringify(STARTER) ? draft.revision : -1,
+  )
+  const latestRevision = useRef(draft.revision)
+  const [tab, setTab] = useState<'diagram' | 'json'>('diagram')
+  const [source, setSource] = useState(() => JSON.stringify(draft.document, null, 2))
+  const [syntax, setSyntax] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+  /** The last lint that did not answer, and for which revision. `error` is set when the connector refused it. */
+  const [lintFailure, setLintFailure] = useState<{ revision: number; error: UiError | null } | null>(null)
+  const [lintAttempt, setLintAttempt] = useState(0)
   const [published, setPublished] = useState<string | null>(null)
   const [error, setError] = useState<UiError | null>(null)
+  const [conflict, setConflict] = useState<string | null>(null)
+  const [opening, setOpening] = useState('')
+  const [unreachable, setUnreachable] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const client = useQueryClient()
 
   const definitions = useQuery(queries.definitions()).data ?? []
 
-  /** Parsed locally only to draw it. The connector decides whether it is valid. */
-  const parsed = useMemo<{ value: Drawable | null; syntax: string | null }>(() => {
-    try {
-      return { value: JSON.parse(source) as Drawable, syntax: null }
-    } catch (cause) {
-      return { value: null, syntax: (cause as Error).message }
-    }
-  }, [source])
+  useEffect(() => {
+    latestRevision.current = draft.revision
+  }, [draft.revision])
+
+  // The text follows the document — except when the text is what changed it,
+  // or the cursor would jump on every keystroke.
+  useEffect(() => {
+    if (draft.origin === 'json') return
+    setSource(JSON.stringify(draft.document, null, 2))
+    setSyntax(null)
+    // Keyed on the revision alone: it is what changes exactly once per edit.
+  }, [draft.revision])
+
+  // A banner about a publish must not outlive the draft it was about. The
+  // publish itself sets `published` only when it answers, after this has run.
+  useEffect(() => {
+    setPublished(null)
+    setConflict(null)
+  }, [draft.revision])
+
+  useEffect(() => {
+    if (storage !== null) saveDraft(storage, { document: draft.document, layout: draft.layout })
+  }, [storage, draft.document, draft.layout])
 
   /*
-   * Lint on a debounce, so typing is not a request per keystroke, and the
-   * result that lands is always the one for the text on screen — a stale answer
-   * overwriting a fresh one is the classic bug here.
+   * Lint on a debounce, tagged with the revision it was asked about. The
+   * reducer drops an answer for any other revision, so a slow linter cannot
+   * paint old errors over a newer drawing — and a failure is tagged the same
+   * way, so a stale one cannot hide a newer success. `lintAttempt` is the retry.
    */
   useEffect(() => {
-    if (parsed.value === null) {
-      setDiagnostics([])
-      return
-    }
-    let current = true
+    const revision = draft.revision
     const timer = setTimeout(() => {
       setChecking(true)
       void api
-        .lintDefinition(parsed.value as unknown as Record<string, unknown>)
+        .lintDefinition(draft.document as unknown as Record<string, unknown>)
         .then((result) => {
-          if (current) setDiagnostics(result.diagnostics)
+          dispatch({ type: 'linted', revision, diagnostics: result.diagnostics })
+          setLintFailure((failure) => (failure !== null && failure.revision > revision ? failure : null))
         })
-        .catch(() => {
-          if (current) setDiagnostics([])
-        })
-        .finally(() => {
-          if (current) setChecking(false)
-        })
+        .catch((cause: unknown) => setLintFailure({ revision, error: cause instanceof UiError ? cause : null }))
+        .finally(() => setChecking(false))
     }, 300)
+    return () => clearTimeout(timer)
+  }, [draft.revision, draft.document, lintAttempt])
 
-    return () => {
-      current = false
-      clearTimeout(timer)
-    }
-  }, [parsed.value, source])
+  // While this revision's lint has failed, ask again until the connector answers.
+  const lintFailed = lintFailure !== null && lintFailure.revision === draft.revision
+  useEffect(() => {
+    if (!lintFailed) return
+    const timer = setTimeout(() => setLintAttempt((attempt) => attempt + 1), LINT_RETRY_MS)
+    return () => clearTimeout(timer)
+  }, [lintFailed, lintFailure])
 
+  const settled = draft.diagnostics.revision === draft.revision
+  const diagnostics = settled ? draft.diagnostics.items : NO_DIAGNOSTICS
   const errors = diagnostics.filter((one) => one.severity === 'error')
   const warnings = diagnostics.filter((one) => one.severity === 'warning')
-  const publishable = parsed.value !== null && parsed.syntax === null && errors.length === 0
+  const publishable = !draft.readOnly && syntax === null && settled && !lintFailed && errors.length === 0
 
-  const publish = (): void => {
-    if (parsed.value === null) return
+  // Drawn only when it can be: a half-typed JSON object must not take the page down.
+  const drawable = isDrawable(draft.document)
+  const model = useMemo(() => (drawable ? toDiagram(draft.document) : null), [drawable, draft.document])
+  const flagged = useMemo(
+    () =>
+      new Set(
+        model === null
+          ? []
+          : diagnostics.flatMap((one) => {
+              const target = targetOf(draft.document, model, one.path)
+              return target.kind === 'process' ? [] : [target.key]
+            }),
+      ),
+    [diagnostics, draft.document, model],
+  )
+
+  const dirty = !draft.readOnly && draft.revision !== savedRevision
+  /** Whether the draft may be replaced: always when nothing would be lost, else when the author says so. */
+  const mayReplace = (): boolean => !dirty || window.confirm(REPLACE_WARNING)
+
+  const publish = (document: DefinitionDocument = draft.document, revision: number = draft.revision): void => {
     setError(null)
+    setUnreachable(false)
     setPublished(null)
+    setConflict(null)
     void api
-      .publishDefinition(parsed.value as unknown as Record<string, unknown>)
+      .publishDefinition(document as unknown as Record<string, unknown>)
       .then(async (result) => {
         setPublished(result.ref)
-        // The Start screen should offer it immediately; that is the whole point.
+        setSavedRevision(revision)
+        if (storage !== null) saveLayout(storage, result.ref, draft.layout)
         await client.invalidateQueries({ queryKey: keys.definitions })
       })
       .catch((cause: unknown) => {
-        if (cause instanceof UiError) setError(cause)
+        if (!(cause instanceof UiError)) {
+          setUnreachable(true)
+          return
+        }
+        // Same id@version, different bytes: a published definition never changes,
+        // so the answer is the next version, offered in one click.
+        if (cause.problem.type?.endsWith('definition-conflict') === true) {
+          setConflict(bumpVersion(document.version))
+          return
+        }
+        setError(cause)
       })
+  }
+
+  const publishAsNext = (): void => {
+    if (conflict === null) return
+    const command = { type: 'setProcess' as const, patch: { version: conflict } }
+    const bumped = applyCommand(draft.document, command)
+    if (!bumped.ok) return
+    dispatch({ type: 'command', command })
+    // The command is the next revision, and that is the one being published.
+    publish(bumped.document, draft.revision + 1)
+  }
+
+  const open = (ref: string): void => {
+    if (!mayReplace()) return
+    setUnreachable(false)
+    void api
+      .definition(ref)
+      .then((result) => {
+        // A replace is exactly one revision on from whatever is current now.
+        setSavedRevision(latestRevision.current + 1)
+        dispatch({
+          type: 'replace',
+          document: result.definition as unknown as DefinitionDocument,
+          origin: 'open',
+          readOnly: true,
+          layout: storage === null ? {} : loadLayout(storage, ref),
+        })
+        setPublished(null)
+        setConflict(null)
+      })
+      .catch(() => setUnreachable(true))
+  }
+
+  const newProcess = (): void => {
+    if (!mayReplace()) return
+    setSavedRevision(draft.revision + 1)
+    dispatch({ type: 'replace', document: BLANK, origin: 'open', layout: {} })
+  }
+
+  const typed = (text: string): void => {
+    setSource(text)
+    setPublished(null)
+    try {
+      const value: unknown = JSON.parse(text)
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        setSyntax('A definition is a JSON object.')
+        return
+      }
+      setSyntax(null)
+      dispatch({ type: 'replace', document: value as DefinitionDocument, origin: 'json' })
+    } catch (cause) {
+      setSyntax((cause as Error).message)
+    }
   }
 
   const importFile = (file: File): void => {
     void file.text().then((text) => {
-      try {
-        setSource(JSON.stringify(JSON.parse(text), null, 2))
-      } catch {
-        // Show it as typed and let the linter and the parser explain.
-        setSource(text)
-      }
-      setPublished(null)
+      setTab('json')
+      typed(text)
     })
   }
 
   const download = (): void => {
-    const blob = new Blob([source], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(draft.document, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${parsed.value?.id ?? 'definition'}.json`
+    anchor.download = `${draft.document.id || 'definition'}.json`
     anchor.click()
     URL.revokeObjectURL(url)
   }
+
+  const parsed = syntax === null && drawable ? (draft.document as unknown as Drawable) : null
+  // Text that does not parse would be overwritten by the next diagram edit, so the diagram waits for it.
+  const diagramBlocked = syntax !== null
+  const tabClass = (one: 'diagram' | 'json'): string =>
+    one === tab ? 'border-b-2 border-slate-900 pb-1 font-semibold dark:border-slate-100' : 'pb-1 text-slate-500'
 
   return (
     <div className="flex flex-col gap-4">
       <Card title="Write a process">
         <div className="flex flex-col gap-3">
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            The connector validates this as you type — the same linter it applies to a definition a
-            peer sends. Publishing makes it usable immediately, and a definition never changes once
-            published: to alter one, bump its <code>version</code>.
+            Draw it or write it — both tabs edit the same definition. The connector validates it as you go, with the
+            same linter it applies to a definition a peer sends. A published definition never changes: to alter
+            one, start a new version.
           </p>
 
-          <div className="grid gap-3 lg:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">
-                Definition (JSON)
-              </span>
-              <textarea
-                className={`${input} h-96 font-mono text-xs`}
-                data-testid="definition-source"
-                spellCheck={false}
-                value={source}
-                onChange={(event) => {
-                  setSource(event.target.value)
-                  setPublished(null)
-                }}
-              />
-            </label>
-
-            <div className="flex flex-col gap-2">
-              <span className="text-xs font-medium text-slate-600">The process it describes</span>
-              {parsed.value === null ? (
-                <div className="flex h-96 items-center justify-center rounded-md border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
-                  Not valid JSON yet — the diagram appears as soon as it parses.
-                </div>
-              ) : (
-                <StateDiagram definition={parsed.value} height="h-96" />
-              )}
-            </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <select className={`${input} w-auto`} data-testid="open-ref" value={opening} onChange={(e) => setOpening(e.target.value)}>
+              <option value="">Open a published process…</option>
+              {definitions.map((one) => (
+                <option key={one.ref} value={one.ref}>
+                  {one.ref}
+                </option>
+              ))}
+            </select>
+            <button type="button" className={ghost} data-testid="open-definition" disabled={opening === ''} onClick={() => open(opening)}>
+              Open
+            </button>
+            <button
+              type="button"
+              className={ghost}
+              data-testid="new-process"
+              onClick={newProcess}
+            >
+              New process
+            </button>
+            <button type="button" className={ghost} data-testid="undo" disabled={draft.past.length === 0} onClick={() => dispatch({ type: 'undo' })}>
+              Undo
+            </button>
+            <button type="button" className={ghost} data-testid="redo" disabled={draft.future.length === 0} onClick={() => dispatch({ type: 'redo' })}>
+              Redo
+            </button>
           </div>
 
+          {draft.readOnly && (
+            <p data-testid="read-only" className="flex items-center gap-2 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300">
+              {draft.document.id}@{draft.document.version} is published and read-only.
+              <button type="button" className={ghost} data-testid="new-version" onClick={() => dispatch({ type: 'newVersion' })}>
+                New version
+              </button>
+            </p>
+          )}
+          {storage === null && (
+            <p data-testid="storage-warning" className="text-xs text-amber-700 dark:text-amber-400">
+              This browser will not keep the draft: it is lost on reload.
+            </p>
+          )}
+          {lintFailed && lintFailure.error === null && (
+            <p data-testid="lint-unavailable" className="text-xs text-amber-700 dark:text-amber-400">
+              Cannot validate — the connector did not answer. Trying again; publishing waits until it does.
+            </p>
+          )}
+          {lintFailed && lintFailure.error !== null && <Problem error={lintFailure.error} />}
+
+          <div className="flex gap-4 text-sm">
+            <button
+              type="button"
+              data-testid="authoring-tab-diagram"
+              className={`${tabClass('diagram')} disabled:cursor-not-allowed disabled:opacity-50`}
+              disabled={diagramBlocked}
+              title={diagramBlocked ? 'Fix the JSON first: the diagram would overwrite text that does not parse.' : undefined}
+              onClick={() => setTab('diagram')}
+            >
+              Diagram
+            </button>
+            <button type="button" data-testid="authoring-tab-json" className={tabClass('json')} onClick={() => setTab('json')}>
+              JSON
+            </button>
+          </div>
+
+          {tab === 'diagram' ? (
+            model === null ? (
+              <p
+                data-testid="not-drawable"
+                className="rounded-md border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700"
+              >
+                This JSON cannot be drawn yet — fix it in the JSON tab.
+              </p>
+            ) : (
+              <Modeler draft={draft} dispatch={dispatch} model={model} flagged={flagged} diagnostics={diagnostics} />
+            )
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-slate-600">Definition (JSON)</span>
+                <textarea
+                  className={`${input} h-96 font-mono text-xs`}
+                  data-testid="definition-source"
+                  spellCheck={false}
+                  readOnly={draft.readOnly}
+                  value={source}
+                  onChange={(event) => typed(event.target.value)}
+                />
+              </label>
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-medium text-slate-600">The process it describes</span>
+                {parsed === null ? (
+                  <div className="flex h-96 items-center justify-center rounded-md border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500 dark:border-slate-700">
+                    {syntax !== null
+                      ? 'Not valid JSON yet — the diagram appears as soon as it parses.'
+                      : 'This JSON cannot be drawn yet: roles, states and transitions must be lists, and every transition needs `from` and `by` lists.'}
+                  </div>
+                ) : (
+                  <StateDiagram definition={parsed} height="h-96" />
+                )}
+              </div>
+            </div>
+          )}
+
           <div data-testid="diagnostics" className="flex flex-col gap-2">
-            {parsed.syntax !== null && (
+            {syntax !== null && (
               <p className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300">
-                {parsed.syntax}
+                {syntax}
               </p>
             )}
-
-            {parsed.syntax === null && diagnostics.length === 0 && !checking && (
+            {syntax === null && settled && diagnostics.length === 0 && !checking && (
               <p className="text-xs text-emerald-700 dark:text-emerald-400">
                 No problems. This process can be started and can be completed.
               </p>
             )}
-
             {/* Errors first: they are what stops a publish. */}
             {[...errors, ...warnings].map((diagnostic, index) => (
               <p
@@ -248,32 +474,40 @@ export function Authoring() {
                 }
               >
                 <span className="font-mono">{diagnostic.code}</span> — {diagnostic.message}
-                {diagnostic.path !== undefined && (
-                  <span className="ml-1 font-mono text-slate-500">{diagnostic.path}</span>
-                )}
+                {diagnostic.path !== undefined && <span className="ml-1 font-mono text-slate-500">{diagnostic.path}</span>}
               </p>
             ))}
           </div>
 
           {error && <Problem error={error} />}
+          {unreachable && (
+            <p
+              data-testid="unreachable"
+              className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              Could not reach the connector. Try again.
+            </p>
+          )}
+          {conflict !== null && (
+            <p className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+              {draft.document.id}@{draft.document.version} is already published with different content.
+              <button type="button" className={ghost} data-testid="publish-next" onClick={publishAsNext}>
+                Publish as {conflict}
+              </button>
+            </p>
+          )}
           {published !== null && (
             <p
               data-testid="published"
               className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
             >
-              Published <span className="font-mono">{published}</span>. It is ready to start, and a
-              peer will be asked to adopt it the first time you run it with them.
+              Published <span className="font-mono">{published}</span>. It is ready to start, and a peer will be asked
+              to adopt it the first time you run it with them.
             </p>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
-              className={button}
-              type="button"
-              data-testid="publish"
-              disabled={!publishable}
-              onClick={publish}
-            >
+            <button className={button} type="button" data-testid="publish" disabled={!publishable} onClick={() => publish()}>
               Publish
             </button>
             <button className={ghost} type="button" onClick={() => fileInput.current?.click()}>

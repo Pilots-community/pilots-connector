@@ -1,0 +1,392 @@
+{
+  "@context": "https://pilots.example/process/v1",
+  "id": "container-import",
+  "version": "1.0.0",
+  "kind": "service",
+  "title": "Container import",
+  "description": "A forwarder books the import of a container with a transport service provider: transport request, optional booking updates, delivery and hinterland planning, commercial release, pickup rights and PIN, pickup, delivery, completion.",
+  "roles": [
+    {
+      "id": "forwarder",
+      "title": "Forwarder",
+      "cardinality": 1,
+      "protocolRole": "requester"
+    },
+    {
+      "id": "transportProvider",
+      "title": "Transport service provider",
+      "cardinality": 1,
+      "protocolRole": "provider"
+    }
+  ],
+  "hostedBy": "forwarder",
+  "initialState": "REQUESTED",
+  "createdBy": ["forwarder"],
+  "states": [
+    {
+      "id": "REQUESTED",
+      "title": "Transport requested"
+    },
+    {
+      "id": "REQUEST_UPDATED",
+      "title": "Request updated"
+    },
+    {
+      "id": "DELIVERY_PLANNED",
+      "title": "Delivery planned"
+    },
+    {
+      "id": "TRANSPORT_PLANNED",
+      "title": "Hinterland transport planned"
+    },
+    {
+      "id": "RELEASED",
+      "title": "Commercially released"
+    },
+    {
+      "id": "PICKUP_RIGHTS_RECEIVED",
+      "title": "Pickup rights received"
+    },
+    {
+      "id": "PICKUP_ASSIGNED",
+      "title": "Pickup right assigned"
+    },
+    {
+      "id": "PICKED_UP",
+      "title": "Picked up"
+    },
+    {
+      "id": "DELIVERED",
+      "title": "Delivered"
+    },
+    {
+      "id": "COMPLETED",
+      "title": "Container import completed",
+      "outcome": "fulfilled"
+    },
+    {
+      "id": "CANCELLED",
+      "title": "Cancelled",
+      "outcome": "abandoned"
+    }
+  ],
+  "defaultVisibility": "all",
+  "data": {
+    "type": "object",
+    "required": ["billOfLading", "containerNumber", "eta", "deliveryAddress"],
+    "properties": {
+      "billOfLading": {
+        "type": "string"
+      },
+      "containerNumber": {
+        "type": "string"
+      },
+      "containerType": {
+        "type": "string",
+        "enum": ["20DV", "40DV", "40HC", "45HC"]
+      },
+      "vessel": {
+        "type": "string"
+      },
+      "eta": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "deliveryAddress": {
+        "type": "string"
+      },
+      "requestedDeliveryAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "updateReason": {
+        "type": "string"
+      },
+      "plannedDeliveryAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "deliveryReference": {
+        "type": "string"
+      },
+      "transportLegs": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["mode", "from", "to"],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["road", "rail", "barge"]
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            },
+            "plannedDepartureAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      },
+      "releasedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "releaseReference": {
+        "type": "string"
+      },
+      "pickupPin": {
+        "type": "string"
+      },
+      "pickupValidUntil": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "pickedUpAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "truckPlate": {
+        "type": "string"
+      },
+      "deliveredAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "completedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "cancellationReason": {
+        "type": "string"
+      }
+    }
+  },
+  "transitions": [
+    {
+      "id": "updateBooking",
+      "title": "Send booking update",
+      "from": ["REQUESTED", "REQUEST_UPDATED"],
+      "to": "REQUEST_UPDATED",
+      "by": ["forwarder"],
+      "patch": {
+        "type": "object",
+        "required": ["updateReason"],
+        "properties": {
+          "updateReason": {
+            "type": "string"
+          },
+          "eta": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deliveryAddress": {
+            "type": "string"
+          },
+          "requestedDeliveryAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "id": "planDelivery",
+      "title": "Plan / book delivery",
+      "from": ["REQUESTED", "REQUEST_UPDATED"],
+      "to": "DELIVERY_PLANNED",
+      "by": ["transportProvider"],
+      "patch": {
+        "type": "object",
+        "required": ["plannedDeliveryAt"],
+        "properties": {
+          "plannedDeliveryAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deliveryReference": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "planHinterlandTransport",
+      "title": "Plan hinterland transport",
+      "from": ["DELIVERY_PLANNED"],
+      "to": "TRANSPORT_PLANNED",
+      "by": ["transportProvider"],
+      "patch": {
+        "type": "object",
+        "required": ["transportLegs"],
+        "properties": {
+          "transportLegs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["mode", "from", "to"],
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["road", "rail", "barge"]
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "plannedDepartureAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "commercialRelease",
+      "title": "Commercial release",
+      "from": ["TRANSPORT_PLANNED"],
+      "to": "RELEASED",
+      "by": ["forwarder"],
+      "patch": {
+        "type": "object",
+        "required": ["releasedAt"],
+        "properties": {
+          "releasedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "releaseReference": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "receivePickupRights",
+      "title": "Receive pickup rights",
+      "from": ["RELEASED"],
+      "to": "PICKUP_RIGHTS_RECEIVED",
+      "by": ["forwarder"],
+      "patch": {
+        "type": "object",
+        "required": ["pickupPin"],
+        "properties": {
+          "pickupPin": {
+            "type": "string"
+          },
+          "pickupValidUntil": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "id": "transferPickupRight",
+      "title": "Transfer pickup right / PIN",
+      "from": ["PICKUP_RIGHTS_RECEIVED"],
+      "to": "PICKUP_ASSIGNED",
+      "by": ["forwarder"]
+    },
+    {
+      "id": "confirmPickup",
+      "title": "Pickup confirmation",
+      "from": ["PICKUP_ASSIGNED"],
+      "to": "PICKED_UP",
+      "by": ["transportProvider"],
+      "patch": {
+        "type": "object",
+        "required": ["pickedUpAt"],
+        "properties": {
+          "pickedUpAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "truckPlate": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "confirmDelivery",
+      "title": "Delivery confirmation",
+      "from": ["PICKED_UP"],
+      "to": "DELIVERED",
+      "by": ["transportProvider"],
+      "patch": {
+        "type": "object",
+        "required": ["deliveredAt"],
+        "properties": {
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "id": "complete",
+      "title": "Complete",
+      "from": ["DELIVERED"],
+      "to": "COMPLETED",
+      "by": ["forwarder"],
+      "patch": {
+        "type": "object",
+        "properties": {
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel",
+      "title": "Cancel",
+      "from": ["*"],
+      "to": "CANCELLED",
+      "by": ["forwarder", "transportProvider"],
+      "patch": {
+        "type": "object",
+        "properties": {
+          "cancellationReason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "visibility": [
+    {
+      "path": "pickupPin",
+      "roles": ["forwarder"]
+    },
+    {
+      "path": "pickupPin",
+      "roles": ["transportProvider"],
+      "whenState": ["PICKUP_ASSIGNED", "PICKED_UP", "DELIVERED", "COMPLETED"]
+    },
+    {
+      "path": "pickupValidUntil",
+      "roles": ["forwarder"]
+    },
+    {
+      "path": "pickupValidUntil",
+      "roles": ["transportProvider"],
+      "whenState": ["PICKUP_ASSIGNED", "PICKED_UP", "DELIVERED", "COMPLETED"]
+    }
+  ],
+  "links": []
+}

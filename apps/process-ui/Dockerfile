@@ -18,14 +18,17 @@ WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/client/package.json packages/client/
+COPY packages/bpmn/package.json packages/bpmn/
 COPY apps/process-ui/package.json apps/process-ui/
 RUN pnpm install --frozen-lockfile
 
 COPY packages/protocol packages/protocol
 COPY packages/client packages/client
+COPY packages/bpmn packages/bpmn
 COPY apps/process-ui apps/process-ui
 RUN pnpm --filter @pilots/protocol build \
  && pnpm --filter @pilots/client build \
+ && pnpm --filter @pilots/bpmn build \
  && pnpm --filter @pilots/process-ui build \
  && pnpm --filter @pilots/process-ui --prod deploy /out
 

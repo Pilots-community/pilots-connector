@@ -146,6 +146,8 @@ test.describe('adopting a process a peer wrote', () => {
     await expect(page.getByTestId('participant')).toBeVisible()
 
     await page.getByTestId('tab-authoring').click()
+    // The Diagram tab opens first now; this test is about the JSON route.
+    await page.getByTestId('authoring-tab-json').click()
     await page.fill(
       '[data-testid="definition-source"]',
       JSON.stringify(
