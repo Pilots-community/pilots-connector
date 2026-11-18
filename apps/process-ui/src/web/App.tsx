@@ -71,7 +71,10 @@ export function App() {
   if (!user) return <SignIn participant={participant} did={did} onDone={refresh} />
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-4 p-6">
+    // Authoring takes the whole window: a process with a few lanes does not fit a reading column.
+    <div
+      className={`mx-auto flex flex-col gap-4 p-6 ${tab === 'authoring' && !selected ? 'max-w-none' : 'max-w-4xl'}`}
+    >
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold" data-testid="participant">

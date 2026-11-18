@@ -48,11 +48,16 @@ export interface CanvasProps {
   onMoveTask: (change: { transition: string; fromRole: string; toRole: string }) => void
   onConnectStates: (from: string, to: string) => void
   onSelect: (key: string | null) => void
+  /** Fill the parent's height (full screen) instead of a share of the window's. */
+  fill?: boolean
 }
 
 export function Canvas(props: CanvasProps) {
   const { model, layout, flagged, readOnly } = props
-  const flow = useMemo(() => toFlow(model, layout, { flagged, readOnly }), [model, layout, flagged, readOnly])
+  const flow = useMemo(
+    () => toFlow(model, layout, { flagged, readOnly }),
+    [model, layout, flagged, readOnly],
+  )
   // React Flow moves a dragged node through its own state; the definition is untouched until the drop.
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(flow.nodes)
   useEffect(() => setNodes((previous) => mergeNodes(previous, flow.nodes)), [flow.nodes, setNodes])
@@ -72,7 +77,10 @@ export function Canvas(props: CanvasProps) {
   const byKey = useMemo(() => new Map(model.nodes.map((node) => [node.key, node])), [model])
 
   return (
-    <div data-testid="modeler-canvas" className="h-[32rem] w-full rounded-lg border border-slate-200 dark:border-slate-800">
+    <div
+      data-testid="modeler-canvas"
+      className={`${props.fill ? 'h-full min-h-[24rem]' : 'h-[75vh] min-h-[32rem]'} w-full rounded-lg border border-slate-200 dark:border-slate-800`}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -100,7 +108,9 @@ export function Canvas(props: CanvasProps) {
           const home = flow.nodes.find((one) => one.id === node.id)
           if (home !== undefined) {
             setNodes((previous) =>
-              previous.map((one) => (one.id === node.id ? { ...one, position: home.position, dragging: false } : one)),
+              previous.map((one) =>
+                one.id === node.id ? { ...one, position: home.position, dragging: false } : one,
+              ),
             )
           }
         }}
